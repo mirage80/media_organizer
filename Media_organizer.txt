@@ -1,0 +1,87 @@
+step0 - tools
+   - zip_file_recovery
+
+
+step1 - Extract Zip Files
+
+step2 - Sanitize Names
+
+step3 - clean json names json files
+  - clean_json.ps1
+   3-0 - Read list of All Files in Zip Files
+   3-1 - Sanetize Names
+   3-2 - Remove Substring of supplemental-metadata 'level1_batch.txt'
+   3-3 - Remove -edited and -effects files         'level2_batch.txt'
+   3-4 - Find Pairs                                 
+   3-5 - Generate Batch3 Files                     'level3_batch.txt'
+   3-6 - Check Remaining Json                   
+   3-7 - Remove Only Json or Media Direcory
+   3-8 - Find Truncated names
+   3-9 - Find Truncated pairs
+   3-10 - Rename Truncated pairs                    'level5_batch.txt'
+   3-11- Check Remaining Json    
+   3-12 - Remove Only Json or Media Direcory
+                 
+step4 - remove orphaned json files
+  - remove_orphaned_json.ps1
+
+step5 - use converter to change everything to mp4 & jpg
+ - converter.ps1 
+  5-1 - Remove .MP files 
+  5-2 - convert Files, Remove Original extension, and Rename Related Files
+  5-3 - delete json.tmp files
+  5-4 - Rename any related files that was missed
+
+step6 Consolidate_Meta to combine Timestamp and Geotags
+ - Consolidate_Meta.ps1
+  6-1 - Consolidate_Meta
+  6-2 - Remove Original extension files
+
+step7 Clean $RECYCLE.BIN
+
+step8 Hash AND Group Duplicates
+  8-1 - Hash AND Group Video Duplicates
+  8-2 - Hash AND Group Image Duplicates
+
+step9 Remove Exact Duplicates
+  9-1 - Remove Exact Video Duplicates
+  9-2 - Remove Exact Image Duplicates
+
+step10 Show and Remove Duplicates
+  10-1 - Show and Remove Video Duplicates
+  10-2 - Show and Remove Image Duplicates
+
+step11 Show and Remove Duplicates
+  11-1 - Remove Junk Video & Select corrupt ones
+  11-2 - Remove Junk Image & Select corrupt ones
+
+step12 Categroize Based on 2 critera of having or not having GeoTag and Timestamp
+
+Step13 Ask user for estimate time
+
+step8 - rerender files 
+
+          Empty                                        After Extraction                         clean json names                           Remove orphaned JSON                                                                                                                               
+Extension: .dat, Count: 1                     Extension: .dat, Count: 1                     Extension: .dat, Count: 1                  Extension: .dat, Count: 1                    NOTHING  
+Extension: no_extension, Count: 24            Extension: no_extension, Count: 24            Extension: no_extension, Count: 24         Extension: no_extension, Count: 24           ??
+Extension: .jpg, Count: 60714                 Extension: .jpg, Count: 60714                 Extension: .jpg, Count: 60714              Extension: .jpg, Count: 60714                59753  ^Skipped
+Extension: .jpeg, Count: 1691                 Extension: .jpeg, Count: 1691                 Extension: .jpeg, Count: 1691              Extension: .jpeg, Count: 1691                1363   ^Converted 
+Extension: .mp4, Count: 6812                  Extension: .mp4, Count: 6812                  Extension: .mp4, Count: 6812               Extension: .mp4, Count: 6812                 6774   ^Skipped
+Extension: .mov, Count: 515                   Extension: .mov, Count: 515                   Extension: .mov, Count: 515                Extension: .mov, Count: 515                  508    ^Converted
+Extension: .wmv, Count: 7                     Extension: .wmv, Count: 7                     Extension: .wmv, Count: 7                  Extension: .wmv, Count: 7                    7      ^Converted
+Extension: .html, Count: 1                    Extension: .html, Count: 1                    Extension: .html, Count: 1                 Extension: .html, Count: 1                   1      ^Skipped
+Extension: .json, Count: 77865                Extension: .json, Count: 77865                Extension: .json, Count: 77865             Extension: .json, Count: 64630               7125   ^Renamed
+Extension: .heic, Count: 5561                 Extension: .heic, Count: 5561                 Extension: .heic, Count: 5561              Extension: .heic, Count: 5561                5465   ^Converted  
+Extension: .mp, Count: 327                    Extension: .mp, Count: 327                    Extension: .mp, Count: 327                 Extension: .mp, Count: 327                   329    ^Removed
+Extension: .mpeg, Count: 7                    Extension: .mpeg, Count: 7                    Extension: .mpeg, Count: 7                 Extension: .mpeg, Count: 7                   7      ^Converted       
+Extension: .gif, Count: 36                    Extension: .gif, Count: 36                    Extension: .gif, Count: 36                 Extension: .gif, Count: 36                   33     ^Converted
+Extension: .png, Count: 17                    Extension: .png, Count: 17                    Extension: .png, Count: 17                 Extension: .png, Count: 17                   17     ^Converted
+Extension: .3gp, Count: 29                    Extension: .3gp, Count: 29                    Extension: .3gp, Count: 29                 Extension: .3gp, Count: 29                   29     ^Converted
+Extension: .avi, Count: 3                     Extension: .avi, Count: 3                     Extension: .avi, Count: 3                  Extension: .avi, Count: 3                    3      ^Converted
+Extension: .bmp, Count: 2                     Extension: .bmp, Count: 2                     Extension: .bmp, Count: 2                  Extension: .bmp, Count: 2                    2      ^Converted
+Extension: .mpg, Count: 2                     Extension: .mpg, Count: 2                     Extension: .mpg, Count: 2                  Extension: .mpg, Count: 2                    2      ^Converted
+Extension: .mkv, Count: 2                     Extension: .mkv, Count: 2                     Extension: .mkv, Count: 2                  Extension: .mkv, Count: 2                    2      ^Converted
+Extension: .m4v, Count: 2                     Extension: .m4v, Count: 2                     Extension: .m4v, Count: 2                  Extension: .m4v, Count: 2                    2      ^Converted
+Extension: .mp~2, Count: 2                    Extension: .mp~2, Count: 2                    Extension: .mp~2, Count: 2                 Extension: .mp~2, Count: 2                   2      ^Skipped
+Extension: .pdf, Count: 1                     Extension: .pdf, Count: 1                     Extension: .pdf, Count: 1                  Extension: .pdf, Count: 1                    1      ^Skipped
+Extension: .ini, Count: 1                     Extension: .ini, Count: 1                     Extension: .ini, Count: 1                  Extension: .ini, Count: 1                    1      ^Skipped
