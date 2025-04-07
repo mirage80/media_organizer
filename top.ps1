@@ -228,17 +228,19 @@ $logger++
 write-host "step5 - use converter to change everything to mp4 & jpg"
 & "$scriptDirectory\step5 - converter\converter.ps1"
 
+#>
+
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$logger.txt"
 $logger++
- #>
+
 #step 6 use step6 - Consolidate_Meta to combine time stamps
 write-host "step6 use 6 - Consolidate_Meta to combine time stamps"
-& "$scriptDirectory\step6 - Consolidate_Meta\6 - Consolidate_Meta.ps1"
+& "$scriptDirectory\step6 - Consolidate_Meta-parrallel\6 - Consolidate_Meta.ps1"
 $logger = 5
 
-#count
+<# #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
@@ -322,3 +324,4 @@ write-host "step 12 use Categorize.ps1 to categorize files based on the availabi
 & "$scriptDirectory\step12 - Categorization\Categorize.ps1"
 
 
+ #>
