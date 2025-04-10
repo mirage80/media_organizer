@@ -36,7 +36,7 @@ def show_progress_bar(current, total, message):
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IMAGE_INFO_FILE = os.path.join(SCRIPT_DIR, "image_info.json")
 GROUPING_INFO_FILE = os.path.join(SCRIPT_DIR, "image_grouping_info.json")
-SUPPORTED_EXTENSIONS = (".jpg", ".jpeg", ".gif", ".png", ".bmp")
+SUPPORTED_EXTENSIONS = (".jpg")
 HASH_ALGORITHM = "sha256"  # Change to "md5" if you prefer
 CHUNK_SIZE = 4096
 LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'

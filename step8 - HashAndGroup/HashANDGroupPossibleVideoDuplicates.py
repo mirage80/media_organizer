@@ -147,7 +147,7 @@ def process_videos(directory, existing_video_info):
 def group_videos_by_name_and_size(video_info_list):
     """Group videos by name and size."""
     processed_files = 0
-    total_files = len(image_info_list)
+    total_files = len(video_info_list)
     grouped_videos = {}
     for info in video_info_list:
         key = f"{info['name']}_{info['size']}"
@@ -162,7 +162,7 @@ def group_videos_by_name_and_size(video_info_list):
 def group_videos_by_hash(video_info_list):
     """Group videos by hash."""
     processed_files = 0
-    total_files = len(image_info_list)
+    total_files = len(video_info_list)
     grouped_videos = {}
     for info in video_info_list:
         key = info["hash"]

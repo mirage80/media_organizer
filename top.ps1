@@ -10,7 +10,7 @@ $verbosity = 0
 
 $zipDirectory = 'D:'
 $unzipedDirectory = 'E:'
-$logger = 5
+$logger = 8
 
 function Show-ProgressBar {
     param(
@@ -228,7 +228,6 @@ $logger++
 write-host "step5 - use converter to change everything to mp4 & jpg"
 & "$scriptDirectory\step5 - converter\converter.ps1"
 
-#>
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
@@ -237,10 +236,10 @@ $logger++
 
 #step 6 use step6 - Consolidate_Meta to combine time stamps
 write-host "step6 use 6 - Consolidate_Meta to combine time stamps"
-& "$scriptDirectory\step6 - Consolidate_Meta-parrallel\6 - Consolidate_Meta.ps1"
+& "$scriptDirectory\step6 - Consolidate_Meta\6 - Consolidate_Meta.ps1"
 $logger = 5
 
-<# #count
+ #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
@@ -259,16 +258,17 @@ $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\c
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
 
+
 #step 8-1 - Hash and Group Possible Video Duplicates
 write-host "Step 8-1 Hash AND Group Possible Video Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleVideoDuplicates.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
-
+#>
 #step 8-2 - Hash and Group Possible Image Duplicates
 write-host "Step 8-2 Hash AND Group Possible Image Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleImageDuplicates.py'
-Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirepctory\"
-
+Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
+<#
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
@@ -277,14 +277,14 @@ $logger++
 #step 9-1 Remove Exact Video Duplicate
 write-host "step 9-1 Remove Exact Video Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactVideoDuplicate.py'
-Run-PythonScript -ScriptPath $pythonScriptPath
+Run-PythonScript -ScriptPath $pythonScriptPath -Arguments '--dry-run'
 
 #step 9-2 Remove Exact Image Duplicate
 write-host "step 9-2 Remove Exact Image Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactImageDuplicate.py'
-Run-PythonScript -ScriptPath $pythonScriptPath
-
+Run-PythonScript -ScriptPath $pythonScriptPath -Arguments '--dry-run'
 #count
+
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++

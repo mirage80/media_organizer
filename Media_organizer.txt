@@ -10,10 +10,10 @@ step3 - clean json names json files
   - clean_json.ps1
    3-0 - Read list of All Files in Zip Files
    3-1 - Sanetize Names
-   3-2 - Remove Substring of supplemental-metadata 'level1_batch.txt'
-   3-3 - Remove -edited and -effects files         'level2_batch.txt'
+   3-2 - Remove Substring of supplemental-metadata  'level1_batch.txt'
+   3-3 - Remove -edited and -effects files          'level2_batch.txt'
    3-4 - Find Pairs                                 
-   3-5 - Generate Batch3 Files                     'level3_batch.txt'
+   3-5 - Generate Batch3 Files                      'level3_batch.txt'
    3-6 - Check Remaining Json                   
    3-7 - Remove Only Json or Media Direcory
    3-8 - Find Truncated names
@@ -36,6 +36,7 @@ step6 Consolidate_Meta to combine Timestamp and Geotags
  - Consolidate_Meta.ps1
   6-1 - Consolidate_Meta
   6-2 - Remove Original extension files
+  6-3 - remove all json
 
 step7 Clean $RECYCLE.BIN
 
@@ -61,27 +62,38 @@ Step13 Ask user for estimate time
 
 step8 - rerender files 
 
-          Empty                                        After Extraction                         clean json names                           Remove orphaned JSON                                                                                                                               
-Extension: .dat, Count: 1                     Extension: .dat, Count: 1                     Extension: .dat, Count: 1                  Extension: .dat, Count: 1                    NOTHING  
-Extension: no_extension, Count: 24            Extension: no_extension, Count: 24            Extension: no_extension, Count: 24         Extension: no_extension, Count: 24           ??
-Extension: .jpg, Count: 60714                 Extension: .jpg, Count: 60714                 Extension: .jpg, Count: 60714              Extension: .jpg, Count: 60714                59753  ^Skipped
-Extension: .jpeg, Count: 1691                 Extension: .jpeg, Count: 1691                 Extension: .jpeg, Count: 1691              Extension: .jpeg, Count: 1691                1363   ^Converted 
-Extension: .mp4, Count: 6812                  Extension: .mp4, Count: 6812                  Extension: .mp4, Count: 6812               Extension: .mp4, Count: 6812                 6774   ^Skipped
-Extension: .mov, Count: 515                   Extension: .mov, Count: 515                   Extension: .mov, Count: 515                Extension: .mov, Count: 515                  508    ^Converted
-Extension: .wmv, Count: 7                     Extension: .wmv, Count: 7                     Extension: .wmv, Count: 7                  Extension: .wmv, Count: 7                    7      ^Converted
-Extension: .html, Count: 1                    Extension: .html, Count: 1                    Extension: .html, Count: 1                 Extension: .html, Count: 1                   1      ^Skipped
-Extension: .json, Count: 77865                Extension: .json, Count: 77865                Extension: .json, Count: 77865             Extension: .json, Count: 64630               7125   ^Renamed
-Extension: .heic, Count: 5561                 Extension: .heic, Count: 5561                 Extension: .heic, Count: 5561              Extension: .heic, Count: 5561                5465   ^Converted  
-Extension: .mp, Count: 327                    Extension: .mp, Count: 327                    Extension: .mp, Count: 327                 Extension: .mp, Count: 327                   329    ^Removed
-Extension: .mpeg, Count: 7                    Extension: .mpeg, Count: 7                    Extension: .mpeg, Count: 7                 Extension: .mpeg, Count: 7                   7      ^Converted       
-Extension: .gif, Count: 36                    Extension: .gif, Count: 36                    Extension: .gif, Count: 36                 Extension: .gif, Count: 36                   33     ^Converted
-Extension: .png, Count: 17                    Extension: .png, Count: 17                    Extension: .png, Count: 17                 Extension: .png, Count: 17                   17     ^Converted
-Extension: .3gp, Count: 29                    Extension: .3gp, Count: 29                    Extension: .3gp, Count: 29                 Extension: .3gp, Count: 29                   29     ^Converted
-Extension: .avi, Count: 3                     Extension: .avi, Count: 3                     Extension: .avi, Count: 3                  Extension: .avi, Count: 3                    3      ^Converted
-Extension: .bmp, Count: 2                     Extension: .bmp, Count: 2                     Extension: .bmp, Count: 2                  Extension: .bmp, Count: 2                    2      ^Converted
-Extension: .mpg, Count: 2                     Extension: .mpg, Count: 2                     Extension: .mpg, Count: 2                  Extension: .mpg, Count: 2                    2      ^Converted
-Extension: .mkv, Count: 2                     Extension: .mkv, Count: 2                     Extension: .mkv, Count: 2                  Extension: .mkv, Count: 2                    2      ^Converted
-Extension: .m4v, Count: 2                     Extension: .m4v, Count: 2                     Extension: .m4v, Count: 2                  Extension: .m4v, Count: 2                    2      ^Converted
-Extension: .mp~2, Count: 2                    Extension: .mp~2, Count: 2                    Extension: .mp~2, Count: 2                 Extension: .mp~2, Count: 2                   2      ^Skipped
-Extension: .pdf, Count: 1                     Extension: .pdf, Count: 1                     Extension: .pdf, Count: 1                  Extension: .pdf, Count: 1                    1      ^Skipped
-Extension: .ini, Count: 1                     Extension: .ini, Count: 1                     Extension: .ini, Count: 1                  Extension: .ini, Count: 1                    1      ^Skipped
+
+
+Empty                                | After Extraction          | clean json names         |  Remove orphaned JSON    |                                                                                                            
+Extension: .jpg, Count: 60714        | .jpg, Count: 60714        | .jpg, Count: 60714       |  .jpg, Count: 60714      | 59753  ^Skipped    
+Extension: .mp4, Count: 6812         | .mp4, Count: 6812         | .mp4, Count: 6812        |  .mp4, Count: 6812       | 6774   ^Skipped    
+Extension: .json, Count: 77865       | .json, Count: 77865       | .json, Count: 77865      |  .json, Count: 64630     | 7125   ^Renamed    
+Extension: .dat, Count: 1            | .dat, Count: 1            | .dat, Count: 1           |  .dat, Count: 1          | NOTHING            
+Extension: no_extension, Count: 24   | no_extension, Count: 24   | no_extension, Count: 24  |  no_extension, Count: 24 | ??                 
+Extension: .jpeg, Count: 1691        | .jpeg, Count: 1691        | .jpeg, Count: 1691       |  .jpeg, Count: 1691      | 1363   ^Converted  
+Extension: .mov, Count: 515          | .mov, Count: 515          | .mov, Count: 515         |  .mov, Count: 515        | 508    ^Converted  
+Extension: .wmv, Count: 7            | .wmv, Count: 7            | .wmv, Count: 7           |  .wmv, Count: 7          | 7      ^Converted  
+Extension: .html, Count: 1           | .html, Count: 1           | .html, Count: 1          |  .html, Count: 1         | 1      ^Skipped    
+Extension: .heic, Count: 5561        | .heic, Count: 5561        | .heic, Count: 5561       |  .heic, Count: 5561      | 5465   ^Converted  
+Extension: .mp, Count: 327           | .mp, Count: 327           | .mp, Count: 327          |  .mp, Count: 327         | 329    ^Removed    
+Extension: .mpeg, Count: 7           | .mpeg, Count: 7           | .mpeg, Count: 7          |  .mpeg, Count: 7         | 7      ^Converted  
+Extension: .gif, Count: 36           | .gif, Count: 36           | .gif, Count: 36          |  .gif, Count: 36         | 33     ^Converted  
+Extension: .png, Count: 17           | .png, Count: 17           | .png, Count: 17          |  .png, Count: 17         | 17     ^Converted  
+Extension: .3gp, Count: 29           | .3gp, Count: 29           | .3gp, Count: 29          |  .3gp, Count: 29         | 29     ^Converted  
+Extension: .avi, Count: 3            | .avi, Count: 3            | .avi, Count: 3           |  .avi, Count: 3          | 3      ^Converted  
+Extension: .bmp, Count: 2            | .bmp, Count: 2            | .bmp, Count: 2           |  .bmp, Count: 2          | 2      ^Converted  
+Extension: .mpg, Count: 2            | .mpg, Count: 2            | .mpg, Count: 2           |  .mpg, Count: 2          | 2      ^Converted  
+Extension: .mkv, Count: 2            | .mkv, Count: 2            | .mkv, Count: 2           |  .mkv, Count: 2          | 2      ^Converted  
+Extension: .m4v, Count: 2            | .m4v, Count: 2            | .m4v, Count: 2           |  .m4v, Count: 2          | 2      ^Converted  
+Extension: .mp~2, Count: 2           | .mp~2, Count: 2           | .mp~2, Count: 2          |  .mp~2, Count: 2         | 2      ^Skipped    
+Extension: .pdf, Count: 1            | .pdf, Count: 1            | .pdf, Count: 1           |  .pdf, Count: 1          | 1      ^Skipped    
+Extension: .ini, Count: 1            | .ini, Count: 1            | .ini, Count: 1           |  .ini, Count: 1          | 1      ^Ski|ppe    
+
+
+Converter                            |  consolidate Meta         | Hash and Group           | Remove Exact Duplicates  |
+Extension: jpg  : 67423 < 68021      |  jpg   : 67423            | jpg   : 67423            |  jpg   :                 |
+Extension: mp4  : 7237  < 7379       |  mp4   : 7237             | mp4   : 7237             |  mp4   :  5888           |
+Extension: json : 62697              |                           |                          |                          |
+
+  jpg : 67420
+  mp4 : 7236
