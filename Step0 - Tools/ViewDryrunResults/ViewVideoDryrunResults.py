@@ -29,18 +29,11 @@ with open(DRY_RUN_LOG_FILE, 'r', encoding='utf-8') as f:
             keeper = keeper.strip()
             groups.setdefault(keeper, set()).add(donor)
 
-# --- Search full paths ---
-def find_file_path(filename):
-    for root, _, files in os.walk(VIDEO_ROOT_DIR):
-        if filename in files:
-            return os.path.join(root, filename)
-    return None
-
 # --- Build and sort groups ---
 group_paths = []
 for keeper, donors in groups.items():
-    keeper_path = find_file_path(keeper)
-    donor_paths = [find_file_path(d) for d in donors]
+    keeper_path = keeper
+    donor_paths = [d for d in donors]
     if keeper_path and all(donor_paths):
         group_paths.append((keeper_path, donor_paths))
 

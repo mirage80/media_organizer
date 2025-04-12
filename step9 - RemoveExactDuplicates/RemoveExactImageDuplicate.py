@@ -1,3 +1,4 @@
+import json          
 import os
 import math
 import shutil
@@ -83,14 +84,14 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
         keeper_has_gps = keeper_gps is not None
 
         if keeper_has_datetime and keeper_has_gps:
-            logger.debug(f"{prefix}MERGE CHECK: Keeper {os.path.basename(keeper_info['path'])} already has timestamp and GPS.")
+            logger.debug(f"{prefix}MERGE CHECK: Keeper {os.path.abspath(keeper_info['path'])} already has timestamp and GPS.")
             return [] # Nothing to merge, return empty list
 
         found_datetime_donor_path = None
         found_gps_donor_path = None
 
         # --- Find potential donors ---
-        logger.debug(f"{prefix}MERGE CHECK: Searching donors for missing metadata in {os.path.basename(keeper_info['path'])}...")
+        logger.debug(f"{prefix}MERGE CHECK: Searching donors for missing metadata in {os.path.abspath(keeper_info['path'])}...")
         for donor_path in donor_paths:
             if donor_path == keeper_info['path']: # Should not happen if donor_paths is constructed correctly
                 continue
@@ -101,11 +102,11 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
 
                 if not keeper_has_datetime and donor_ts_str and not found_datetime_donor_path:
                     found_datetime_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential timestamp donor {os.path.basename(donor_path)}")
+                    logger.debug(f"{prefix}MERGE CHECK: Found potential timestamp donor {os.path.abspath(donor_path)}")
 
                 if not keeper_has_gps and donor_gps and not found_gps_donor_path:
                     found_gps_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential GPS donor {os.path.basename(donor_path)}")
+                    logger.debug(f"{prefix}MERGE CHECK: Found potential GPS donor {os.path.abspath(donor_path)}")
 
                 # Stop searching if we found donors for all missing fields
                 if (keeper_has_datetime or found_datetime_donor_path) and \
@@ -113,27 +114,27 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
                     logger.debug(f"{prefix}MERGE CHECK: Found potential donors for all missing fields.")
                     break
             except Exception as e:
-                logger.warning(f"{prefix}MERGE CHECK: Error reading donor {os.path.basename(donor_path)}: {e}")
+                logger.warning(f"{prefix}MERGE CHECK: Error reading donor {os.path.abspath(donor_path)}: {e}")
                 continue
 
         # --- Log or Perform Merge ---
         if not found_datetime_donor_path and not found_gps_donor_path:
-            logger.debug(f"{prefix}MERGE CHECK: No suitable donors found for missing metadata in {os.path.basename(keeper_info['path'])}.")
+            logger.debug(f"{prefix}MERGE CHECK: No suitable donors found for missing metadata in {os.path.abspath(keeper_info['path'])}.")
             return [] # No donors found
 
         if dry_run:
             if found_datetime_donor_path:
-                log_msg = f"Timestamp from {os.path.basename(found_datetime_donor_path)}"
+                log_msg = f"Timestamp from {os.path.abspath(found_datetime_donor_path)}"
                 potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.basename(keeper_info['path'])}")
+                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
             if found_gps_donor_path:
-                log_msg = f"GPS from {os.path.basename(found_gps_donor_path)}"
+                log_msg = f"GPS from {os.path.abspath(found_gps_donor_path)}"
                 potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.basename(keeper_info['path'])}")
+                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
             return potential_merges_log # Return descriptions for dry run logging
 
         # ACTUAL MERGE
-        logger.info(f"Attempting to merge metadata into: {os.path.basename(keeper_info['path'])}")
+        logger.info(f"Attempting to merge metadata into: {os.path.abspath(keeper_info['path'])}")
 
         with Image.open(keeper_info["path"]) as keeper_img:
             keeper_exif = keeper_img.getexif()
@@ -147,7 +148,7 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
                          
                                                                        
                                                                      
-                logger.warning(f"Creating new EXIF for keeper: {os.path.basename(keeper_info['path'])}")
+                logger.warning(f"Creating new EXIF for keeper: {os.path.abspath(keeper_info['path'])}")
 
             merged_something = False
                                                 
@@ -160,10 +161,10 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
                         donor_exif = donor_img.getexif()
                         if donor_exif and DATETIME_TAG in donor_exif:
                             keeper_exif[DATETIME_TAG] = donor_exif[DATETIME_TAG]
-                            logger.info(f"  - Merged Timestamp from {os.path.basename(found_datetime_donor_path)}")
+                            logger.info(f"  - Merged Timestamp from {os.path.abspath(found_datetime_donor_path)}")
                             merged_something = True
                         else:
-                            logger.warning(f"  - Timestamp donor {os.path.basename(found_datetime_donor_path)} had no tag {DATETIME_TAG}")
+                            logger.warning(f"  - Timestamp donor {os.path.abspath(found_datetime_donor_path)} had no tag {DATETIME_TAG}")
                 except Exception as e:
                     logger.error(f"  - Error accessing timestamp donor: {e}")
 
@@ -174,10 +175,10 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
                         donor_exif = donor_img.getexif()
                         if donor_exif and GPSINFO_TAG in donor_exif:
                             keeper_exif[GPSINFO_TAG] = donor_exif[GPSINFO_TAG]
-                            logger.info(f"  - Merged GPS from {os.path.basename(found_gps_donor_path)}")
+                            logger.info(f"  - Merged GPS from {os.path.abspath(found_gps_donor_path)}")
                             merged_something = True
                         else:
-                            logger.warning(f"  - GPS donor {os.path.basename(found_gps_donor_path)} had no tag {GPSINFO_TAG}")
+                            logger.warning(f"  - GPS donor {os.path.abspath(found_gps_donor_path)} had no tag {GPSINFO_TAG}")
                 except Exception as e:
                     logger.error(f"  - Error accessing GPS donor: {e}")
 
@@ -185,18 +186,18 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
             if merged_something:
                 try:
                     keeper_img.save(keeper_info["path"], exif=keeper_exif)
-                    logger.info(f"✅ Successfully updated metadata in {os.path.basename(keeper_info['path'])}")
+                    logger.info(f"✅ Successfully updated metadata in {os.path.abspath(keeper_info['path'])}")
                 except Exception as e:
                     logger.error(f"❌ Failed to save metadata: {e}")
             else:
-                logger.info(f"Successfully merged metadata into {os.path.basename(keeper_info['path'])}")
+                logger.info(f"Successfully merged metadata into {os.path.abspath(keeper_info['path'])}")
 
     except FileNotFoundError:
         logger.error(f"Keeper not found: {keeper_info['path']}")
     except UnidentifiedImageError:
         logger.error(f"Unrecognized image file: {keeper_info['path']}")
     except Exception as e:
-        logger.error(f"Error accessing keeper image {os.path.basename(keeper_info['path'])} for merge check: {e}")
+        logger.error(f"Error accessing keeper image {os.path.abspath(keeper_info['path'])} for merge check: {e}")
         return []
 
     return [] # Return empty list for non-dry run
@@ -208,7 +209,7 @@ def extract_image_metadata(image_path):
             # Use getexif() which is preferred over _getexif()
             exif_data = img.getexif()
             if not exif_data:
-                logger.debug(f"No EXIF data found in {os.path.basename(image_path)}")
+                logger.debug(f"No EXIF data found in {os.path.abspath(image_path)}")
                 return None, None
 
             decoded_exif = {TAGS.get(key, key): val for key, val in exif_data.items()}
@@ -223,7 +224,7 @@ def extract_image_metadata(image_path):
             # Fallback to DateTime (often modification time)
             elif "DateTime" in decoded_exif:
                 timestamp_str = decoded_exif["DateTime"]
-                logger.debug(f"Using DateTime as fallback timestamp for {os.path.basename(image_path)}")
+                logger.debug(f"Using DateTime as fallback timestamp for {os.path.abspath(image_path)}")
                                       
                                                                               
 
@@ -240,11 +241,11 @@ def extract_image_metadata(image_path):
                     if lat is not None and lon is not None:
                          geotag = (lat, lon)
                     else:
-                        logger.warning(f"Failed to convert GPS coordinates for {os.path.basename(image_path)}")
+                        logger.warning(f"Failed to convert GPS coordinates for {os.path.abspath(image_path)}")
                 else:
-                     logger.debug(f"GPSInfo found but missing Lat/Lon tags in {os.path.basename(image_path)}")
+                     logger.debug(f"GPSInfo found but missing Lat/Lon tags in {os.path.abspath(image_path)}")
             else:
-                logger.debug(f"No GPSInfo tag found in {os.path.basename(image_path)}")
+                logger.debug(f"No GPSInfo tag found in {os.path.abspath(image_path)}")
 
             return timestamp_str, geotag # Return raw timestamp string
 
@@ -360,7 +361,7 @@ def group_by_metadata_conflict(metadata_list):
     for item in metadata_list:
         placed = False
         item_path = item["file"]["path"] # For logging
-        logger.debug(f"  Attempting to place {os.path.basename(item_path)}...")
+        logger.debug(f"  Attempting to place {os.path.abspath(item_path)}...")
 
         for i, group in enumerate(groups):
             # Check if item matches ALL items currently in the group
@@ -368,18 +369,18 @@ def group_by_metadata_conflict(metadata_list):
             for other in group:
                 other_path = other["file"]["path"] # For logging
                 if not metadata_match(item, other):
-                    logger.debug(f"    - Conflicts with {os.path.basename(other_path)} in group {i}. Trying next group.")
+                    logger.debug(f"    - Conflicts with {os.path.abspath(other_path)} in group {i}. Trying next group.")
                     match_all = False
                     break # No need to check further within this group
 
             if match_all:
-                logger.debug(f"    - Matches all in group {i}. Adding {os.path.basename(item_path)}.")
+                logger.debug(f"    - Matches all in group {i}. Adding {os.path.abspath(item_path)}.")
                 group.append(item)
                 placed = True
                 break # Item placed, move to next item
 
         if not placed:
-            logger.debug(f"  - No matching group found. Creating new group for {os.path.basename(item_path)}.")
+            logger.debug(f"  - No matching group found. Creating new group for {os.path.abspath(item_path)}.")
             groups.append([item])
 
     logger.debug(f"Finished grouping. Found {len(groups)} distinct metadata groups.")
@@ -398,7 +399,7 @@ def choose_file_to_keep(file_list):
     metadata_list = []
     for file_info in file_list:
         path = file_info['path']
-        logger.debug(f"  Extracting metadata for {os.path.basename(path)}...")
+        logger.debug(f"  Extracting metadata for {os.path.abspath(path)}...")
         ts, gps = extract_image_metadata(path)
         metadata_list.append({
             "file": file_info, # Keep original file info dict
@@ -419,10 +420,10 @@ def choose_file_to_keep(file_list):
             keeper_meta = group[0]
             keeper_file_info = keeper_meta["file"]
             keepers.append(keeper_file_info)
-            logger.debug(f"  - Group {i}: Keeping {os.path.basename(keeper_file_info['path'])}")
+            logger.debug(f"  - Group {i}: Keeping {os.path.abspath(keeper_file_info['path'])}")
             # Log other files in the same metadata group for clarity
             for other_meta in group[1:]:
-                 logger.debug(f"    - (Metadata matched: {os.path.basename(other_meta['file']['path'])})")
+                 logger.debug(f"    - (Metadata matched: {os.path.abspath(other_meta['file']['path'])})")
         else:
             logger.warning(f"  - Group {i} is empty, skipping.")
 
@@ -453,7 +454,7 @@ def remove_files_not_available(grouping_json_path, image_info_json_path, is_dry_
     except json.JSONDecodeError:
         logger.error(f"Error: Invalid JSON format in {grouping_json_path}")
         return False # Indicate failure
-
+    
     original_group_counts = {}
     cleaned_grouping_data = {} # Work on a copy
 
@@ -524,7 +525,7 @@ def remove_files_not_available(grouping_json_path, image_info_json_path, is_dry_
     updated_count = len(cleaned_image_info_list)
     removed_count = original_count - updated_count
 
-    logger.info(f"{prefix}Cleaned '{os.path.basename(image_info_json_path)}': Removed {removed_count} non-existent file entries.")
+    logger.info(f"{prefix}Cleaned '{os.path.abspath(image_info_json_path)}': Removed {removed_count} non-existent file entries.")
     logger.info(f"{prefix}Original count: {original_count} entries. New count: {updated_count} entries.")
 
     # Save the cleaned image_info.json (if not dry run)
@@ -610,7 +611,7 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
 
             if len(file_list) == 1:
                 keeper = file_list[0]
-                logger.info(f"{prefix}    KEEPING: {os.path.basename(keeper['path'])} (only file with hash)")
+                logger.info(f"{prefix}    KEEPING: {os.path.abspath(keeper['path'])} (only file with hash)")
                 final_members_for_group.append(keeper)
                 continue
 
@@ -629,12 +630,12 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
             if is_dry_run:
                 for keeper in keepers:
                     merge_descriptions = merge_metadata_into_keeper(
-                        {"path": keeper["path"], "length": keeper["length"]}, donor_paths, dry_run=True
+                        {"path": keeper["path"]}, donor_paths, dry_run=True
                     )
                     keeper_merge_details[keeper["path"]] = merge_descriptions
 
             for k in keepers:
-                logger.info(f"{prefix}    KEEPING: {os.path.basename(k['path'])}")
+                logger.info(f"{prefix}    KEEPING: {os.path.abspath(k['path'])}")
 
             files_to_delete_in_group = []
 
@@ -653,10 +654,10 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
                                 if "GPS" in desc:
                                     transferred_parts.append("Geotag")
                     merged_info_string = "nothing" if not transferred_parts else " and ".join(sorted(set(transferred_parts)))
-                    logger.info(f"{prefix}File {os.path.basename(deleted_path)} would be deleted because file {os.path.basename(corresponding_keeper_path)} is kept. Metadata transferred: {merged_info_string}.")
+                    logger.info(f"{prefix}File {os.path.abspath(deleted_path)} would be deleted because file {os.path.abspath(corresponding_keeper_path)} is kept. Metadata transferred: {merged_info_string}.")
                     files_to_delete_in_group.append(deleted_path)
                 else:
-                    logger.info(f"    DELETING: {os.path.basename(deleted_path)} (duplicate of {os.path.basename(corresponding_keeper_path)})")
+                    logger.info(f"    DELETING: {os.path.abspath(deleted_path)} (duplicate of {os.path.abspath(corresponding_keeper_path)})")
                     files_to_delete_in_group.append(deleted_path)
 
             # 🔄 Perform metadata merge now
@@ -678,7 +679,7 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
                     for file_path in files_to_delete_in_group:
                         try:
                             os.remove(file_path)
-                            logger.info(f"    Deleted: {os.path.basename(file_path)}")
+                            logger.info(f"    Deleted: {os.path.abspath(file_path)}")
                             total_files_deleted_count += 1
                         except FileNotFoundError:
                             logger.warning(f"    Not found during deletion: {file_path}")
@@ -775,6 +776,6 @@ if __name__ == "__main__":
     if not remove_files_not_available(GROUPING_INFO_FILE, IMAGE_INFO_FILE, is_dry_run=arg_dry_run):
         logger.error("Aborting duplicate removal due to errors during JSON cleanup.")
     else:
-        logger.info(f"Cleaned up {os.path.basename(GROUPING_INFO_FILE)} and {os.path.basename(IMAGE_INFO_FILE)}.")
+        logger.info(f"Cleaned up {os.path.abspath(GROUPING_INFO_FILE)} and {os.path.abspath(IMAGE_INFO_FILE)}.")
         # 2. Remove duplicates
         remove_duplicate_images(GROUPING_INFO_FILE, is_dry_run=arg_dry_run)

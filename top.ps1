@@ -39,17 +39,24 @@ function Show-ProgressBar {
 # Function to run a Python script with error handling
 function Run-PythonScript {
     param(
+        [Parameter(Mandatory = $true)]
         [string]$ScriptPath,
+
         [string]$Arguments
     )
 
     try {
-        & "python3.13.exe" "$ScriptPath" $Arguments
+        if ([string]::IsNullOrWhiteSpace($Arguments)) {
+            & "python3.13.exe" "$ScriptPath"
+        } else {
+            & "python3.13.exe" "$ScriptPath" $Arguments
+        }
     } catch {
         Write-Error "Error running Python script '$ScriptPath': $_"
-        exit 1 # Exit with an error code
+        exit 1
     }
 }
+
 
 <# function Sanitize-DirectoryName {
     param(
@@ -263,12 +270,12 @@ $logger++
 write-host "Step 8-1 Hash AND Group Possible Video Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleVideoDuplicates.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
-#>
+
 #step 8-2 - Hash and Group Possible Image Duplicates
 write-host "Step 8-2 Hash AND Group Possible Image Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleImageDuplicates.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
-<#
+
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
@@ -278,17 +285,17 @@ $logger++
 write-host "step 9-1 Remove Exact Video Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactVideoDuplicate.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments '--dry-run'
-
+#>
 #step 9-2 Remove Exact Image Duplicate
 write-host "step 9-2 Remove Exact Image Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactImageDuplicate.py'
-Run-PythonScript -ScriptPath $pythonScriptPath -Arguments '--dry-run'
+Run-PythonScript -ScriptPath $pythonScriptPath
 #count
 
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
-
+<#
 #step 10-1 Remove Exact Video Duplicate
 write-host "step 10-1 Show AND Remove Duplicate Video"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step10 - ShowANDRemoveDuplicate\ShowANDRemoveDuplicateVideo.py'

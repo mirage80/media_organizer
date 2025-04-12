@@ -97,3 +97,57 @@ Extension: json : 62697              |                           |              
 
   jpg : 67420
   mp4 : 7236
+
+
+  modify this for following psudocode
+1- read the group
+
+2- show the group with additional data (gps, time, size, recommended)
+
+3- user has multiple option 
+3-1- keep all
+3-2- undo
+3-3- videos dont match 
+3-4- confirm  all
+3-5- skip    
+
+A- keep all
+	A-1 Combine metadata of all videos in the group.
+	A-2 Close/release the video screen and any OpenCV handles.
+	A-3 push in stack
+	A-4 Write the combined metadata into all keepers.
+	A-5 Update the JSON files (both video_info.json and grouping info).
+	A-6 show next group
+
+d- confirm
+   d-1 the selected one are called keepers
+   d-2 the not selected ones are called discarded
+   d-3 Close/release the video screen and any OpenCV handles.
+   d-4 push in stack
+   d-5 Combine metadata of all videos in the group.
+   d-6 write the combined meta in keepers
+   d-7 delete discardeds
+   d-8 Update the JSON files (both video_info.json and grouping info).
+   d-9 show next group
+
+C- skip
+   c-1 do nothing
+   c-2 push in stack
+   c-2 show the next group
+
+b- Undo
+   b-1 check if stack empty 
+   b-2 pop stack
+   b-3 revert files
+   b-4 revert jsons
+   b-5 show prev group
+
+
+
+update json 
+   based on the selection redo the grouping
+
+combine meta
+   II-I if there is no conflict automatically select a combined version
+   II-II if there are conflict show the conflict as time and map and ask the user to select one or none
+   ||-III return the selected version as combined

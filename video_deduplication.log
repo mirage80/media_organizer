@@ -1,0 +1,78 @@
+2025-04-11 19:12:39,274 - INFO - Prompting user to split multi-video group manually.
+2025-04-11 19:12:43,863 - INFO - ✅ Created new split group: IMG_7323.mp4_1115398_1 with 2 videos
+2025-04-11 19:12:43,864 - INFO - ✅ Created new split group: IMG_7323.mp4_1115398_2 with 1 videos
+2025-04-11 19:16:11,328 - INFO - Prompting user to split multi-video group manually.
+2025-04-11 19:16:15,922 - INFO - ✅ Created new split group: IMG_7323.mp4_1115398_1 with 2 videos
+2025-04-11 19:16:15,923 - INFO - ⚠️ Skipped singleton group (2) with only 1 video.
+2025-04-11 19:33:15,185 - INFO - Prompting user to split multi-video group manually.
+2025-04-11 19:33:20,442 - INFO - ✅ Created new split group: IMG_7323.mp4_1115398_1 with 2 videos
+2025-04-11 19:33:20,442 - INFO - ⚠️ Skipped singleton group (2) with only 1 video.
+2025-04-11 19:33:50,241 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:35:07,983 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:36:01,407 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:39:49,411 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:39:49,413 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:39:51,336 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:41:53,621 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:41:54,645 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:42:03,469 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:43:47,564 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:43:47,566 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:43:47,796 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:45:40,453 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:45:41,936 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:46:43,279 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:47:23,873 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:47:30,201 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 19:47:30,572 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\3.mp4
+2025-04-11 19:47:30,573 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:47:30,798 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:48:25,908 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:48:26,272 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 19:48:26,626 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\3.mp4
+2025-04-11 19:48:26,627 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:48:30,848 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:49:11,887 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:49:12,253 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 19:49:12,620 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\3.mp4
+2025-04-11 19:49:12,621 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:49:35,427 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 19:54:34,142 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 19:54:34,506 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 19:54:34,872 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\3.mp4
+2025-04-11 19:54:34,873 - INFO - Metadata has been written to keeper videos.
+2025-04-11 19:54:47,580 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 20:02:22,708 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 20:02:23,089 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 20:02:23,462 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\3.mp4
+2025-04-11 20:02:23,463 - INFO - Metadata has been written to keeper videos.
+2025-04-11 20:03:30,760 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 20:04:21,951 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\1.mp4
+2025-04-11 20:04:22,309 - INFO - ✅ Updated metadata written to: C:\Users\sawye\TEST\2.mp4
+2025-04-11 20:04:22,310 - INFO - Metadata has been written to keeper videos.
+2025-04-11 20:04:30,208 - INFO - ✅ JSON files (video info + grouping info) updated successfully.
+2025-04-11 20:05:13,039 - INFO - Only 2 videos in group. Removing group from JSON.
+2025-04-11 20:05:13,044 - INFO - ✅ Removed group: IMG_7323.mp4_1115398
+2025-04-11 20:28:50,834 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:28:59,507 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:30:46,864 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:32:42,394 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:33:03,104 - INFO - Prompting user to split multi-video group manually.
+2025-04-11 20:33:08,223 - INFO - ✅ Created new split group: IMG_7323.mp4_1115398_1 with 2 videos
+2025-04-11 20:33:08,224 - INFO - ⚠️ Skipped singleton group (2) with only 1 video.
+2025-04-11 20:33:18,383 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:33:40,662 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:34:09,120 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:34:25,535 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:34:44,612 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:36:51,904 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:37:13,552 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:37:39,275 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:38:31,848 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:39:28,574 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:40:03,286 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:42:01,800 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 20:42:40,918 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 21:05:52,841 - INFO - ℹ️ Group skipped. No changes made.
+2025-04-11 21:06:05,689 - INFO - Only 2 videos in group. Removing group from JSON.
+2025-04-11 21:06:05,697 - INFO - ✅ Removed group: IMG_7323.mp4_1115398_1
