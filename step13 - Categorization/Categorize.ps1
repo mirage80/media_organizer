@@ -1,3 +1,27 @@
+$scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+
+# --- Logging Setup ---
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+$logDir = Join-Path $scriptDirectory "..\Logs"
+$logFile = Join-Path $logDir "$scriptName.log"
+$logFormat = "{0} - {1}: {2}"
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+
+$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
+$env:DEDUPLICATOR_FILE_LOG_LEVEL = $env:DEDUPLICATOR_FILE_LOG_LEVEL ?? "DEBUG"
+$logLevelMap = @{ "DEBUG" = 0; "INFO" = 1; "WARNING" = 2; "ERROR" = 3; "CRITICAL" = 4 }
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+function Log {
+    param ([string]$Level, [string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+    if ($levelIndex -ge $consoleLogLevel) { Write-Host $formatted }
+    if ($levelIndex -ge $fileLogLevel) { Add-Content -Path $logFile -Value $formatted -Encoding UTF8 }
+}
+
 # Define Image and video extensions
 $imageExtensions = @(".jpg")
 $videoExtensions = @(".mp4")
@@ -42,21 +66,6 @@ function Show-ProgressBar {
 #===========================================================
 #                     General functions
 #===========================================================
-function Verbose {
-    param(
-        [string]$message,
-        [string]$type
-    )
-    if ($verbosity -eq 1) {
-        switch ($type.ToLower()) {
-            "error" { Write-Error $message; exit }
-            "information" { Write-Host $message -ForegroundColor Green }
-            "warning" { Write-Host $message -ForegroundColor Yellow }
-            default { Write-Host $message -ForegroundColor White }
-        }
-    }
-}
-
 function is_photo {
     param (
         [Parameter(Mandatory = $true)]
@@ -77,31 +86,76 @@ function Run_ExifToolCommand {
     param (
         [Parameter(Mandatory = $true)]
         [System.IO.FileInfo]$file,
-        [Object[]] $arguments,
-        [string] $type = "execute"
+        [Object[]]$arguments,
+        [string]$type = "execute",
+        [int]$maxRetries = 3,
+        [int]$retryDelay = 10
     )
-    $fullPath = $file.FullName
-    $params = $arguments -join ' '
-    $command = "& $ExifToolPath $params ""$fullPath"""
-    $ExifToolOutput = Invoke-Expression $command
 
-    if ($type.ToLower() -eq "timestamp") {
-        if ($null -ne $ExifToolOutput -and "" -ne $ExifToolOutput) {
-            $ExifToolOutput = Standardize_TimeStamp -InputTimestamp $ExifToolOutput
-        } else {
-            $ExifToolOutput = Make_zero_TimeStamp
-        }
-    } elseif ($type.ToLower() -eq "geotag") {
-        if ($null -ne $ExifToolOutput -and "" -ne $ExifToolOutput) {
-            $ExifToolOutput = Standardize_GeoTag -InputGeoTag $ExifToolOutput
-        } else {
-            $ExifToolOutput = Make_zero_GeoTag
-        }
-    } else {
-        $ExifToolOutput = $null
+     # Ensure the file exists
+     if (-not (Test-Path -Path $file.FullName)) {
+        # Consider returning null or throwing an error specific to file not found
+        Log "ERROR" "File not found for ExifTool command: $($file.FullName)"
+        throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
+        # return # Or just return if throwing is too disruptive downstream
     }
 
-    return $ExifToolOutput
+    $fullPath  = $file.FullName       # Full path of the file
+
+    # Build the command string and wrap it in additional quotes
+    $commandArgs = @($ExifToolPath) + $arguments + @($fullPath) # Combine executable, specific args, and file path
+      
+    # Retry logic
+    $attempt = 0
+    $ExifToolOutput = $null
+    while ($attempt -lt $maxRetries) {
+        try {
+            $attempt++
+            $ExifToolOutput = & $commandArgs[0] $commandArgs[1..($commandArgs.Count-1)] 2>&1
+
+            # Check for errors or warnings in the output
+            if ($ExifToolOutput -match "Error") {
+                $errorMessage = "ExifTool command returned an error: $($ExifToolOutput -join '; ')"
+                throw [System.Exception]$errorMessage
+            }
+            if ($ExifToolOutput -match "Warning") {
+                Log "WARNING" ""ExifTool command returned a warning: $($ExifToolOutput -join '; ')""
+            }
+            break  # Exit the loop on success
+        } catch [System.Exception] {
+            # Catch specific ExifTool error first
+            if ($_.Exception.Message -match "ExifTool command returned an error") {
+                 Log "ERROR" "ExifTool execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
+                 if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                 Start-Sleep -Seconds $retryDelay
+            } else {
+                # Catch other potential exceptions during execution
+                Log "ERROR" "Unexpected error executing ExifTool on attempt $attempt for '$fullPath'. Error: $_"
+                if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                Start-Sleep -Seconds $retryDelay
+            }
+        }
+    }
+    # Process the output based on the type
+    switch ($type.ToLower()) {
+        "timestamp" {
+            if ($ExifToolOutput -and $ExifToolOutput -ne "") {
+                return Standardize_TimeStamp -InputTimestamp $ExifToolOutput
+            } else {
+                return Make_zero_TimeStamp
+            }
+        }
+        "geotag" {
+            if ($ExifToolOutput -and $ExifToolOutput -ne "") {
+                return Standardize_GeoTag -InputGeoTag $ExifToolOutput
+            } else {
+                return Make_zero_GeoTag
+            }
+        }
+        default {
+            return $ExifToolOutput
+        }
+    }
 }
 
 #===========================================================
@@ -288,8 +342,10 @@ function categorize_bulk_media_based_on_metadata_keep_directory_structure {
 $srcDirectory = New-Item -Path "$unzippeddirectory\src" -ItemType Directory -Force
 $dstDirectory = New-Item -Path "$unzippeddirectory\dst" -ItemType Directory -Force
 
-# Move all files from the unzipped directory to the src directory
-Move-Item -Path $unzippeddirectory -Destination $srcDirectory.FullName
+# Move ONLY the target media files into the src directory
+Log "INFO" "Moving target media files (.jpg, .mp4) to $($srcDirectory.FullName)..."
+Get-ChildItem -Path $unzippeddirectory -File | Where-Object { $imageExtensions -contains $_.Extension -or $videoExtensions -contains $_.Extension } | Move-Item -Destination $srcDirectory.FullName -Force
+Log "INFO" "Finished moving target media files."
 
 $files = Get-ChildItem -Path $srcDirectory.FullName -Recurse -File
 $currentItem = 0
@@ -307,3 +363,61 @@ foreach ($file in $files) {
             -targetPath $dstDirectory
     }
 }
+
+# Check if the src directory is empty
+$remainingItems = Get-ChildItem -Path $srcDirectory.FullName -Recurse
+if ($remainingItems) {
+    Log "WARNING" "Source directory '$($srcDirectory.FullName)' was NOT empty after processing. This might indicate non-media files were present or an error occurred."
+    $remainingItems | ForEach-Object { Log "WARNING" "- Remaining item: $($_.FullName)" }
+} else {
+    Log "INFO" "Source directory '$($srcDirectory.FullName)' is empty as expected."
+    # Remove the now-empty src directory itself
+    Remove-Item -Path $srcDirectory.FullName -Force -ErrorAction SilentlyContinue
+}
+
+# --- Move categorized content from dst back to the root ---
+Log "INFO" "Moving categorized folders from '$($dstDirectory.FullName)' back to '$unzippedDirectory'..."
+
+# Get the category folders inside 'dst'
+$categoryFolders = Get-ChildItem -Path $dstDirectory.FullName -Directory -ErrorAction SilentlyContinue
+
+if ($categoryFolders) {
+    foreach ($folder in $categoryFolders) {
+        $destinationPath = Join-Path -Path $unzippedDirectory -ChildPath $folder.Name
+        Log "INFO" "Moving '$($folder.FullName)' to '$unzippedDirectory' (will become '$destinationPath')..."
+        try {
+            # Move the category folder itself up one level
+            Move-Item -Path $folder.FullName -Destination $unzippedDirectory -Force
+        } catch {
+            Log "ERROR" "Failed to move '$($folder.FullName)': $_"
+        }
+    }
+
+    # --- Clean up the now empty dst directory ---
+    Log "INFO" "Cleaning up the empty destination directory: $($dstDirectory.FullName)"
+    try {
+        # Optional: Verify it's truly empty before removing
+        if (-not (Get-ChildItem -Path $dstDirectory.FullName -ErrorAction SilentlyContinue)) {
+            Remove-Item -Path $dstDirectory.FullName -Force
+            Log "INFO" "Successfully removed empty destination directory."
+        } else {
+             Log "WARNING" "Destination directory '$($dstDirectory.FullName)' was not empty after moving category folders. Manual cleanup might be required."
+        }
+    } catch {
+        Log "ERROR" "Failed to remove destination directory '$($dstDirectory.FullName)': $_"
+    }
+} else {
+    Log "WARNING" "No category folders found in '$($dstDirectory.FullName)' to move. The 'dst' directory might be empty or categorization failed."
+    # Optionally remove the empty dst directory even if no category folders were found
+    try {
+        if (Test-Path $dstDirectory.FullName -PathType Container) {
+             Remove-Item -Path $dstDirectory.FullName -Force -ErrorAction SilentlyContinue
+             Log "INFO" "Removed potentially empty destination directory."
+        }
+    } catch {
+         Log "ERROR" "Failed to remove destination directory '$($dstDirectory.FullName)' even though no category folders were found: $_"
+    }
+}
+
+# Correct the final log message
+Log "INFO" "Categorization and final move complete."

@@ -1,5 +1,4 @@
 import os
-import json
 import argparse
 
 def count_file_types_in_directory(root_dir):
@@ -37,14 +36,19 @@ def count_file_types_in_directory(root_dir):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process video in a directory and group them by hash.")
     parser.add_argument("output_file", help="The file containing the video to process.")
+    parser.add_argument("RootDirectory", help="The root directory to start the search.")
     args = parser.parse_args()
 
     output_file_name = args.output_file
+    root_directory = args.RootDirectory
     outputfile = open(output_file_name, 'w', encoding='utf-8')
 
-    root_directory = "e:"  # Replace with your root directory
     counts = count_file_types_in_directory(root_directory)
 
-    if counts:
-        for extension, count in counts.items():
-            outputfile.write(f"Extension: {extension}, Count: {count}\n")
+if counts:
+    try:
+        with open(output_file_name, 'w', encoding='utf-8') as outputfile:
+            for extension, count in counts.items():
+                outputfile.write(f"Extension: {extension}, Count: {count}\n")
+    except IOError as e:
+        print(f"Error writing to output file {output_file_name}: {e}")

@@ -225,7 +225,7 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
         if not metadata_args:
             logger.info("No metadata to merge.")
             return []
-
+        input_path = os.path.abspath(keeper_info['path'])
         # Build ffmpeg command
         success = write_metadata_ffmpeg(
             input_path,

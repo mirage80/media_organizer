@@ -1,23 +1,107 @@
-function Load-ProcessedLog {
+# Define timestamp fields for different file extensions
+$TimeStampFields = @{
+    ".jpeg" = @("DateTimeOriginal", "CreateDate", "DateAcquired")
+    ".jpg"  = @("DateTimeOriginal", "CreateDate", "DateAcquired")
+    ".heic" = @("DateTimeOriginal", "DateCreated", "DateTime")
+    ".mov"  = @("TrackCreateDate", "CreateDate", "MediaCreateDate")
+    ".mp4"  = @("TrackCreateDate", "MediaModifyDate", "MediaCreateDate", "TrackModifyDate")
+}
+
+# Define GPS fields for different file extensions
+$gpsFields = @{
+    ".jpeg" = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
+    ".jpg"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
+    ".heic" = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
+    ".mov"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
+    ".mp4"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
+}
+
+# Define patterns for extracting timestamps from filenames
+$patterns = @(
+    '(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}-\d{2}-\d{2})_-\d+',  # Matches 2019-02-18_13-12-18_-_89373.jpg
+    '(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}-\d{2}-\d{2})',       # Matches 2020-03-31_16-04-32.mp4
+    '(?<date>\d{2}-\d{2}-\d{4})@(?<time>\d{2}-\d{2}-\d{2})',       # Matches 29-03-2023@12-34-56
+    '(?<date>\d{4}_\d{4})_(?<time>\d{6})',                         # Matches 2023_0329_123456
+    '(?<date>\d{8})_(?<time>\d{6})-\w+',                           # Matches 20240214_103148-4d0e
+    '(?<date>\d{8})_(?<time>\d{6})',                               # Matches 20240122_175641
+    '(?<date>\d{8})',                                              # Matches VID_20200311
+    '(?<date>\d{4}-\d{2}-\d{2})\(\d+\)',                           # Matches 2023-07-27(10).jpg
+    '(?<date>[A-Za-z]{3} \d{1,2}, \d{4}), (?<time>\d{1,2}:\d{2}:\d{2}(AM|PM))',  # Matches Mar 29, 2023, 12:34:56PM
+    '(?<date>\d{4}/\d{2}/\d{2}) (?<time>\d{2}:\d{2}:\d{2})',       # Matches 2023/03/29 12:34:56
+    '(?<date>\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2}\.\d{3})',  # Matches 2023-03-29 12:34:56.123
+    '@(?<date>\d{2}-\d{2}-\d{4})_(?<time>\d{2}-\d{2}-\d{2})',      # Matches photo_1406@18-10-2016_06-50-25
+    '(?<date>\d{4}:\d{2}:\d{2}) (?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:[+-]\d{2}:\d{2})?)',  # Matches 2023:03:29 12:34:56+00:00
+    '(?<prefix>[A-Za-z]+)_(?<date>\d{8})_(?<time>\d{6})'           # Matches PREFIX_YYYYMMDD_HHMMSS
+)
+
+# Define time formats for validating timestamps
+$time_formats = @(
+    "yyyy:MM:dd HH:mm:sszzz",       # Standard format with timezone offset
+    "yyyy:MM:dd HH:mm:ss zzz",      # Standard format with space before offset
+    "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds and timezone offset
+    "yyyy-MM-ddTHH:mm:sszzz",       # ISO 8601 format
+    "yyyy-MM-dd HH:mm:ss",          # Common format without timezone
+    "yyyy-MM-ddTHH:mm:ss",          # ISO 8601 without timezone
+    "yyyy-MM-dd HH:mm:ss.fff",      # Format with milliseconds
+    "MM/dd/yyyy HH:mm:ss zzz",      # US format with timezone offset
+    "MMM d, yyyy, h:mm:sstt",       # Format with month name and AM/PM
+    "MMM d, yyyy, h:mm:ss tt",      # Format with month name, AM/PM, and space
+    "MMM d, yyyy, h:mm:ssttzzz",    # **New format for Jan 23, 2024, 3:44:03PM+00:00**
+    "yyyy:MM:dd HH:mm:ss.ff zzz",   # Format with fractional seconds
+    "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds
+    "yyyy:MM:dd HH:mm:ss"           # Format without timezone
+)
+function Get-ProcessedLog {
     param (
         [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$file
+        [string]$LogPath 
     )
 
-    if (Test-Path -Path $hashLogPath) {
+    $validEntries = [System.Collections.Generic.List[object]]::new()
+    if (Test-Path -Path $LogPath) {
+        $reader = $null
         try {
-            $content = Get-Content -Path $hashLogPath -Raw | ConvertFrom-Json
-            if ($content -is [System.Collections.IEnumerable]) {
-                return @($content)  # Already a collection
-            } else {
-                return @($content)  # Wrap a single object as array
+            $reader = [System.IO.StreamReader]::new($LogPath) 
+            while ($line = $reader.ReadLine()) {
+                if ([string]::IsNullOrWhiteSpace($line)) {
+                    continue # Skip empty lines
+                }
+                try {
+                    # Attempt to parse each line as JSON
+                    $entry = $line | ConvertFrom-Json -ErrorAction Stop
+                    if ($null -ne $entry -and $entry.PSObject.Properties['path']) { # Basic check for a valid-looking entry
+                        $validEntries.Add($entry)
+                    } else {
+                        Log "WARNING" "Invalid entry in log file: $line"
+                    }
+                } catch {
+                    Log "WARNING" "Failed to parse entry as JSON: $line"
+                }
             }
         } catch {
-            Log "WARNING" "Corrupted log file. Starting fresh."
-            return @()
+            Log "ERROR" "Failed to parse Log File"
+            return @() # Return empty on read error
+        } finally {
+            if ($null -ne $reader) {
+                $reader.Dispose()
+            }
         }
+    } else {
+        Log "WARNING" "Log file not found."
+        return @() # Return empty array if file doesn't exist
+    }    
+
+    # Deduplicate based on the 'path' property, keeping the LATEST entry if timestamps differ (though unlikely here)
+    # Using a hashtable for efficient deduplication
+    $uniqueEntries = @{}
+    foreach ($entry in $validEntries) {
+        # Overwrite existing entry for the same path, effectively keeping the last one read
+         if ($null -ne $entry -and $entry.path) {
+            $uniqueEntries[$entry.path] = $entry
+         }
     }
-    return @()
+    Log "INFO" "Loaded $($uniqueEntries.Count) unique processed entries from Log File"  
+    return @($uniqueEntries.Values)
 }
 
 function is_photo {
@@ -100,27 +184,26 @@ function Run_ExifToolCommand {
         [int]$retryDelay = 10
     )
 
-    # Ensure the file exists
-    if (-not (Test-Path -Path $file.FullName)) {
-        return
+     # Ensure the file exists
+     if (-not (Test-Path -Path $file.FullName)) {
+        # Consider returning null or throwing an error specific to file not found
+        Log "ERROR" "File not found for ExifTool command: $($file.FullName)"
+        throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
+        # return # Or just return if throwing is too disruptive downstream
     }
 
     $fullPath  = $file.FullName       # Full path of the file
-    $argument_mix = $arguments -replace '^(?:"([^"]*)="([^"]*)"|([^"]*)="([^"]*))$', '$1$3="$2$4"'
 
     # Build the command string and wrap it in additional quotes
-    $params = $argument_mix -join ' '
-    $command = "& $ExifToolPath $params '$fullPath'"
-
-    # Execute the command string
-        
+    $commandArgs = @($ExifToolPath) + $arguments + @($fullPath) # Combine executable, specific args, and file path
+      
     # Retry logic
     $attempt = 0
     $ExifToolOutput = $null
     while ($attempt -lt $maxRetries) {
         try {
             $attempt++
-            $ExifToolOutput = Invoke-Expression $command 2>&1
+            $ExifToolOutput = & $commandArgs[0] $commandArgs[1..($commandArgs.Count-1)] 2>&1
 
             # Check for errors or warnings in the output
             if ($ExifToolOutput -match "Error") {
@@ -131,24 +214,20 @@ function Run_ExifToolCommand {
                 Log "WARNING" ""ExifTool command returned a warning: $($ExifToolOutput -join '; ')""
             }
             break  # Exit the loop on success
-        } catch [System.IO.FileNotFoundException] {
-            $errorMessage = "ExifTool command failed: ExifTool not found. Error: $_"
-            Log "ERROR" "$errorMessage"
-            throw
         } catch [System.Exception] {
-            if ($attempt -ge $maxRetries) {
-                $errorMessage = "Failed to execute ExifTool command after $maxRetries attempts. Error: $_"
-                Log "ERROR" "$errorMessage"
-                throw
+            # Catch specific ExifTool error first
+            if ($_.Exception.Message -match "ExifTool command returned an error") {
+                 Log "ERROR" "ExifTool execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
+                 if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                 Start-Sleep -Seconds $retryDelay
+            } else {
+                # Catch other potential exceptions during execution
+                Log "ERROR" "Unexpected error executing ExifTool on attempt $attempt for '$fullPath'. Error: $_"
+                if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                Start-Sleep -Seconds $retryDelay
             }
-            Start-Sleep -Seconds $retryDelay
-        } catch {
-            $errorMessage = "An unexpected error occurred: $_"
-            Log "ERROR" "$errorMessage"
-            throw
         }
     }
-
     # Process the output based on the type
     switch ($type.ToLower()) {
         "timestamp" {
@@ -585,18 +664,6 @@ function Find_and_Write_Valid_Timestamp {
 
     # Check if the earliest timestamp is valid
     if ($earliestTimestamp -and (IsValid_TimeStamp -timestamp_in $earliestTimestamp)) {
-        # Check if the timestamp is before 1970
-        $parsedDate = [datetime]::ParseExact($earliestTimestamp, "yyyy:MM:dd HH:mm:sszzz", $null)
-        if ($parsedDate -lt [datetime]"1970-01-01") {
-            # Prompt the user for confirmation
-            yes
-            yes$userInput = Read-Host "The timestamp $earliestTimestamp is before 1970. Do you want to use it? (yes/no)"
-            if ($userInput -ne "yes") {
-                Log "WARNING" ""User rejected the timestamp $earliestTimestamp for file: $fullPath""
-                return $null
-            }
-        }
-
         # Write the timestamp to the file
         try {
             Write_TimeStamp -File $File -TimeStamp $earliestTimestamp
@@ -786,15 +853,17 @@ function Update-FileMetadata {
     )
     try {
         $FinalTimestamp = Find_and_Write_Valid_Timestamp -File $File
-        Log "INFO" ""Successfully wrote timestamp $($FinalTimestamp[1])""
+        Log "INFO" "Successfully wrote timestamp $FinalTimestamp"
     } catch {
         Log "WARNING" ""Failed to write timestamp for file: $($File.basename).""
+        throw
     }
     try {
         $FinalGeoTag = Find_and_Write_Valid_GeoTag -File $File
-        Log "INFO" ""Successfully wrote GeoTag $($FinalGeoTag[1])""
+        Log "INFO" "Successfully wrote GeoTag $FinalGeoTag"
     } catch {
         Log "WARNING" ""Failed to write geotag for file: $($File.basename).""
+        throw
     }
 }
 
@@ -1161,7 +1230,7 @@ function Get_Field_By_Extension {
         throw [System.ArgumentNullException]$errorMessage
     }
 
-    if ($FieldDictionary -eq $null) {
+    if ($null -eq $FieldDictionary) {
         $errorMessage = "FieldDictionary is null. Cannot retrieve fields."
         Log "ERROR" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
@@ -1269,10 +1338,10 @@ function Write_Geotag {
 
         # Construct ExifTool arguments
         $exifArgs = @(
-            "-GPSLatitude=`"$latitude`"",
-            "-GPSLatitudeRef=`"$latitudeRef`"",
-            "-GPSLongitude=`"$longitude`"",
-            "-GPSLongitudeRef=`"$longitudeRef`""
+            "-GPSLatitude=`'$latitude`'",
+            "-GPSLatitudeRef=`'$latitudeRef`'",
+            "-GPSLongitude=`'$longitude`'",
+            "-GPSLongitudeRef=`'$longitudeRef`'"
         )
 
         # Run ExifTool command

@@ -1,7 +1,5 @@
 # --- Logging Setup ---
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
-# --- Logging Setup ---
-$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 $logDir = Join-Path $scriptDirectory "..\Logs"
 $logFile = Join-Path $logDir "$scriptName.log"
 $logFormat = "{0} - {1}: {2}"
@@ -36,11 +34,20 @@ function Log {
     $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
 
-    if ($levelIndex -ge $consoleLogLevel) {
-        Log "INFO" $formatted
-    }
-    if ($levelIndex -ge $fileLogLevel) {
-        Add-Content -Path $logFile -Value $formatted -Encoding UTF8
+    if ($null -ne $levelIndex) { # Check if the level is valid
+        if ($levelIndex -ge $consoleLogLevel) {
+            Write-Host $formatted # Use Write-Host directly
+        }
+        if ($levelIndex -ge $fileLogLevel) {
+            try {
+                Add-Content -Path $logFile -Value $formatted -Encoding UTF8
+            } catch {
+                Write-Warning "Failed to write to log file '$logFile': $_"
+            }
+        }
+    } else {
+        Write-Warning "Invalid log level used: $Level"
+        Write-Host $formatted # Still write to host for invalid levels? Or handle differently.
     }
 }
 
@@ -70,64 +77,8 @@ $imageExtensions = @(".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".heic")
 # Define video extensions in lowercase
 $videoExtensions = @(".mp4", ".mov", ".avi", ".mkv", ".flv", ".webm")
 
-
-# Define timestamp fields for different file extensions
-$TimeStampFields = @{
-    ".jpeg" = @("DateTimeOriginal", "CreateDate", "DateAcquired")
-    ".jpg"  = @("DateTimeOriginal", "CreateDate", "DateAcquired")
-    ".heic" = @("DateTimeOriginal", "DateCreated", "DateTime")
-    ".mov"  = @("TrackCreateDate", "CreateDate", "MediaCreateDate")
-    ".mp4"  = @("TrackCreateDate", "MediaModifyDate", "MediaCreateDate", "TrackModifyDate")
-}
-
-# Define GPS fields for different file extensions
-$gpsFields = @{
-    ".jpeg" = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
-    ".jpg"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
-    ".heic" = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
-    ".mov"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
-    ".mp4"  = @("GPSLatitudeRef", "GPSLatitude", "GPSLongitudeRef", "GPSLongitude", "GPSPosition")
-}
-
-# Define patterns for extracting timestamps from filenames
-$patterns = @(
-    '(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}-\d{2}-\d{2})_-\d+',  # Matches 2019-02-18_13-12-18_-_89373.jpg
-    '(?<date>\d{4}-\d{2}-\d{2})_(?<time>\d{2}-\d{2}-\d{2})',       # Matches 2020-03-31_16-04-32.mp4
-    '(?<date>\d{2}-\d{2}-\d{4})@(?<time>\d{2}-\d{2}-\d{2})',       # Matches 29-03-2023@12-34-56
-    '(?<date>\d{4}_\d{4})_(?<time>\d{6})',                         # Matches 2023_0329_123456
-    '(?<date>\d{8})_(?<time>\d{6})-\w+',                           # Matches 20240214_103148-4d0e
-    '(?<date>\d{8})_(?<time>\d{6})',                               # Matches 20240122_175641
-    '(?<date>\d{8})',                                              # Matches VID_20200311
-    '(?<date>\d{4}-\d{2}-\d{2})\(\d+\)',                           # Matches 2023-07-27(10).jpg
-    '(?<date>[A-Za-z]{3} \d{1,2}, \d{4}), (?<time>\d{1,2}:\d{2}:\d{2}(AM|PM))',  # Matches Mar 29, 2023, 12:34:56PM
-    '(?<date>\d{4}/\d{2}/\d{2}) (?<time>\d{2}:\d{2}:\d{2})',       # Matches 2023/03/29 12:34:56
-    '(?<date>\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2}\.\d{3})',  # Matches 2023-03-29 12:34:56.123
-    '@(?<date>\d{2}-\d{2}-\d{4})_(?<time>\d{2}-\d{2}-\d{2})',      # Matches photo_1406@18-10-2016_06-50-25
-    '(?<date>\d{4}:\d{2}:\d{2}) (?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:[+-]\d{2}:\d{2})?)',  # Matches 2023:03:29 12:34:56+00:00
-    '(?<prefix>[A-Za-z]+)_(?<date>\d{8})_(?<time>\d{6})'           # Matches PREFIX_YYYYMMDD_HHMMSS
-)
-
-# Define time formats for validating timestamps
-$time_formats = @(
-    "yyyy:MM:dd HH:mm:sszzz",       # Standard format with timezone offset
-    "yyyy:MM:dd HH:mm:ss zzz",      # Standard format with space before offset
-    "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds and timezone offset
-    "yyyy-MM-ddTHH:mm:sszzz",       # ISO 8601 format
-    "yyyy-MM-dd HH:mm:ss",          # Common format without timezone
-    "yyyy-MM-ddTHH:mm:ss",          # ISO 8601 without timezone
-    "yyyy-MM-dd HH:mm:ss.fff",      # Format with milliseconds
-    "MM/dd/yyyy HH:mm:ss zzz",      # US format with timezone offset
-    "MMM d, yyyy, h:mm:sstt",       # Format with month name and AM/PM
-    "MMM d, yyyy, h:mm:ss tt",      # Format with month name, AM/PM, and space
-    "MMM d, yyyy, h:mm:ssttzzz",    # **New format for Jan 23, 2024, 3:44:03PM+00:00**
-    "yyyy:MM:dd HH:mm:ss.ff zzz",   # Format with fractional seconds
-    "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds
-    "yyyy:MM:dd HH:mm:ss"           # Format without timezone
-)
-
 $hashLogPath = Join-Path $scriptDirectory "consolidation_log.json"  # << This line must come BEFORE functions
-
-
+$processedLog = Get-ProcessedLog -LogPath $hashLogPath # Use the function from MediaTools.psm1
 
 # Define max number of threads
 $maxThreads = 8

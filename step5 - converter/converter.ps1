@@ -57,13 +57,9 @@ function Convert-VideoUsingFFmpeg {
         [string]$outputFile
     )
 
-    $ffmpegPath = "ffmpeg"  # Ensure ffmpeg is in the PATH or specify the full path
-    $logFile = "conversion.log"
-    $logReportFile = "conversion_report.log"
-
     # Get video duration in seconds
     try {
-        $durationString = & $ffmpegPath -i $inputFile 2>&1 | Select-String "Duration"
+        $durationString = & $ffmpeg -i $inputFile 2>&1 | Select-String "Duration"
         if ($durationString -match "Duration: (\d+):(\d+):(\d+\.\d+)") {
             $totalSeconds = ($matches[1] -as [int]) * 3600 + ($matches[2] -as [int]) * 60 + ($matches[3] -as [double])
         } else {
@@ -78,7 +74,7 @@ function Convert-VideoUsingFFmpeg {
 		$ffmpegArgs = "-i `"$inputFile`" -qscale 0 `"$outputFile`" -y -progress - -nostats"
 	
 		$processInfo = New-Object System.Diagnostics.ProcessStartInfo
-		$processInfo.FileName = $ffmpegPath
+		$processInfo.FileName = $ffmpeg
 		$processInfo.Arguments = $ffmpegArgs
 		$processInfo.RedirectStandardOutput = $true
 		$processInfo.RedirectStandardError  = $true
@@ -169,10 +165,6 @@ function Rename-AnyFile {
     $originalFileName = Split-Path -Path $originalFile -Leaf
     $newFileName = Split-Path -Path $newFile -Leaf
     $directory = Split-Path -Path $originalFile -Parent
-    $baseOriginalFileName = [System.IO.Path]::GetFileNameWithoutExtension($originalFileName)
-    $baseNewFileName = [System.IO.Path]::GetFileNameWithoutExtension($newFileName)
-    $originalFileExtension = [System.IO.Path]::GetExtension($originalFileName)
-    $newFileExtension = [System.IO.Path]::GetExtension($newFileName)
 
     $relatedFiles = Get-ChildItem -Path $directory -File
 
@@ -228,7 +220,7 @@ function Rename-JsonTmpToJson {
 }
 
 # Function to fix missed related files
-function Fix-MissedRelatedFiles {
+function Repair-MissedRelatedFiles {
     param (
         [string]$directory
     )
@@ -324,5 +316,5 @@ foreach ($file in $files) {
 # After processing all files, rename .json.tmp to .json
 Rename-JsonTmpToJson -directory $unzipedDirectory
 # Fix any missed related files
-Fix-MissedRelatedFiles -directory $unzipedDirectory
+Repair-MissedRelatedFiles -directory $unzipedDirectory
 Log "INFO" "Conversion and .json.tmp processing completed"

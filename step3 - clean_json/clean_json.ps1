@@ -57,7 +57,7 @@ function Write-JsonAtomic {
         Move-Item -Path $tempPath -Destination $Path -Force
         Log "INFO" "✅ Atomic write succeeded: $Path"
     } catch {
-        Log "ERROR" "❌ Atomic write failed for $Path: $_"
+        Log "ERROR" "❌ Atomic write failed for $Path : $_"
         if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }
     }
 }
@@ -90,7 +90,6 @@ function Sanitize_FileList {
         $fileName = Split-Path -Path $filePath -Leaf
 
         # Sanitize the directory name
-        $originalDirectoryName = $directory
 
         # Check if directory is just a drive letter (e.g., "D:")
         if (($directory -match "^[a-zA-Z]:$") -or ($directory -match "^[a-zA-Z]:\\$") -or ($directory -match "^[a-zA-Z]:/$") ) {
@@ -248,7 +247,6 @@ foreach ($file in $level2_files) {
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 5"
 
     $filename = $file
-    $found_pair = $false
 
     $with_parentheses = $false
     $json_file = "$filename.json"
@@ -258,7 +256,6 @@ foreach ($file in $level2_files) {
         $level3_pairs += $file, $json_file, $with_parentheses
         $fileSet.Remove($file)
         $fileSet.Remove($json_file)
-        $found_pair = $true
         continue
     }
 
@@ -277,7 +274,6 @@ foreach ($file in $level2_files) {
                 $level3_pairs += $file, $json_file, $with_parentheses
                 $fileSet.Remove($file)
                 $fileSet.Remove($json_file)
-                $found_pair = $true
                 break
             }
         }
@@ -294,7 +290,6 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
     $jsonFilePath = $level3_pairs[$i + 1]
     $with_parentheses = $level3_pairs[$i + 2]
 
-    $OrigJsonFilePath = $jsonFilePath
     # Extract the directory and base name of the main file
     $mainFileDirectory = Split-Path -Path $mainFilePath -Parent
     $mainFileDirectory = $mainFileDirectory -replace '\\', '/'
@@ -483,7 +478,6 @@ for ($i = 0; $i -lt $level5_pairs.Length; $i += 2) {
     $jsonFileBaseName = $jsonFileBaseName -split '\.' | Select-Object -First 1
 
     $mainFileExtension = [System.IO.Path]::GetExtension($mainFileName)
-    $jsonFileExtension = [System.IO.Path]::GetExtension($jsonFileName)
 
     # Determine the shorter base name length
     $mainFileBaseLength = $mainFileBaseName.Length
