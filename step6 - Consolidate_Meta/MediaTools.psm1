@@ -51,6 +51,7 @@ $time_formats = @(
     "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds
     "yyyy:MM:dd HH:mm:ss"           # Format without timezone
 )
+
 function Get-ProcessedLog {
     param (
         [Parameter(Mandatory = $true)]

@@ -420,3 +420,12 @@ Log "INFO" "step 13 use Categorize.ps1 to categorize files based on the availabi
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
 $logger++
+
+#step 13 Categorization 
+Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
+& "$scriptDirectory\step14  - Estimate By Time\EstimateByTime.ps1"
+
+#count
+$pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+$logger++

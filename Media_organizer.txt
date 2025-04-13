@@ -62,7 +62,13 @@ step12 Reconstrct corrupt Files
 
 step13 Categroize Based on 2 critera of having or not having GeoTag and Timestamp
 
-
+step14 estimate missing geotags
+  14-1 - Generate a JSON file of media with geotag and timestamp
+  14-2 - shows the media without geotag to on the side of closest timed media from step 14-1
+  14-3 - Ask if they are from same place
+  14-4 - If they are from same place, then update geotag
+  14-5 - If they are not from same place, then move on
+      
 
 
 # Step 4: Generate JSON metadata for directories with media files
