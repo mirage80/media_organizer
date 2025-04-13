@@ -1,7 +1,0 @@
-
-File Type Summary Per Actual Directory:
----------------------------------------
-
-[Total]
-  jpg : 67420
-  mp4 : 5888
