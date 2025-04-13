@@ -68,26 +68,12 @@ step14 estimate missing geotags
   14-3 - Ask if they are from same place
   14-4 - If they are from same place, then update geotag
   14-5 - If they are not from same place, then move on
-      
 
 
-# Step 4: Generate JSON metadata for directories with media files
-$DirsForJsonGeneration = @(
-    $CategorizedDirs.WithTime_WithGeo_WithJson,
-    $CategorizedDirs.WithTime_WithGeo_NoJson
-)
-$DirsForJsonGeneration | ForEach_Object {
-    Parse_MediaDirectory _Directory $_
-}
 
-# Step 5: Update geolocation data for media without geotags
-$DirsToUpdateGeo = @(
-    $CategorizedDirs.WithTime_NoGeo_WithJson,
-    $CategorizedDirs.WithTime_NoGeo_NoJson
-)
-$DirsToUpdateGeo | ForEach_Object {
-    Find_AndUpdate_Geolocation _Directory $_
-}
+
+
+Step13 Ask user for estimate event
 
 # Step 6: Timeline files based on aliases (ask user for geo locations)
 TimelineFilesBasedOnAlias _SourceDir $CategorizedDirs.WithTime_NoGeo_WithJson _Alias "User Alias"
@@ -99,7 +85,6 @@ GeotagFilesBasedOnAlias _SourceDir $CategorizedDirs.NoTime_NoGeo_NoJson _Alias "
 $Round2Dir = "$BaseDirectory\Round2"
 Categorize_Media_Based_On_Metadata _SourceDir $OutputDirectory _DestDir $Round2Dir
 
-Step13 Ask user for estimate time
 
 
 
