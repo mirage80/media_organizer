@@ -1,3 +1,63 @@
+# --- Logging Setup ---
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+# --- Logging Setup ---
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+$logDir = Join-Path $scriptDirectory "..\Logs"
+$logFile = Join-Path $logDir "$scriptName.log"
+$logFormat = "{0} - {1}: {2}"
+
+# Create the log directory if it doesn't exist
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+
+# Set default log levels if not present in environment
+$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
+$env:DEDUPLICATOR_FILE_LOG_LEVEL    = $env:DEDUPLICATOR_FILE_LOG_LEVEL    ?? "DEBUG"
+
+# Map log level strings to priorities
+$logLevelMap = @{
+    "DEBUG"    = 0
+    "INFO"     = 1
+    "WARNING"  = 2
+    "ERROR"    = 3
+    "CRITICAL" = 4
+}
+
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+
+    if ($levelIndex -ge $consoleLogLevel) {
+        Log "INFO" $formatted
+    }
+    if ($levelIndex -ge $fileLogLevel) {
+        Add-Content -Path $logFile -Value $formatted -Encoding UTF8
+    }
+}
+
+# === Logging Utilities ===
+function Get-FileHashString {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
+    )
+    if (-not (Test-Path $File.FullName)) {
+        throw "File not found: $($File.FullName)"
+    }
+    $hash = Get-FileHash -Path $File.FullName -Algorithm SHA256
+    return $hash.Hash
+}
+
+
 # Define the script directory
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 

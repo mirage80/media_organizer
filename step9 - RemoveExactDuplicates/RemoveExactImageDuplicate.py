@@ -16,30 +16,84 @@ import logging  # <-- Add logging
 DATETIME_TAG = 36867  # DateTimeOriginal
 GPSINFO_TAG = 34853   # GPSInfo
 
-# Get the directory of the current script
+SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
+
+ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+
+# --- Logging Setup ---
+# 1. Define a map from level names (strings) to logging constants
+LOG_LEVEL_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+
+# 2. Define default levels (used if env var not set or invalid)
+DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
+DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
+
+# 3. Read environment variables, get level string (provide default string)
+console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
+file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
+
+# 4. Look up the actual logging level constant from the map (provide default constant)
+#    Use .get() for safe lookup, falling back to default if the string is not a valid key
+CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
+FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
+
+# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
+LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
+LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
 LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IMAGE_INFO_FILE = os.path.join(SCRIPT_DIR, "image_info.json")
-GROUPING_INFO_FILE = os.path.join(SCRIPT_DIR, "image_grouping_info.json")
-DRY_RUN_LOG_FILE = os.path.join(SCRIPT_DIR, "dry_run_image_duplicates.log") # <-- Log file path
-DELETED_LOG_FILE = os.path.join(SCRIPT_DIR, "deleted_images.log") # <-- Original deleted log
 
-# --- Helper Functions (show_progress_bar, extract_image_metadata, etc. - Keep as is) ---
-def setup_logger(dry_run, script_dir):
-    log_file = os.path.join(script_dir, "dry_run_image_duplicates.log" if dry_run else "run_image_duplicates.log")
-    
-    # Remove existing handlers
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+# Ensure log folder exists
+os.makedirs(LOGGING_DIR, exist_ok=True)
 
-    logging.basicConfig(
-        filename=log_file,
-        filemode='w',
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger()
-    return logger
+formatter = logging.Formatter(LOGGING_FORMAT)
+
+# --- File Handler ---
+log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
+log_handler.setFormatter(formatter)
+log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Console Handler ---
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Configure Root Logger ---
+root_logger = logging.getLogger()
+# Set root logger level to the *lowest* of the handlers to allow all messages through
+root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
+
+# --- Add Handlers ---
+if not root_logger.hasHandlers():
+    root_logger.addHandler(log_handler)
+    root_logger.addHandler(console_handler)
+
+# --- Get your specific logger ---
+logger = logging.getLogger(__name__)
+
+MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
+IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
+IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
+
+def write_exif_atomic(img, path, exif_data):
+    temp_path = path + ".tmp.jpg"
+    try:
+        img.save(temp_path, exif=exif_data)
+        os.replace(temp_path, path)
+        return True
+    except Exception as e:
+        logger.error(f"❌ Failed to write EXIF to {path}: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return False
 
 
 def show_progress_bar(current, total, message):
@@ -140,19 +194,8 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
             keeper_exif = keeper_img.getexif()
             if keeper_exif is None:
                 keeper_exif = Image.Exif()
-                            
-                                                                               
-                                                                                                       
-                                
-                                                                       
-                         
-                                                                       
-                                                                     
                 logger.warning(f"Creating new EXIF for keeper: {os.path.abspath(keeper_info['path'])}")
-
             merged_something = False
-                                                
-                     
 
             # Merge timestamp
             if found_datetime_donor_path:
@@ -185,7 +228,7 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
             # Save updated EXIF
             if merged_something:
                 try:
-                    keeper_img.save(keeper_info["path"], exif=keeper_exif)
+                    write_exif_atomic(keeper_img, keeper_info["path"], keeper_exif)
                     logger.info(f"✅ Successfully updated metadata in {os.path.abspath(keeper_info['path'])}")
                 except Exception as e:
                     logger.error(f"❌ Failed to save metadata: {e}")
@@ -211,12 +254,9 @@ def extract_image_metadata(image_path):
             if not exif_data:
                 logger.debug(f"No EXIF data found in {os.path.abspath(image_path)}")
                 return None, None
-
             decoded_exif = {TAGS.get(key, key): val for key, val in exif_data.items()}
               
-
             # --- Timestamp Extraction ---
-                                            
             timestamp_str = None
             # Prefer DateTimeOriginal (more specific)
             if "DateTimeOriginal" in decoded_exif:
@@ -225,8 +265,6 @@ def extract_image_metadata(image_path):
             elif "DateTime" in decoded_exif:
                 timestamp_str = decoded_exif["DateTime"]
                 logger.debug(f"Using DateTime as fallback timestamp for {os.path.abspath(image_path)}")
-                                      
-                                                                              
 
             # --- GPS Extraction ---
             gps_info_dict = None
@@ -246,7 +284,6 @@ def extract_image_metadata(image_path):
                      logger.debug(f"GPSInfo found but missing Lat/Lon tags in {os.path.abspath(image_path)}")
             else:
                 logger.debug(f"No GPSInfo tag found in {os.path.abspath(image_path)}")
-
             return timestamp_str, geotag # Return raw timestamp string
 
     except FileNotFoundError:
@@ -259,7 +296,6 @@ def extract_image_metadata(image_path):
         logger.error(f"Error reading EXIF from {image_path}: {e}")
         return None, None
 
-
 def convert_gps(coord, ref):
     """Convert GPS coordinates (IFDRational format) to float format."""
     if coord is None or not isinstance(coord, tuple) or len(coord) != 3:
@@ -270,7 +306,6 @@ def convert_gps(coord, ref):
         degrees = float(coord[0])
         minutes = float(coord[1])
         seconds = float(coord[2])
-
         decimal = degrees + minutes / 60.0 + seconds / 3600.0
         if ref in ['S', 'W']:
             decimal = -decimal
@@ -278,7 +313,6 @@ def convert_gps(coord, ref):
     except (ValueError, TypeError, ZeroDivisionError) as e:
          logger.warning(f"Could not convert GPS coordinate part {coord} with ref {ref}: {e}")
          return None
-
 
 def parse_timestamp(ts_str):
     """Parses EXIF timestamp string into a datetime object."""
@@ -294,7 +328,6 @@ def parse_timestamp(ts_str):
         except ValueError:
             logger.warning(f"Could not parse timestamp string: {ts_str}")
             return None
-
 
 def haversine(lat1, lon1, lat2, lon2):
     """Calculate distance between two lat/lon points in meters."""
@@ -313,7 +346,6 @@ def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
     t2 = parse_timestamp(meta2["timestamp"]) # Parse here
     g1 = meta1["geotag"]
     g2 = meta2["geotag"]
-
     time_matches = False
     if t1 and t2:
         if abs((t1 - t2).total_seconds()) <= time_tolerance_sec:
@@ -386,7 +418,6 @@ def group_by_metadata_conflict(metadata_list):
     logger.debug(f"Finished grouping. Found {len(groups)} distinct metadata groups.")
     return groups
 
-
 def choose_file_to_keep(file_list):
     """
     Choose one file per metadata group based on timestamp and geotag.
@@ -428,7 +459,6 @@ def choose_file_to_keep(file_list):
             logger.warning(f"  - Group {i} is empty, skipping.")
 
     return keepers
-
 
 def remove_files_not_available(grouping_json_path, image_info_json_path, is_dry_run=False): # <-- Add is_dry_run flag
     """
@@ -488,7 +518,6 @@ def remove_files_not_available(grouping_json_path, image_info_json_path, is_dry_
         logger.info(f"{prefix}Cleaned '{grouping_key}': Removed {members_removed} non-existent file entries and {groups_removed} groups (<=1 member).")
         logger.info(f"{prefix}Original count: {original_group_counts[grouping_key]} groups. New count: {len(cleaned_groups)} groups.")
 
-
     # Save the cleaned grouping_info.json (if not dry run)
     if not is_dry_run:
         try:
@@ -500,7 +529,6 @@ def remove_files_not_available(grouping_json_path, image_info_json_path, is_dry_
             return False # Indicate failure
     else:
         logger.info(f"{prefix}Skipped writing changes to {grouping_json_path}")
-
 
     # --- Clean image_info.json ---
     try:
@@ -767,15 +795,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     arg_dry_run = args.dry_run
 
-    
-    logger = setup_logger(arg_dry_run, SCRIPT_DIR)
-
     logger.info("--- Starting Dry Run Mode ---" if arg_dry_run else "--- Starting Actual Run Mode ---")
 
     # 1. Clean up JSON files first
-    if not remove_files_not_available(GROUPING_INFO_FILE, IMAGE_INFO_FILE, is_dry_run=arg_dry_run):
+    if not remove_files_not_available(IMAGE_GROUPING_INFO_FILE, IMAGE_INFO_FILE, is_dry_run=arg_dry_run):
         logger.error("Aborting duplicate removal due to errors during JSON cleanup.")
     else:
-        logger.info(f"Cleaned up {os.path.abspath(GROUPING_INFO_FILE)} and {os.path.abspath(IMAGE_INFO_FILE)}.")
+        logger.info(f"Cleaned up {os.path.abspath(IMAGE_GROUPING_INFO_FILE)} and {os.path.abspath(IMAGE_INFO_FILE)}.")
         # 2. Remove duplicates
-        remove_duplicate_images(GROUPING_INFO_FILE, is_dry_run=arg_dry_run)
+        remove_duplicate_images(IMAGE_GROUPING_INFO_FILE, is_dry_run=arg_dry_run)

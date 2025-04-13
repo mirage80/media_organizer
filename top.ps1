@@ -6,11 +6,36 @@
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $7zip = 'C:\Program Files\7-Zip\7z.exe'
 $ExifToolPath = "'C:\Program Files\exiftools\exiftool.exe'"
-$verbosity = 0
+$magickPath = "C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"  # Update this path if needed
+$ffmpeg = "ffmpeg.exe"
+
+$DEDUPLICATOR_CONSOLE_LOG_LEVEL = "INFO"
+$DEDUPLICATOR_FILE_LOG_LEVEL = "DEBUG"
 
 $zipDirectory = 'D:'
 $unzipedDirectory = 'E:'
 $logger = 8
+
+if (-not (Test-Path $7zip)) {
+    Log "ERROR" "7-Zip not found at $7zip. Aborting."
+    exit 1
+}
+
+if (-not (Test-Path $ExifToolPath)) {
+    Log "ERROR" "Exiftools not found at $ExifToolPath. Aborting."
+    exit 1
+}
+
+if (-not (Test-Path $magickPath)) {
+    Log "ERROR" "magik not found at $magickPath. Aborting."
+    exit 1
+}
+
+if (-not (Test-Path $ffmpeg)) {
+    Log "ERROR" "ffmpeg not found at $ffmpeg. Aborting."
+    exit 1
+}
+
 
 function Show-ProgressBar {
     param(
@@ -36,6 +61,66 @@ function Show-ProgressBar {
     Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
 }
 
+# --- Logging Setup ---
+$logDir = Join-Path $scriptDirectory "Logs"
+$logFilePath = Join-Path $logDir "main_pipeline.log"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+
+$logLevelMap = @{
+    "DEBUG"    = 0
+    "INFO"     = 1
+    "WARNING"  = 2
+    "ERROR"    = 3
+}
+$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
+$env:DEDUPLICATOR_FILE_LOG_LEVEL    = $env:DEDUPLICATOR_FILE_LOG_LEVEL    ?? "DEBUG"
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = "$timestamp - $Level - $Message"
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+    
+    if ($levelIndex -ge $consoleLogLevel) {
+        Write-Host $formatted
+    }
+    if ($levelIndex -ge $fileLogLevel) {
+        Add-Content -Path $logFilePath -Value $formatted -Encoding UTF8
+    }
+}
+
+# Add this atomic JSON write function near the top of your script (after logging setup)
+function Write-JsonAtomic {
+    param (
+        [Parameter(Mandatory = $true)][object]$Data,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    try {
+        $tempPath = "$Path.tmp"
+        $json = $Data | ConvertTo-Json -Depth 10
+        $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
+
+        # Validate JSON before replacing
+        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
+
+        Move-Item -Path $tempPath -Destination $Path -Force
+        Log "INFO" "✅ Atomic write succeeded: $Path"
+    } catch {
+        Log "ERROR" "❌ Atomic write failed for $Path: $_"
+        if (Test-Path $tempPath) {
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # Function to run a Python script with error handling
 function Run-PythonScript {
     param(
@@ -52,13 +137,12 @@ function Run-PythonScript {
             & "python3.13.exe" "$ScriptPath" $Arguments
         }
     } catch {
-        Write-Error "Error running Python script '$ScriptPath': $_"
+        Log "ERROR" "Error running Python script '$ScriptPath': $_"
         exit 1
     }
 }
 
-
-<# function Sanitize-DirectoryName {
+ function Sanitize-DirectoryName {
     param(
         [Parameter(Mandatory = $true)]
         [string]$DirectoryPath
@@ -80,9 +164,9 @@ function Run-PythonScript {
 
         try {
             Rename-Item -Path $DirectoryPath -NewName $sanitizedName -Force
-            Write-Host "Renamed '$originalName' to '$sanitizedName'"
+            Log "INFO" "Renamed '$originalName' to '$sanitizedName'"
         } catch {
-            Write-Warning "Failed to rename '$originalName': $_"
+            Log "WARNING" "Failed to rename '$originalName': $_"
         }
     }
 }
@@ -94,7 +178,7 @@ function Sanitize-DirectoriesRecursively {
     )
 
     if (-not (Test-Path -Path $RootDirectory -PathType Container)) {
-        Write-Error "Root directory '$RootDirectory' does not exist."
+        Log "ERROR" "Root directory '$RootDirectory' does not exist."
         return
     }
 
@@ -113,7 +197,7 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 # step 1 - Extract Zip Files
-write-host "step1 - Extract Zip Files"
+Log "INFO" "step1 - Extract Zip Files"
 
 # Create an empty array to store the results.
 $zipContents = @()
@@ -128,7 +212,7 @@ foreach ($zipFile in $zipFiles) {
     # Extract the contents of the zip file to the temporary directory.
     $currentItem++
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "$zipFile"
-    & $7zip x -aos "$zipFile"  -o"$unzipedDirectory" >$null 2>&1
+	& "$7zip" x -aos "$zipFile" "-o$unzipedDirectory" | Out-Null
 } 
 
 #count 2
@@ -138,11 +222,11 @@ $logger++
 
 # step 2 - Sanetize the names
 Write-Host -NoNewline "`n"
-write-host "`nstep2 - Sanetize the names"
+Log "INFO" "step2 - Sanetize the names"
 Sanitize-DirectoriesRecursively -RootDirectory $unzipedDirectory
 
 #step3 - clean json names json files
-write-host "step3 - clean json names json files"
+Log "INFO" "step3 - clean json names json files"
 & "$scriptDirectory\step3 - clean_json\clean_json.ps1"
 
 # Define the directory containing the rename files
@@ -167,13 +251,13 @@ foreach ($batchFile in $batchFiles) {
 
     # Check if the file exists
     if (!(Test-Path -Path $filePath -PathType Leaf)) {
-        Write-Warning "File '$filePath' not found. Skipping..."
+        Log "WARNING" "File '$filePath' not found. Skipping..."
         continue
     }
 
     $contents = Get-Content -Path $filePath
     $currentItem = 0
-    $totalItems = len($contents)
+	$totalItems = $contents.Count
 
     # Read the file line by line and execute the commands
     Get-Content -Path $filePath | ForEach-Object {
@@ -196,7 +280,7 @@ foreach ($batchFile in $batchFiles) {
             Invoke-Expression $command
             $passed++
         } catch {
-            # Write-warning "Failed to execute: $command. Error: $_"
+            Log "WARNING" "Failed to execute: $command. Error: $_"
             $failed++
         }
     }
@@ -208,7 +292,7 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 #step 4 - remove orphaned json files
-write-host "step4 - remove orphaned json files"
+Log "INFO" "step4 - remove orphaned json files"
 & "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\remove_orphaned_json.ps1"
 Get-Content -Path "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\orphaned_json_files.txt" | ForEach-Object {
     $file = $_.Trim() # Remove any leading or trailing whitespace
@@ -219,10 +303,10 @@ Get-Content -Path "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\orphaned_j
             # Delete the file
             Remove-Item -Path "$file" -Force
         } catch {
-            Write-Warning "Failed to delete '$file': $_"
+            Log "WARNING" "Failed to delete '$file': $_"
         }
     } else {
-        Write-Warning "File not found: $file"
+        Log "WARNING" "File not found: $file"
     }
 }
 
@@ -232,19 +316,18 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 # step 5 - use converter to change everything to mp4 & jpg
-write-host "step5 - use converter to change everything to mp4 & jpg"
+Log "INFO" "step5 - use converter to change everything to mp4 & jpg"
 & "$scriptDirectory\step5 - converter\converter.ps1"
 
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$logger.txt"
+Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
 
 #step 6 use step6 - Consolidate_Meta to combine time stamps
-write-host "step6 use 6 - Consolidate_Meta to combine time stamps"
-& "$scriptDirectory\step6 - Consolidate_Meta\6 - Consolidate_Meta.ps1"
-$logger = 5
+Log "INFO" "step6 use 6 - Consolidate_Meta to combine time stamps"
+& "$scriptDirectory\step6 - Consolidate_Meta\Consolidate_Meta.ps1"
 
  #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
@@ -252,7 +335,7 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 #step 7 - $RECYCLE.BIN
-write-host "Step 7 RECYCLE.BIN"
+Log "INFO" "Step 7 RECYCLE.BIN"
 $RecycleBinPath = Join-Path -Path $unzipedDirectory -ChildPath '$RECYCLE.BIN'
 # Ensure the Recycle Bin path exists before attempting to change attributes
 if (Test-Path -Path $RecycleBinPath -PathType Container) {
@@ -267,12 +350,12 @@ $logger++
 
 
 #step 8-1 - Hash and Group Possible Video Duplicates
-write-host "Step 8-1 Hash AND Group Possible Video Duplicates to extract groups"
+Log "INFO" "Step 8-1 Hash AND Group Possible Video Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleVideoDuplicates.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
 
 #step 8-2 - Hash and Group Possible Image Duplicates
-write-host "Step 8-2 Hash AND Group Possible Image Duplicates to extract groups"
+Log "INFO" "Step 8-2 Hash AND Group Possible Image Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleImageDuplicates.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
 
@@ -282,12 +365,12 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 #step 9-1 Remove Exact Video Duplicate
-write-host "step 9-1 Remove Exact Video Duplicate"
+Log "INFO" "step 9-1 Remove Exact Video Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactVideoDuplicate.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments '--dry-run'
-#>
+
 #step 9-2 Remove Exact Image Duplicate
-write-host "step 9-2 Remove Exact Image Duplicate"
+Log "INFO" "step 9-2 Remove Exact Image Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactImageDuplicate.py'
 Run-PythonScript -ScriptPath $pythonScriptPath
 #count
@@ -295,14 +378,14 @@ Run-PythonScript -ScriptPath $pythonScriptPath
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt"
 $logger++
-<#
-#step 10-1 Remove Exact Video Duplicate
-write-host "step 10-1 Show AND Remove Duplicate Video"
+
+#step 10-1 Show AND Remove Duplicate Video
+Log "INFO" "step 10-1 Show AND Remove Duplicate Video"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step10 - ShowANDRemoveDuplicate\ShowANDRemoveDuplicateVideo.py'
 Run-PythonScript -ScriptPath $pythonScriptPath
 
-#step 10-2 Remove Exact Image Duplicate
-write-host "step 10-1 Show AND Remove Duplicate Image"
+#step 10-2 Show AND Remove Duplicate Image
+Log "INFO" "step 10-1 Show AND Remove Duplicate Image"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step10 - ShowANDRemoveDuplicate\ShowANDRemoveDuplicateImage.py'
 Run-PythonScript -ScriptPath $pythonScriptPath
 
@@ -312,12 +395,12 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 #step 11-1 Remove Junk Video
-write-host "step 11-1 use RemoveJunkVideo.py to remove junk Videos"
+Log "INFO" "step 11-1 use RemoveJunkVideo.py to remove junk Videos"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step11 - RemoveJunk\RemoveJunkVideo.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
 
-#step 11-1 Remove Junk Image 
-write-host "step 11-2 use RemoveJunkImage.py to remove junk Videos"
+#step 11-2 Remove Junk Image 
+Log "INFO" "step 11-2 use RemoveJunkImage.py to remove junk Videos"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step11 - RemoveJunk\RemoveJunkImage.py'
 Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
 
@@ -327,8 +410,5 @@ Run-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_
 $logger++
 
 #step 12 Categorization 
-write-host "step 12 use Categorize.ps1 to categorize files based on the availability of meta data"
+Log "INFO" "step 12 use Categorize.ps1 to categorize files based on the availability of meta data"
 & "$scriptDirectory\step12 - Categorization\Categorize.ps1"
-
-
- #>

@@ -1,4 +1,4 @@
-import json
+import json          
 import os
 import math
 import shutil
@@ -8,30 +8,112 @@ import subprocess
 import argparse # <-- Add argparse
 import logging  # <-- Add logging
 
-# Get the directory of the current script
+
+
+SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
+
+ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+
+# --- Logging Setup ---
+# 1. Define a map from level names (strings) to logging constants
+LOG_LEVEL_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+
+# 2. Define default levels (used if env var not set or invalid)
+DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
+DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
+
+# 3. Read environment variables, get level string (provide default string)
+console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
+file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
+
+# 4. Look up the actual logging level constant from the map (provide default constant)
+#    Use .get() for safe lookup, falling back to default if the string is not a valid key
+CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
+FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
+
+# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
+LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
+LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
 LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIDEO_INFO_FILE = os.path.join(SCRIPT_DIR, "video_info.json")
-GROUPING_INFO_FILE = os.path.join(SCRIPT_DIR, "video_grouping_info.json")
-DRY_RUN_LOG_FILE = os.path.join(SCRIPT_DIR, "dry_run_video_duplicates.log") # <-- Log file path
-DELETED_LOG_FILE = os.path.join(SCRIPT_DIR, "deleted_videos.log") # <-- Original deleted log
 
-# --- Helper Functions (show_progress_bar, extract_video_metadata, etc. - Keep as is) ---
-def setup_logger(dry_run, script_dir):
-    log_file = os.path.join(script_dir, "dry_run_video_duplicates.log" if dry_run else "run_video_duplicates.log")
-    
-    # Remove existing handlers
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+# Ensure log folder exists
+os.makedirs(LOGGING_DIR, exist_ok=True)
 
-    logging.basicConfig(
-        filename=log_file,
-        filemode='w',
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    logger = logging.getLogger()
-    return logger
+formatter = logging.Formatter(LOGGING_FORMAT)
+
+# --- File Handler ---
+log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
+log_handler.setFormatter(formatter)
+log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Console Handler ---
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Configure Root Logger ---
+root_logger = logging.getLogger()
+# Set root logger level to the *lowest* of the handlers to allow all messages through
+root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
+
+# --- Add Handlers ---
+if not root_logger.hasHandlers():
+    root_logger.addHandler(log_handler)
+    root_logger.addHandler(console_handler)
+
+# --- Get your specific logger ---
+logger = logging.getLogger(__name__)
+
+MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
+VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
+VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
+
+def write_metadata_ffmpeg(path, timestamp=None, geotag=None):
+    dir_name = os.path.dirname(path)
+    base_name = os.path.basename(path)
+    temp_file = os.path.join(dir_name, f".{base_name}.tmp.mp4")
+
+    metadata_args = []
+
+    if timestamp:
+        metadata_args += ["-metadata", f"creation_time={timestamp}"]
+
+    if geotag and len(geotag) == 2:
+        lat, lon = geotag
+        iso6709 = f"{lat:+.6f}{lon:+.6f}/"
+        metadata_args += ["-metadata", f"location={iso6709}"]
+
+    try:
+        cmd = [
+            "ffmpeg", "-y", "-i", path, *metadata_args,
+            "-codec", "copy", temp_file
+        ]
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+        # Only replace original if everything succeeded
+        os.replace(temp_file, path)
+        return True
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ ffmpeg failed for {path}: {e}")
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return False
+
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in atomic write for {path}: {e}")
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return False
 
 
 def show_progress_bar(current, total, message):
@@ -56,8 +138,6 @@ def show_progress_bar(current, total, message):
     empty_bar = ' ' * empty_length
 
     print(f"\r{message} [{filled_bar}{empty_bar}] {percent}% ({current}/{total})", end="")
-
-# Replace the existing merge_metadata_into_keeper function with this one:
 
 def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
     """
@@ -147,22 +227,15 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
             return []
 
         # Build ffmpeg command
-        input_path = keeper_info["path"]
-        temp_path = input_path + ".temp_metadata.mp4"
-        ffmpeg_cmd = [
-            "ffmpeg", "-y", "-i", input_path,
-            *metadata_args,
-            "-codec", "copy", temp_path
-        ]
-        result = subprocess.run(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-        if result.returncode != 0:
-            logger.error(f"FFmpeg failed to write metadata: {result.stderr}")
-            return []
-
-        # Replace original file with updated file
-        os.replace(temp_path, input_path)
-        logger.info(f"Successfully merged metadata into {os.path.abspath(input_path)}")
+        success = write_metadata_ffmpeg(
+            input_path,
+            timestamp=donor_ts_str if found_datetime_donor_path else None,
+            geotag=donor_gps if found_gps_donor_path else None
+        )
+        if success:
+            logger.info(f"✅ Successfully merged metadata into {os.path.abspath(input_path)}")
+        else:
+            logger.error(f"❌ Failed to merge metadata into {os.path.abspath(input_path)}")
 
     except Exception as e:
         logger.error(f"Error accessing keeper image {os.path.abspath(keeper_info['path'])} for merge check: {e}")
@@ -705,15 +778,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     arg_dry_run = args.dry_run
 
-    
-    logger = setup_logger(arg_dry_run, SCRIPT_DIR)
-
     logger.info("--- Starting Dry Run Mode ---" if arg_dry_run else "--- Starting Actual Run Mode ---")
 
     # 1. Clean up JSON files first
-    if not remove_files_not_available(GROUPING_INFO_FILE, VIDEO_INFO_FILE, is_dry_run=arg_dry_run):
+    if not remove_files_not_available(VIDEO_GROUPING_INFO_FILE, VIDEO_INFO_FILE, is_dry_run=arg_dry_run):
         logger.error("Aborting duplicate removal due to errors during JSON cleanup.")
     else:
-        logger.info(f"Cleaned up {os.path.abspath(GROUPING_INFO_FILE)} and {os.path.abspath(VIDEO_INFO_FILE)}.")
+        logger.info(f"Cleaned up {os.path.abspath(VIDEO_GROUPING_INFO_FILE)} and {os.path.abspath(VIDEO_INFO_FILE)}.")
         # 2. Remove duplicates
-        remove_duplicate_videos(GROUPING_INFO_FILE, is_dry_run=arg_dry_run) 
+        remove_duplicate_videos(VIDEO_GROUPING_INFO_FILE, is_dry_run=arg_dry_run) 

@@ -14,35 +14,96 @@ from PIL import Image, ImageTk  # Add this at the top
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.widgets import Button
+from dateutil.parser import parse as parse_date
 matplotlib.use('TkAgg')
 import logging
-import threading
 import time
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MAP_FILE = os.path.join(SCRIPT_DIR, "..", "assets", "world_map.png")
-VIDEO_INFO_FILE = os.path.join(SCRIPT_DIR, "..", "video_info.json")
-GROUPING_INFO_FILE = os.path.join(SCRIPT_DIR, "..", "video_grouping_info.json")
+SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
 
-file_handler = logging.FileHandler("video_deduplication.log", encoding='utf-8')
+ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+
+# --- Logging Setup ---
+# 1. Define a map from level names (strings) to logging constants
+LOG_LEVEL_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+
+# 2. Define default levels (used if env var not set or invalid)
+DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
+DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
+
+# 3. Read environment variables, get level string (provide default string)
+console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
+file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
+
+# 4. Look up the actual logging level constant from the map (provide default constant)
+#    Use .get() for safe lookup, falling back to default if the string is not a valid key
+CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
+FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
+
+# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
+LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
+LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
+LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+
+# Ensure log folder exists
+os.makedirs(LOGGING_DIR, exist_ok=True)
+
+formatter = logging.Formatter(LOGGING_FORMAT)
+
+# --- File Handler ---
+log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
+log_handler.setFormatter(formatter)
+log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Console Handler ---
 console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+console_handler.setFormatter(formatter)
+console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
 
-# Filter out emojis for console
-class EmojiFilter(logging.Filter):
-    def filter(self, record):
-        record.msg = ''.join(c for c in record.msg if ord(c) < 128)
-        return True
+# --- Configure Root Logger ---
+root_logger = logging.getLogger()
+# Set root logger level to the *lowest* of the handlers to allow all messages through
+root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
 
-console_handler.addFilter(EmojiFilter())
+# --- Add Handlers ---
+if not root_logger.hasHandlers():
+    root_logger.addHandler(log_handler)
+    root_logger.addHandler(console_handler)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[file_handler, console_handler]
-)
-
+# --- Get your specific logger ---
 logger = logging.getLogger(__name__)
+
+MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
+VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
+VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
+
+def safe_write_json(data, target_path):
+    temp_path = target_path + ".tmp"
+
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+        # Validate that it's readable JSON
+        with open(temp_path, "r", encoding="utf-8") as f:
+            json.load(f)
+
+        os.replace(temp_path, target_path)
+        logger.info(f"✅ Safely wrote: {target_path}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to safely write JSON to {target_path}: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
 
 # --- Metadata Matching Utilities --- #
@@ -56,8 +117,8 @@ def haversine(lat1, lon1, lat2, lon2):
 
 def parse_timestamp(ts):
     try:
-        return datetime.strptime(ts, "%Y:%m:%d %H:%M:%S")
-    except:
+        return parse_date(ts)
+    except Exception:
         return None
 
 def release_video_handles(path):
@@ -83,7 +144,7 @@ def read_current_video_info():
 
 def read_current_grouping_info():
     try:
-        with open(GROUPING_INFO_FILE, 'r') as f:
+        with open(VIDEO_GROUPING_INFO_FILE, 'r') as f:
             return json.load(f)
     except Exception:
         return {}
@@ -186,17 +247,15 @@ def restore_deleted_files(paths):
 
 def restore_json_files(video_info_backup, grouping_backup):
     if video_info_backup:
-        with open(VIDEO_INFO_FILE, "w") as f:
-            json.dump(video_info_backup, f, indent=2)
+        safe_write_json(video_info_backup, VIDEO_INFO_FILE)
         logger.info("✅ Restored video_info.json")
 
     if grouping_backup:
-        with open(GROUPING_INFO_FILE, "w") as f:
-            json.dump(grouping_backup, f, indent=2)
+        safe_write_json(grouping_backup, VIDEO_GROUPING_INFO_FILE)
         logger.info("✅ Restored video_grouping_info.json")
 
 def backup_json_files():
-    for f in [VIDEO_INFO_FILE, GROUPING_INFO_FILE]:
+    for f in [VIDEO_INFO_FILE, VIDEO_GROUPING_INFO_FILE]:
         if os.path.exists(f):
             shutil.copy(f, f + ".bak")
 
@@ -353,8 +412,7 @@ def update_json(keepers=None, discarded=None):
     updated_video_info = list(path_map.values())
 
     try:
-        with open(VIDEO_INFO_FILE, 'w') as f:
-            json.dump(updated_video_info, f, indent=2)
+        safe_write_json(updated_video_info, VIDEO_INFO_FILE)
     except Exception as e:
         logger.error(f"Error writing video info: {e}")
         return "❌ Failed to update video_info.json."
@@ -362,7 +420,7 @@ def update_json(keepers=None, discarded=None):
 
     # --- Update video_grouping_info.json --- #
     try:
-        with open(GROUPING_INFO_FILE, 'r') as f:
+        with open(VIDEO_GROUPING_INFO_FILE, 'r') as f:
             grouping_info = json.load(f)
     except Exception as e:
         logger.error(f"Error reading grouping info: {e}")
@@ -395,8 +453,7 @@ def update_json(keepers=None, discarded=None):
             group_dict.pop(gid, None)
 
     try:
-        with open(GROUPING_INFO_FILE, 'w') as f:
-            json.dump(grouping_info, f, indent=2)
+        safe_write_json(grouping_info, VIDEO_GROUPING_INFO_FILE)
     except Exception as e:
         logger.error(f"Error writing grouping info: {e}")
         return "❌ Failed to update video_grouping_info.json."
@@ -463,15 +520,15 @@ class VideoDeduplicationGUI:
             self.video_info_data = []
 
         try:
-            with open(GROUPING_INFO_FILE, 'r') as f:
+            with open(VIDEO_GROUPING_INFO_FILE, 'r') as f:
                 self.grouping_data = json.load(f)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load grouping info: {e}")
             self.grouping_data = {}
 
     def resolve_video_path(self, video_dict):
-#        for info in self.video_info_data:
-#            if info.get("name") == video_dict.get("name") and info.get("size") == video_dict.get("size") and info.get("hash") == video_dict.get("hash"):
+        for info in self.video_info_data:
+            if info.get("name") == video_dict.get("name") and info.get("size") == video_dict.get("size") and info.get("hash") == video_dict.get("hash"):
                 return video_dict.get("path"), video_dict
 
     def setup_ui(self):
@@ -677,8 +734,7 @@ class VideoDeduplicationGUI:
             # e-1-2: remove group by current key
             if self.current_group_key:
                 self.grouping_data["grouped_by_name_and_size"].pop(self.current_group_key, None)
-                with open(GROUPING_INFO_FILE, "w") as f:
-                    json.dump(self.grouping_data, f, indent=2)
+                safe_write_json(self.grouping_data, VIDEO_GROUPING_INFO_FILE)
                 logger.info(f"✅ Removed group: {self.current_group_key}")
         
             self.next_group()
@@ -779,8 +835,8 @@ class VideoDeduplicationGUI:
                 self.grouping_data["grouped_by_name_and_size"][new_key] = videos
                 inserted += 1
                 logger.info(f"✅ Created new split group: {new_key} with {len(videos)} videos")
-            with open(GROUPING_INFO_FILE, "w") as f:
-                json.dump(self.grouping_data, f, indent=2)
+            safe_write_json(self.grouping_data, VIDEO_GROUPING_INFO_FILE)
+
 
             top.destroy()
 
@@ -806,7 +862,7 @@ if __name__ == "__main__":
     root = tk.Tk()
 
     try:
-        with open(GROUPING_INFO_FILE, 'r') as f:
+        with open(VIDEO_GROUPING_INFO_FILE, 'r') as f:
             grouping_data = json.load(f)
             all_groups_dict = grouping_data.get("grouped_by_name_and_size", {})
             group_keys = list(all_groups_dict.keys())

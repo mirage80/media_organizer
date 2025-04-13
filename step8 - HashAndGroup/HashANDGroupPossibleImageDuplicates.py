@@ -8,6 +8,21 @@ import logging
 import subprocess
 import math
 import shutil
+import tempfile
+
+def write_json_atomic(data, path):
+    dir_name = os.path.dirname(path)
+    try:
+        with tempfile.NamedTemporaryFile("w", delete=False, dir=dir_name, suffix=".tmp", encoding='utf-8') as tmp:
+            json.dump(data, tmp, indent=4)
+            temp_path = tmp.name
+        os.replace(temp_path, path)
+        return True
+    except Exception as e:
+        logging.error(f"❌ Failed to write JSON to {path}: {e}")
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return False
 
 def show_progress_bar(current, total, message):
     """
@@ -34,15 +49,75 @@ def show_progress_bar(current, total, message):
 
 # Get the directory of the current script
 SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-IMAGE_INFO_FILE = os.path.join(SCRIPT_DIR, "image_info.json")
-GROUPING_INFO_FILE = os.path.join(SCRIPT_DIR, "image_grouping_info.json")
+SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
+
+ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+
+# --- Logging Setup ---
+# 1. Define a map from level names (strings) to logging constants
+LOG_LEVEL_MAP = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
+
+# 2. Define default levels (used if env var not set or invalid)
+DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
+DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
+
+# 3. Read environment variables, get level string (provide default string)
+console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
+file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
+
+# 4. Look up the actual logging level constant from the map (provide default constant)
+#    Use .get() for safe lookup, falling back to default if the string is not a valid key
+CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
+FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
+
+# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
+LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
+LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
+LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+
+# Ensure log folder exists
+os.makedirs(LOGGING_DIR, exist_ok=True)
+
+formatter = logging.Formatter(LOGGING_FORMAT)
+
+# --- File Handler ---
+log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
+log_handler.setFormatter(formatter)
+log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Console Handler ---
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(formatter)
+console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
+
+# --- Configure Root Logger ---
+root_logger = logging.getLogger()
+# Set root logger level to the *lowest* of the handlers to allow all messages through
+root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
+
+# --- Add Handlers ---
+if not root_logger.hasHandlers():
+    root_logger.addHandler(log_handler)
+    root_logger.addHandler(console_handler)
+
+# --- Get your specific logger ---
+logger = logging.getLogger(__name__)
+
+
+IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
+IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
 SUPPORTED_EXTENSIONS = (".jpg")
 HASH_ALGORITHM = "sha256"  # Change to "md5" if you prefer
 CHUNK_SIZE = 4096
-LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format=LOGGING_FORMAT)
 
 def generate_image_hash(image_path):
     """Generate a hash for a image using the specified algorithm."""
@@ -121,18 +196,13 @@ def process_images(directory, existing_image_info):
                     processed_files += 1
                     continue
                 image_info_list.append(image_info)
-
-                # Dump every new image info entry to the file
-                with open(IMAGE_INFO_FILE, 'w') as f:
-                    json.dump(image_info_list, f, indent=4)
-
                 processed_files += 1
                 show_progress_bar(processed_files, total_files, "Hashing")
 
-    # Dump remaining image info entries to the file
+    # ✅ Write only once at the end
     if image_info_list:
-        with open(IMAGE_INFO_FILE, 'w') as f:
-            json.dump(image_info_list, f, indent=4)
+        write_json_atomic(image_info_list, IMAGE_INFO_FILE)
+
 
 
 def group_images_by_name_and_size(image_info_list):
@@ -184,9 +254,7 @@ def generate_grouping_image():
         "grouped_by_hash": grouped_by_hash
     }
 
-    with open(GROUPING_INFO_FILE, 'w') as f:
-        json.dump(grouping_info, f, indent=4)
-
+    write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process images in a directory and group them by hash.")
@@ -198,3 +266,6 @@ if __name__ == "__main__":
     logging.info(f"Starting with {len(existing_image_info)} hashed images.")
     process_images(directory, existing_image_info)
     generate_grouping_image()
+    logging.info(f"✅ Finished. Total image processed: {len(existing_image_info)}")
+    logging.info(f"Grouping info saved to {IMAGE_GROUPING_INFO_FILE}")
+    logging.info(f"Image info saved to {IMAGE_INFO_FILE}")

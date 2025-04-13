@@ -1,41 +1,50 @@
 # Define the input/output directory (same path as the script)
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
-$unzipedDirectory = 'E:\'
+
+# Logging Setup
+$logDir = Join-Path $scriptDirectory "..\Logs"
+$logFilePath = Join-Path $logDir "conversion.log"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+
+$logLevelMap = @{
+    "DEBUG"    = 0
+    "INFO"     = 1
+    "WARNING"  = 2
+    "ERROR"    = 3
+}
+$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
+$env:DEDUPLICATOR_FILE_LOG_LEVEL    = $env:DEDUPLICATOR_FILE_LOG_LEVEL    ?? "DEBUG"
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = "$timestamp - $Level - $Message"
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+
+    if ($levelIndex -ge $consoleLogLevel) {
+        Write-Host $formatted
+    }
+    if ($levelIndex -ge $fileLogLevel) {
+        Add-Content -Path $logFilePath -Value $formatted -Encoding UTF8
+    }
+}
 
 # Validate the directory
 if (!(Test-Path -Path $unzipedDirectory -PathType Container)) {
-    Write-Error "Invalid directory path: $unzipedDirectory"
+    Log "ERROR" "Invalid directory path: $unzipedDirectory"
     exit 1
 }
 
-# Define the log file for conversion failures
-$logFile = Join-Path -Path $scriptDirectory -ChildPath "conversion_failures.txt"
-# Define the log file for conversion skipped
-$logSkippedFile = Join-Path -Path $scriptDirectory -ChildPath "conversion_skipped.txt"
-# Define the log file for successful conversions
-$logSuccessfulConversions = Join-Path -Path $scriptDirectory -ChildPath "conversion_success.txt"
-# Define the log file for files fixed
-$logFixFile = Join-Path -Path $scriptDirectory -ChildPath "conversion_fixed.txt"
-# Define the log file for files report (make sure this is correct)
-$logReportFile = Join-Path -Path $scriptDirectory -ChildPath "file_report.txt"
-
-# Define the path to the ImageMagick executable
-$magickPath = "C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"  # Update this path if needed
-
-# Function to convert video files using FFmpeg
-# Define the path to the ffmpeg executable (make sure this is correct)
-$ffmpeg = "ffmpeg.exe"
-
-
-# Create the log files if they don't exist, or clear them if they do
-$logFiles = @($logFile, $logSkippedFile, $logSuccessfulConversions, $logFixFile, $logReportFile)
-foreach ($file in $logFiles) {
-    if (-not (Test-Path -Path $file)) {
-        New-Item -ItemType File -Path $file | Out-Null
-    } else {
-        Clear-Content -Path $file
-    }
-}
+# Define progress log path
+$OutputDir = Join-Path $scriptDirectory "..\Output"
+$progressLogPath = Join-Path $OutputDir "ffmpeg_progress_realtime.log"
 
 # Define the list of video and photo extensions
 $videoExtensions = @(".mov", ".avi", ".mkv", ".flv", ".webm", ".mpeg", ".mpx", ".3gp", ".mp4", ".wmv", ".mpg" , ".m4v" ) #added .mpeg
@@ -61,44 +70,66 @@ function Convert-VideoUsingFFmpeg {
             throw "Could not determine video duration."
         }
     } catch {
-        Write-Host "Error: Failed to get video duration. $_" -ForegroundColor Red
+        Log "ERROR" "Failed to get video duration for '$inputFile': $_"
         return $false
     }
 
-    # Start the conversion process and monitor progress
-    try {
-        $process = Start-Process -FilePath $ffmpegPath -ArgumentList "-i `"$inputFile`" -qscale 0 `"$outputFile`" -y -progress pipe:1" -NoNewWindow -PassThru -RedirectStandardOutput "ffmpeg_progress.log"
+	try {
+		$ffmpegArgs = "-i `"$inputFile`" -qscale 0 `"$outputFile`" -y -progress - -nostats"
+	
+		$processInfo = New-Object System.Diagnostics.ProcessStartInfo
+		$processInfo.FileName = $ffmpegPath
+		$processInfo.Arguments = $ffmpegArgs
+		$processInfo.RedirectStandardOutput = $true
+		$processInfo.RedirectStandardError  = $true
+		$processInfo.UseShellExecute = $false
+		$processInfo.CreateNoWindow = $true
+	
+		$process = New-Object System.Diagnostics.Process
+		$process.StartInfo = $processInfo
+		$process.Start() | Out-Null
+	
+		$progressLines = @()
+		while (-not $process.StandardOutput.EndOfStream) {
+			$line = $process.StandardOutput.ReadLine()
+			if ($line) {
+				$progressLines += $line
+	
+				if ($line -match "out_time_ms=(\d+)") {
+					$elapsedSeconds = [math]::Round(($matches[1] -as [double]) / 1000000, 2)
+					$percentComplete = [math]::Round(($elapsedSeconds / $totalSeconds) * 100, 2)
+					Write-Progress -Activity "Converting: $inputFile" -Status "$percentComplete% complete" -PercentComplete $percentComplete
+				}
+	
+				# Save to progress file every few lines
+				if ($progressLines.Count -ge 10) {
+					$tempPath = "$progressLogPath.tmp"
+					$progressLines -join "`n" | Out-File -FilePath $tempPath -Encoding UTF8
+					Move-Item -Path $tempPath -Destination $progressLogPath -Force
+					$progressLines = @()
+				}
+			}
+		}
+	
+		# Final flush
+		if ($progressLines.Count -gt 0) {
+			$tempPath = "$progressLogPath.tmp"
+			$progressLines -join "`n" | Out-File -FilePath $tempPath -Encoding UTF8
+			Move-Item -Path $tempPath -Destination $progressLogPath -Force
+		}
+	
+		$process.WaitForExit()
+	
+		if ($process.ExitCode -ne 0) {
+			Log "ERROR" "FFmpeg failed with exit code $($process.ExitCode) on $inputFile"
+			return $false
+		}
+	} catch {
+		Log "ERROR" "Failed to convert video: $inputFile. Error: $_"
+		return $false
+	}
 
-        while (!$process.HasExited) {
-            Start-Sleep -Seconds 1
-            if (Test-Path "ffmpeg_progress.log") {
-                $progressLines = Get-Content "ffmpeg_progress.log" -Tail 10
-                foreach ($line in $progressLines) {
-                    if ($line -match "out_time_ms=(\d+)") {
-                        $elapsedSeconds = [math]::Round(($matches[1] -as [double]) / 1000000, 2)
-                        $percentComplete = [math]::Round(($elapsedSeconds / $totalSeconds) * 100, 2)
-                        Write-Progress -Activity "Converting: $inputFile" -Status "$percentComplete% complete" -PercentComplete $percentComplete
-                    }
-                }
-            }
-        }
-
-        Remove-Item "ffmpeg_progress.log" -ErrorAction Ignore
-
-        if ($process.ExitCode -ne 0) {
-            $errorMessage = "FFmpeg failed with exit code $($process.ExitCode)"
-            Add-Content -Path $logFile -Value "$errorMessage on $inputFile"
-            Add-Content -Path $logReportFile -Value "Conversion failed: $($inputFile)"
-            return $false
-        }
-    } catch {
-        $errorMessage = "Failed to convert video: $inputFile. Error: $_"
-        Add-Content -Path $logFile -Value $errorMessage
-        Add-Content -Path $logReportFile -Value "Conversion failed: $($inputFile)"
-        return $false
-    }
-
-    Add-Content -Path $logReportFile -Value "Converted: $($inputFile) to $($outputFile)"
+    Log "INFO" "Converted: $($inputFile) → $($outputFile)"
     return $true
 }
 
@@ -115,17 +146,17 @@ function Convert-PhotoToJpg {
         & $magickPath $inputFile $outputFile
         if ($LASTEXITCODE -ne 0) {
             $errorMessage = "ImageMagick failed with exit code $LASTEXITCODE"
-            Add-Content -Path $logFile -Value "$errorMessage on $inputFile"
-            Add-Content -Path $logReportFile -Value "Conversion failed: $($inputFile)"
+            Log "ERROR" "$errorMessage on $inputFile"
+            Log "WARNING" "Conversion failed: $inputFile"            
             return $false
         }
     } catch {
         $errorMessage = "Failed to convert photo: $inputFile. Error: $_"
-        Add-Content -Path $logFile -Value $errorMessage
-        Add-Content -Path $logReportFile -Value "Conversion failed: $($inputFile)"
+        Log "ERROR" "$errorMessage"
+        Log "WARNING" "Conversion failed: $inputFile"
         return $false
     }
-    Add-Content -Path $logReportFile -Value "Converted: $($inputFile) to $($outputFile)"
+    Log "INFO" "Converted: $inputFile to $outputFile"
     return $true
 }
 
@@ -157,15 +188,12 @@ function Rename-AnyFile {
             if (-not (Test-Path -Path $newRelatedFilePath)) {
                 try {
                     Rename-Item -Path $relatedFile.FullName -NewName $newRelatedFilePath -Force
-                    Add-Content -Path $logFixFile -Value "Renamed $($relatedFile.FullName) to $($newRelatedFilePath)"
-                    Add-Content -Path $logReportFile -Value "Renamed $($relatedFile.FullName) to $($newRelatedFilePath)"
+                    Log "INFO" "Renamed $($relatedFile.FullName) to $($newRelatedFilePath)"
                 } catch {
-                    Add-Content -Path $logFile -Value "Error renaming $($relatedFile.FullName) to $($newRelatedFilePath): $_"
-                    Add-Content -Path $logReportFile -Value "Error renaming $($relatedFile.FullName) to $($newRelatedFilePath): $_"
+                    Log "ERROR" "Error renaming $($relatedFile.FullName) to $($newRelatedFilePath): $_"
                 }
             } else {
-                Add-Content -Path $logFile -Value "Skipped renaming $($relatedFile.FullName) to $($newRelatedFilePath) because the file already exists."
-                Add-Content -Path $logReportFile -Value "Skipped renaming $($relatedFile.FullName) to $($newRelatedFilePath) because the file already exists."
+                Log "WARNING" "Skipped renaming $($relatedFile.FullName) to $($newRelatedFilePath) because the file already exists."
             }
         }
     }
@@ -192,11 +220,9 @@ function Rename-JsonTmpToJson {
 
         try {
             Rename-Item -Path $jsonTmpFile.FullName -NewName $newJsonTmpName -Force
-            Add-Content -Path $logFixFile -Value "Renamed $($jsonTmpFile.FullName) to $($newJsonTmpPath)"
-            Add-Content -Path $logReportFile -Value "Renamed $($jsonTmpFile.FullName) to $($newJsonTmpPath)"
+            Log "INFO" "Renamed $($jsonTmpFile.FullName) to $($newJsonTmpPath)"
         } catch {
-            Add-Content -Path $logFile -Value "Error renaming $($jsonTmpFile.FullName) to $($newJsonTmpPath): $_"
-            Add-Content -Path $logReportFile -Value "Error renaming $($jsonTmpFile.FullName) to $($newJsonTmpPath): $_"
+            Log "ERROR" "Error renaming $($jsonTmpFile.FullName) to $($newJsonTmpPath): $_"
         }
     }
 }
@@ -215,12 +241,11 @@ function Fix-MissedRelatedFiles {
 }
 
 # Remove .MP files before processing
-Write-Host "Removing .MP files..."
+Log "INFO" "Starting cleanup: removing .MP files..."
 $mpFiles = Get-ChildItem -Path $unzipedDirectory -Recurse -File -Filter "*.mp"
 foreach ($mpFile in $mpFiles) {
     Remove-Item -Path $mpFile.FullName -Force
-    Write-Host "Removed: $($mpFile.FullName)"
-    Add-Content -Path $logReportFile -Value "Removed : $($mpFile.FullName)"
+    Log "INFO" "Removed .mp file: $($mpFile.FullName)"
 }
 
 # Process the remaining files
@@ -240,14 +265,14 @@ foreach ($file in $files) {
     if ($videoExtensions -contains $extension) {
         if ($extension -eq ".mp4") {
             $outputFile = $file.FullName
-            Add-Content -Path $logSkippedFile -Value "Skipping mp4 file: $($file.FullName)"
+            Log "INFO" "Skipped already in mp4 format: $($file.FullName)"
             $result = $true
             $fileAction = "Skipped"
         } else {
             $outputFile = $file.FullName -replace [regex]::Escape($file.Extension), '.mp4'
             $result = Convert-VideoUsingFFmpeg -inputFile $file.FullName -outputFile $outputFile
             if ($result) {
-                Add-Content -Path $logSuccessfulConversions -Value "Converted video: $($file.FullName) to $outputFile"
+                Log "INFO" "Successfully converted video: $($file.FullName) → $outputFile"
                 $fileAction = "Converted to mp4"
             }
         }
@@ -256,14 +281,14 @@ foreach ($file in $files) {
             $outputFile = $file.FullName -replace [regex]::Escape($file.Extension), '.jpg'
             $result = Convert-PhotoToJpg -inputFile $file.FullName -outputFile $outputFile
             if ($result) {
-                Add-Content -Path $logSuccessfulConversions -Value "Converted photo: $($file.FullName) to $outputFile"
+                Log "INFO" "Successfully converted photo: $($file.FullName) → $outputFile"
                 $fileAction = "Converted to jpg"
             }
         } else {
             $outputFile = $file.FullName -replace [regex]::Escape($file.Extension), '.jpg'
             $result = Convert-PhotoToJpg -inputFile $file.FullName -outputFile $outputFile
             if ($result) {
-                Add-Content -Path $logSuccessfulConversions -Value "Converted photo: $($file.FullName) to $outputFile"
+                Log "INFO" "Successfully converted photo: $($file.FullName) → $outputFile"
                 $fileAction = "Converted to jpg"
             }
         }
@@ -271,7 +296,7 @@ foreach ($file in $files) {
         $result = $true
         $fileAction = "Skipped"
     } else {
-        Add-Content -Path $logSkippedFile -Value "Skipping non-convertible file: $($file.FullName)"
+        Log "INFO" "Skipped non-convertible file: $($file.FullName)"
         $result = $false
         $fileAction = "Skipped"
     }
@@ -282,7 +307,7 @@ foreach ($file in $files) {
         }
         if ($fileAction -ne "Skipped") {
             Remove-Item -Path $file.FullName -Force
-            Add-Content -Path $logReportFile -Value "Removed : $($file.FullName)"
+            Log "INFO" "Removed file: $($file.FullName)"
         }
     } else {
         if (Test-Path -Path $outputFile) {
@@ -292,7 +317,7 @@ foreach ($file in $files) {
 
     $totalFiles--
     if ($fileAction -eq "Skipped") {
-        Add-Content -Path $logReportFile -Value "$($fileAction) : $($file.FullName)"
+        Log "INFO" "$($fileAction): $($file.FullName)"
     }
 }
 
@@ -300,4 +325,4 @@ foreach ($file in $files) {
 Rename-JsonTmpToJson -directory $unzipedDirectory
 # Fix any missed related files
 Fix-MissedRelatedFiles -directory $unzipedDirectory
-Write-Host " `nConversion and .json.tmp processing completed "
+Log "INFO" "Conversion and .json.tmp processing completed"

@@ -7,36 +7,60 @@ $level2_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level2_batch.t
 $level3_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level3_batch.txt'
 $level5_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level5_batch.txt'
 
+$level0_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level0_leftover_file.txt'
+$level1_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level1_leftover_file.txt'
+$level2_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level2_leftover_file.txt'
+$level3_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level3_leftover_file.txt'
+$level4_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level4_leftover_file.txt'
+$level5_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level5_leftover_file.txt'
+$level6_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level6_leftover_file.txt'
 
-$level0_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level0_leftover_file.txt' ####LEFTOVER
-$level1_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level1_leftover_file.txt' ####LEFTOVER
-$level2_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level2_leftover_file.txt' ####LEFTOVER
-$level3_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level3_leftover_file.txt' ####LEFTOVER
-$level4_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level4_leftover_file.txt' ####LEFTOVER
-$level5_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level5_leftover_file.txt' ####LEFTOVER
-$level6_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level6_leftover_file.txt' ####LEFTOVER
-
-# Generate all possible JSON suffixes dynamically instead of listing them manually
-$suffixes = @(
-    "supplemental-metadata", "supplemental-metadat", "supplemental-metada", "supplemental-metad", "supplemental-meta",
+# Generate all possible JSON suffixes dynamically
+$suffixes = @("supplemental-metadata", "supplemental-metadat", "supplemental-metada", "supplemental-metad", "supplemental-meta",
     "supplemental-met", "supplemental-me", "supplemental-m", "supplemental-", "supplemental",
     "supplementa", "supplement", "supplemen", "suppleme", "supplem",
     "supple", "suppl", "supp", "sup", "su",
-    "s", ".", "" # Includes base_name.json as well
-)
+    "s", ".", "")
 
-Remove-Item -Path $level1_batch_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level2_batch_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level3_batch_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level5_batch_file -ErrorAction SilentlyContinue
+Remove-Item -Path $level1_batch_file,$level2_batch_file,$level3_batch_file,$level5_batch_file -ErrorAction SilentlyContinue
+Remove-Item -Path $level0_leftover_file,$level1_leftover_file,$level2_leftover_file,$level3_leftover_file,$level4_leftover_file,$level5_leftover_file,$level6_leftover_file -ErrorAction SilentlyContinue
 
-Remove-Item -Path $level0_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level1_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level2_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level3_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level4_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level5_leftover_file -ErrorAction SilentlyContinue
-Remove-Item -Path $level6_leftover_file -ErrorAction SilentlyContinue
+# --- Logging Setup ---
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+$logDir = Join-Path $scriptDirectory "..\Logs"
+$logFile = Join-Path $logDir "$scriptName.log"
+$logFormat = "{0} - {1}: {2}"
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+
+$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
+$env:DEDUPLICATOR_FILE_LOG_LEVEL = $env:DEDUPLICATOR_FILE_LOG_LEVEL ?? "DEBUG"
+$logLevelMap = @{ "DEBUG" = 0; "INFO" = 1; "WARNING" = 2; "ERROR" = 3; "CRITICAL" = 4 }
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+function Log {
+    param ([string]$Level, [string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+    if ($levelIndex -ge $consoleLogLevel) { Write-Host $formatted }
+    if ($levelIndex -ge $fileLogLevel) { Add-Content -Path $logFile -Value $formatted -Encoding UTF8 }
+}
+
+function Write-JsonAtomic {
+    param ([Parameter(Mandatory = $true)][object]$Data, [Parameter(Mandatory = $true)][string]$Path)
+    try {
+        $tempPath = "$Path.tmp"
+        $json = $Data | ConvertTo-Json -Depth 10
+        $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
+        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
+        Move-Item -Path $tempPath -Destination $Path -Force
+        Log "INFO" "✅ Atomic write succeeded: $Path"
+    } catch {
+        Log "ERROR" "❌ Atomic write failed for $Path: $_"
+        if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }
+    }
+}
 
 function Sanitize_FileList {
     param(
@@ -51,13 +75,13 @@ function Sanitize_FileList {
         $currentItem++
         Show-ProgressBar -Current $currentItem -Total $totalItems -Message "$(Split-Path -Path $filePath -Leaf)"
         if ([string]::IsNullOrEmpty($filePath)) {
-            Write-Warning "Invalid or non-existent file path: '$filePath'. Skipping."
+            Log "WARNING" "Invalid or non-existent file path: '$filePath'. Skipping."
             continue
         }
 
         # Check if the path is a drive root (e.g., "C:\")
         if (($filePath -match "^[a-zA-Z]:$") -or ($filePath -match "^[a-zA-Z]:\\$") -or ($filePath -match "^[a-zA-Z]:/$") ) {
-            Write-Warning "Skipping drive root: '$filePath'"
+            Log "WARNING" "Skipping drive root: '$filePath'"
             continue  # Exit the function without doing anything
         }
 
@@ -107,7 +131,7 @@ foreach ($zipFile in $zipFiles) {
     try {
         [System.IO.Compression.ZipFile]::OpenRead($zipFile.FullName) | Out-Null
     } catch {
-        Write-Warning "Skipping $($zipFile.FullName) as it is not a valid zip file."
+        Log "WARNING" "Skipping $($zipFile.FullName) as it is not a valid zip file."
         continue
     }
 
@@ -129,7 +153,7 @@ foreach ($zipFile in $zipFiles) {
 
 # Check if any zip files were processed
 if ($level0_files.Count -eq 0) {
-    Write-Host "No valid zip files found or no files inside zip files."
+    Log "WARNING" "No valid zip files found or no files inside zip files."
     exit 0
 }
 
@@ -137,10 +161,8 @@ if ($level0_files.Count -eq 0) {
 $level0_files = Sanitize_FileList -FilePaths $level0_files
 
 # Output the non-filtered file paths to a new file
-$level0_files | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level0_leftover_file
-Write-Host -NoNewline "`n"
+$level0_files | Out-File -FilePath $level0_leftover_file -Encoding utf8
+Log "INFO" "Wrote sanitized level 0 file list to '$level0_leftover_file'"
 
 # Create a new collection to store updated file paths
 $level1_files = @()
@@ -152,29 +174,28 @@ foreach ($file in $level0_files) {
     $currentItem++
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 3"
     if (-not $file -match ".json$") {
-        $level1_files += $file
+        $level1_files += ,$file
     } else {
         $found = $false
         foreach ($suffix in $suffixes) {
             if ($file -match "\.$suffix\.json$") {
                 $newfile = $file -replace "\.$suffix\.json$", ".json"
-                "ren `"$unzipedDirectory`/$file`" `"$unzipedDirectory`/$newfile`" " | Out-File -FilePath $level1_batch_file -Append
+                "ren `"$unzipedDirectory`/$file`" `"$unzipedDirectory`/$newfile`" " | Out-File -FilePath $level1_batch_file -Append | Out-Null
                 $level1_files += $newfile
                 $found = $true
                 break
             }
         }
         if (-not $found) {
-            $level1_files += $file
+            $level1_files += ,$file
         }
     }
 }
 
 # Output the non-filtered file paths to a new file
-$level1_files | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level1_leftover_file
-Write-Host -NoNewline "`n"
+$level1_files | Out-File -FilePath $level1_leftover_file -Encoding utf8
+Log "INFO" "Wrote sanitized level 1 file list to '$level1_leftover_file'"
+
 
 # Create a new collection to store updated file paths
 $level2_files = @()
@@ -194,7 +215,7 @@ foreach ($file in $level1_files) {
             $level2_files += $file
         } else {
             if ($level1_files -contains "$newFileName.json") {
-                "copy  `"$unzipedDirectory`/$file.json`" `"$unzipedDirectory`/$newFileName.json`" " | Out-File -FilePath $level2_batch_file -Append
+                "copy  `"$unzipedDirectory`/$file.json`" `"$unzipedDirectory`/$newFileName.json`" " | Out-File -FilePath $level2_batch_file -Append | Out-Null
                 $level2_files += $file
                 $level2_files += "$file.json"
             }
@@ -206,11 +227,8 @@ foreach ($file in $level1_files) {
 }
 
 # Output the non-filtered file paths to a new file
-$level2_files | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level2_leftover_file
-Write-Host -NoNewline "`n"
-
+$level2_files | Out-File -FilePath $level2_leftover_file -Encoding utf8
+Log "INFO" "Wrote updated level 2 file list to '$level2_leftover_file'"
 
 # Convert the array to a HashSet for O(1) lookups
 $fileSet = @{}
@@ -232,12 +250,12 @@ foreach ($file in $level2_files) {
     $filename = $file
     $found_pair = $false
 
-    $with_parantheses = $false
+    $with_parentheses = $false
     $json_file = "$filename.json"
 
     if ($fileSet.ContainsKey($json_file)) {
-        $with_parantheses = $false
-        $level3_pairs += $file, $json_file, $with_parantheses
+        $with_parentheses = $false
+        $level3_pairs += $file, $json_file, $with_parentheses
         $fileSet.Remove($file)
         $fileSet.Remove($json_file)
         $found_pair = $true
@@ -249,14 +267,14 @@ foreach ($file in $level2_files) {
     $directory = [System.IO.Path]::GetDirectoryName($filename)
     if ($baseName -match "\((\d+)\)$") {
         $digits = $matches[1]
-        $with_parantheses = $true
+        $with_parentheses = $true
         foreach ($suffix in $suffixes) {
             $newbaseName = $baseName -replace "\(\d+\)$", ""
             $json_file = "$directory/$newbaseName$extension.$suffix($digits).json"
             $json_file = $json_file | ForEach-Object { $_ -replace '\\', '/' }
 
             if ($fileSet.ContainsKey($json_file)) {
-                $level3_pairs += $file, $json_file, $with_parantheses
+                $level3_pairs += $file, $json_file, $with_parentheses
                 $fileSet.Remove($file)
                 $fileSet.Remove($json_file)
                 $found_pair = $true
@@ -274,7 +292,7 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 6"
     $mainFilePath = $level3_pairs[$i]
     $jsonFilePath = $level3_pairs[$i + 1]
-    $with_parantheses = $level3_pairs[$i + 2]
+    $with_parentheses = $level3_pairs[$i + 2]
 
     $OrigJsonFilePath = $jsonFilePath
     # Extract the directory and base name of the main file
@@ -287,7 +305,7 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
     $JsonFileName = Split-Path -Path $jsonFilePath -Leaf
     $JsonbaseName = [System.IO.Path]::GetFileNameWithoutExtension($jsonFilePath)
 
-    if ($with_parantheses -eq $true) {
+    if ($with_parentheses -eq $true) {
         if ($JsonbaseName -match "\((\d+)\)$") {
             $digits = $matches[1]
             $no_paranthesis_baseName = $JsonbaseName -replace "\(\d+\)$", ""
@@ -299,11 +317,11 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
             }
             $newJsonFileName = "$newJsonbaseName.json"
             $newJsonFilePath = "$JsonDirectory/$newJsonFileName"
-            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append
+            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
             $jsonFilePath = $newJsonFilePath
         } else {
 			  
-            Write-Host "No matching JSON file found for '$mainFilePath'"
+            Log "INFO" "No matching JSON file found for '$mainFilePath'"
             break
         }
     }
@@ -316,10 +334,10 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
         $newJsonFilePath = "$mainFileDirectory/$newJsonFileName"
 
         if (!(Test-Path -Path $unzipedDirectory/$newJsonFilePath)) {
-            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append
+            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
         }
     } else {
-        Write-Host "No matching JSON file found for '$mainFilePath'"
+        Log "WARNING" "No matching JSON file found for '$mainFilePath'"
     }
 }
 
@@ -330,11 +348,8 @@ $level2_files | ForEach-Object {
 }
 
 # Output the non-filtered file paths to a new file
-$level3_leftovers | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level3_leftover_file
-Write-Host -NoNewline "`n"
-
+$level3_leftovers | Out-File -FilePath $level3_leftover_file -Encoding utf8
+Log "INFO" "Wrote updated level 3 file list to '$level3_leftover_file'"
 
 # Initialize a hashtable to store files by their directory
 $directoryFiles = @{}
@@ -349,7 +364,7 @@ foreach ($file in $level3_leftovers) {
     try {
         $file = $file.Trim('"')
     } catch {
-        Write-Host "Error trimming file path"
+        Log "WARNING" "Error trimming file path"
     }
 
     $directory = Split-Path -Path $file -Parent
@@ -437,7 +452,6 @@ foreach ($truncName in $truncNameFiles.Keys) {
                 $level5_pairs += $jsonFile
                 $fileSet.Remove($nonJsonFile)
                 $fileSet.Remove($jsonFile)
-                $foundPair = $true
                 $foundFilePaths += $nonJsonFile
                 break
             }
@@ -493,7 +507,7 @@ for ($i = 0; $i -lt $level5_pairs.Length; $i += 2) {
         $newJsonFilePath = "$newMainFilePath.json"
 
         # Write the rename command to the rename file
-        "ren `"$unzipedDirectory`/$mainFilePath`" `"$unzipedDirectory`/$newMainFilePath`""  | Out-File -FilePath $level5_batch_file -Append
+        "ren `"$unzipedDirectory`/$mainFilePath`" `"$unzipedDirectory`/$newMainFilePath`""  | Out-File -FilePath $level5_batch_file -Append | Out-Null
     } 
 }
 
@@ -504,15 +518,12 @@ $level4_leftovers | ForEach-Object {
 }
 
 # Output the non-filtered file paths to a new file
-$level5_leftovers | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level5_leftover_file
-Write-Host -NoNewline "`n"
+$level5_leftovers | Out-File -FilePath $level5_leftover_file -Encoding utf8
+Log "INFO" "Wrote updated level 5 file list to '$level5_leftover_file'"
 
-
- $directoryFiles = @{}
- $currentItem = 0
- $totalItems = $level5_leftovers.count
+$directoryFiles = @{}
+$currentItem = 0
+$totalItems = $level5_leftovers.count
 
 # Populate the hashtable with files grouped by their directory
 foreach ($file in $level5_leftovers) {
@@ -559,7 +570,6 @@ foreach ($directory in $directoryFiles.Keys) {
 }
 
 # Output the non-filtered file paths to a new file
-$level6_leftover_files | ForEach-Object {
-    Write-Output $_
-} | Out-File -FilePath $level6_leftover_file
-Write-Host -NoNewline "`n"
+$level6_leftover_files | Out-File -FilePath $level6_leftover_file -Encoding utf8
+Log "INFO" "Wrote updated level 6 file list to '$level6_leftover_file'"
+
