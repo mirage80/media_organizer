@@ -1,16 +1,87 @@
 $zipDirectory = 'D:'
-$unzipedDirectory = 'E:'
+$unzipedDirectory = 'C:\Users\sawye\Downloads\Telegram Desktop\ChatExport_2025-04-18'
 $RecycleBinPath = Join-Path -Path $unzipedDirectory -ChildPath '$RECYCLE.BIN'
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $7zip = 'C:\Program Files\7-Zip\7z.exe'
 $ExifToolPath = 'C:\Program Files\exiftools\exiftool.exe'
 $magickPath = 'C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe'  # Update this path if needed
-$ffmpeg = 'ffmpeg.exe'
+$pythonExe = 'C:\Program Files\Python313\python.exe' # Or 'py.exe' if that's preferred/works
+$ffmpeg = 'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
 $logger = 0
 
-$DEDUPLICATOR_CONSOLE_LOG_LEVEL = "INFO"
-$DEDUPLICATOR_FILE_LOG_LEVEL = "DEBUG"
+# --- Define the desired DEFAULT log levels ---
+$DefaultConsoleLogLevelString = "WARNING"
+$DefaultFileLogLevelString    = "WARNING"
+
+# --- Logging Setup ---
+$logDir = Join-Path $scriptDirectory "Logs"
+$logFilePath = Join-Path $logDir "main_pipeline.log"
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir | Out-Null
+}
+
+# Define the map ONCE
+$logLevelMap = @{
+    "DEBUG"    = 0
+    "INFO"     = 1
+    "WARNING"  = 2
+    "ERROR"    = 3
+    "CRITICAL" = 4
+}
+
+# --- Set the map in the environment variable for child scripts ---
+$env:LOG_LEVEL_MAP_JSON = $logLevelMap | ConvertTo-Json -Compress
+
+# --- Set Environment Variables for Children (if not already set externally) ---
+# This ensures child scripts inherit the correct default if no override exists.
+if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) {
+    $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $DefaultConsoleLogLevelString
+}
+if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) {
+    $env:DEDUPLICATOR_FILE_LOG_LEVEL = $DefaultFileLogLevelString
+}
+
+# --- Determine log levels for THIS script (top.ps1) ---
+# Now, read the environment variables (which are guaranteed to be set by the logic above)
+$EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL
+$EffectiveFileLogLevelString    = $env:DEDUPLICATOR_FILE_LOG_LEVEL
+
+# Look up the numeric level using the effective string and the map
+$consoleLogLevel = $logLevelMap[$EffectiveConsoleLogLevelString.ToUpper()]
+$fileLogLevel    = $logLevelMap[$EffectiveFileLogLevelString.ToUpper()]
+
+# --- Validation and fallback for THIS script's levels (in top.ps1) ---
+if ($null -eq $consoleLogLevel) {
+    Write-Error "FATAL: Invalid Console Log Level specified ('$EffectiveConsoleLogLevelString'). Check environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL or script default. Aborting."
+    exit 1
+}
+
+if ($null -eq $fileLogLevel) {
+    Write-Error "FATAL: Invalid File Log Level specified ('$EffectiveFileLogLevelString'). Check environment variable DEDUPLICATOR_FILE_LOG_LEVEL or script default. Aborting."
+    exit 1
+}
+
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = "$timestamp - $Level - $Message"
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+
+    if ($null -ne $levelIndex) {
+        if ($levelIndex -ge $consoleLogLevel) {
+            Write-Host $formatted
+        }
+        if ($levelIndex -ge $fileLogLevel) {
+            try {
+                Add-Content -Path $logFilePath -Value $formatted -Encoding UTF8 -ErrorAction Stop
+            } catch { Write-Warning "Failed to write to log file '$logFilePath': $_" }
+        }
+    } else { Write-Warning "Invalid log level used in top.ps1: '$Level'. Message: $Message" }
+}
 
 if (-not (Test-Path $7zip)) {
     Log "ERROR" "7-Zip not found at $7zip. Aborting."
@@ -32,6 +103,7 @@ if (-not (Test-Path $ffmpeg)) {
     exit 1
 }
 
+# --- Show-ProgressBar Function Definition ---
 function Show-ProgressBar {
     param(
         [Parameter(Mandatory = $true)]
@@ -44,52 +116,31 @@ function Show-ProgressBar {
         [string]$Message
     )
 
-    $percent = [math]::Round(($Current / $Total) * 100)
-    $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30 # Adjust for message and percentage display
-    $barLength = [math]::Min($screenWidth, 80) # Limit to 80 characters, or screen width, whichever is smaller
-    $filledLength = [math]::Round(($barLength * $percent) / 100)
-    $emptyLength = $barLength - $filledLength
-
-    $filledBar = ('=' * $filledLength)
-    $emptyBar = (' ' * $emptyLength)
-
-    Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
-}
-
-# --- Logging Setup ---
-$logDir = Join-Path $scriptDirectory "Logs"
-$logFilePath = Join-Path $logDir "main_pipeline.log"
-if (-not (Test-Path $logDir)) {
-    New-Item -ItemType Directory -Path $logDir | Out-Null
-}
-
-$logLevelMap = @{
-    "DEBUG"    = 0
-    "INFO"     = 1
-    "WARNING"  = 2
-    "ERROR"    = 3
-}
-$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
-$env:DEDUPLICATOR_FILE_LOG_LEVEL    = $env:DEDUPLICATOR_FILE_LOG_LEVEL    ?? "DEBUG"
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
-
-function Log {
-    param (
-        [string]$Level,
-        [string]$Message
-    )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $formatted = "$timestamp - $Level - $Message"
-    $levelIndex = $logLevelMap[$Level.ToUpper()]
-    
-    if ($levelIndex -ge $consoleLogLevel) {
-        Write-Host $formatted
+    # Check if running in a host that supports progress bars
+    if ($null -eq $Host.UI.RawUI) {
+        # Fallback for non-interactive environments or simplified hosts
+        $percent = 0; 
+        if ($Total -gt 0) { 
+            $percent = [math]::Round(($Current / $Total) * 100) 
+        }
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+        return
     }
-    if ($levelIndex -ge $fileLogLevel) {
-        Add-Content -Path $logFilePath -Value $formatted -Encoding UTF8
+    try {
+        $percent = [math]::Round(($Current / $Total) * 100)
+        $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30
+        $barLength = [math]::Min($screenWidth, 80)
+        $filledLength = [math]::Round(($barLength * $percent) / 100)
+        $emptyLength = $barLength - $filledLength
+        $filledBar = ('=' * $filledLength)
+        $emptyBar = (' ' * $emptyLength)
+        Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
+    } catch {
+        $percent = 0; if ($Total -gt 0) { $percent = [math]::Round(($Current / $Total) * 100) }
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
     }
 }
+# --- End Show-ProgressBar Function Definition ---
 
 # Add this atomic JSON write function near the top of your script (after logging setup)
 function Write-JsonAtomic {
@@ -122,17 +173,30 @@ function Invoke-PythonScript {
         [Parameter(Mandatory = $true)]
         [string]$ScriptPath,
 
-        [string]$Arguments
+        # Change the type to accept an array of strings
+        [string[]]$Arguments
     )
 
+    # Ensure $pythonExe is accessible here (it should be if defined at script scope)
+    if (-not $pythonExe) {
+        Log "ERROR" "Python executable path variable `$pythonExe is not defined."
+        exit 1
+    }
+
     try {
-        if ([string]::IsNullOrWhiteSpace($Arguments)) {
-            & "python3.13.exe" "$ScriptPath"
+        # Check if the Arguments array is null or empty
+        if ($null -eq $Arguments -or $Arguments.Count -eq 0) {
+            Log "DEBUG" "Executing: $pythonExe ""$ScriptPath"""
+            & $pythonExe "$ScriptPath"
         } else {
-            & "python3.13.exe" "$ScriptPath" $Arguments
+            # Use argument splatting (@Arguments) to pass array elements as separate arguments
+            $argStringForLog = $Arguments | ForEach-Object { """$_""" } | Join-String -Separator ' ' # Quote args for logging
+            Log "DEBUG" "Executing: $pythonExe ""$ScriptPath"" $argStringForLog"
+            & $pythonExe "$ScriptPath" @Arguments
         }
     } catch {
-        Log "ERROR" "Error running Python script '$ScriptPath': $_"
+        Log "ERROR" "Error running Python script '$ScriptPath' with command: '$pythonExe ""$ScriptPath"" $($Arguments -join ' ')'. Error: $_"
+        # Consider if exiting immediately is always desired, or if you should just log and continue
         exit 1
     }
 }
@@ -184,10 +248,10 @@ function Use-ValidDirectoriesRecursively {
     Use-ValidDirectoryName -DirectoryPath $RootDirectory #sanitize the root directory also.
 }
 
-
+<#
 #count 1
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 1 - Extract Zip Files
@@ -208,7 +272,7 @@ foreach ($zipFile in $zipFiles) {
 
 #count 2
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 2 - Sanetize the names
@@ -218,7 +282,7 @@ Use-ValidDirectoriesRecursively -RootDirectory $unzipedDirectory
 
 #step3 - clean json names json files
 Log "INFO" "step3 - clean json names json files"
-& "$scriptDirectory\step3 - clean_json\clean_json.ps1"
+& "$scriptDirectory\step3 - clean_json\clean_json.ps1"  -unzipedDirectory $unzipedDirectory -zipedDirectory $zipedDirectory -ExifToolPath $ExifToolPath
 
 # Define the directory containing the rename files
 $batchScriptDirectory = "$scriptDirectory\step3 - clean_json"
@@ -276,15 +340,15 @@ foreach ($batchFile in $batchFiles) {
         }
     }
 }
-
+#>
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 4 - remove orphaned json files
 Log "INFO" "step4 - remove orphaned json files"
-& "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\remove_orphaned_json.ps1"
+& "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\remove_orphaned_json.ps1" -unzipedDirectory $unzipedDirectory
 Get-Content -Path "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\orphaned_json_files.txt" | ForEach-Object {
     $file = $_.Trim() # Remove any leading or trailing whitespace
 
@@ -303,28 +367,27 @@ Get-Content -Path "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\orphaned_j
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 5 - use converter to change everything to mp4 & jpg
 Log "INFO" "step5 - use converter to change everything to mp4 & jpg"
-& "$scriptDirectory\step5 - converter\converter.ps1"
-
+& "$scriptDirectory\step5 - converter\converter.ps1" -unzipedDirectory $unzipedDirectory -ffmpeg $ffmpeg -magickPath $magickPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 6 use step6 - Consolidate_Meta to combine time stamps
 Log "INFO" "step6 use 6 - Consolidate_Meta to combine time stamps"
-& "$scriptDirectory\step6 - Consolidate_Meta\Consolidate_Meta.ps1"
+& "$scriptDirectory\step6 - Consolidate_Meta\Consolidate_Meta.ps1" -unzipedDirectory "$unzipedDirectory" -ExifToolPath "$ExifToolPath"
 
  #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
-
+<#
 #step 7 - $RECYCLE.BIN
 Log "INFO" "Step 7 RECYCLE.BIN"
 # Ensure the Recycle Bin path exists before attempting to change attributes
@@ -335,7 +398,7 @@ if (Test-Path -Path $RecycleBinPath -PathType Container) {
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 
@@ -351,7 +414,7 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 9-1 Remove Exact Video Duplicate
@@ -366,13 +429,14 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath
 #count
 
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 10-1 Show AND Remove Duplicate Video
 Log "INFO" "step 10-1 Show AND Remove Duplicate Video"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step10 - ShowANDRemoveDuplicate\ShowANDRemoveDuplicateVideo.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath
+
 
 #step 10-2 Show AND Remove Duplicate Image
 Log "INFO" "step 10-1 Show AND Remove Duplicate Image"
@@ -381,7 +445,7 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 11-1 Remove Junk Video
@@ -396,36 +460,37 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 12-1 Reconstruction of corrupt Videos
-Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos"
+Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos" -ffmpeg $ffmpeg
 & "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1"
 
 #step 12-2 Reconstruction of corrupt Images
-Log "INFO" "step 12-2 use ImageReconstruction.ps1 to Reconstruct of corrupt Images"
+Log "INFO" "step 12-2 use ImageReconstruction.ps1 to Reconstruct of corrupt Images" -magickPath $magickPath
 & "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1"
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 13 Categorization 
 Log "INFO" "step 13 use Categorize.ps1 to categorize files based on the availability of meta data"
-& "$scriptDirectory\step13 - Categorization\Categorize.ps1"
+& "$scriptDirectory\step13 - Categorization\Categorize.ps1" -unzipedDirectory $unzipedDirectory -ExifToolPath $ExifToolPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 13 Categorization 
 Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
-& "$scriptDirectory\step14  - Estimate By Time\EstimateByTime.ps1"
+& "$scriptDirectory\step14  - Estimate By Time\EstimateByTime.ps1" -unzipedDirectory $unzipedDirectory -ExifToolPath $ExifToolPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$scriptDirectory/log_step_$logger.txt $unzipedDirectory"
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
+#>

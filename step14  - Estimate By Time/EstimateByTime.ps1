@@ -1,3 +1,166 @@
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$unzipedDirectory,
+    [Parameter(Mandatory=$true)]
+    [string]$ExifToolPath
+)
+
+$scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+
+# --- Logging Setup ---
+$logDir = Join-Path $scriptDirectory "..\Logs"
+$logFile = Join-Path $logDir "$scriptName.log"
+$logFormat = "{0} - {1}: {2}"
+
+# Create the log directory if it doesn't exist
+if (-not (Test-Path $logDir)) {
+    try {
+        New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Error "FATAL: Failed to create log directory '$logDir'. Aborting. Error: $_"
+        exit 1
+    }
+}
+
+# Deserialize the JSON back into a hashtable
+$logLevelMap = $null
+$logLevelMap = $env:LOG_LEVEL_MAP_JSON
+
+if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
+    try {
+        # --- FIX IS HERE ---
+        # Use -AsHashtable to ensure the correct object type
+        $logLevelMap = $logLevelMap | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        # --- END FIX ---
+    } catch {
+        # Log a fatal error and exit immediately if deserialization fails
+        Write-Error "FATAL: Failed to deserialize LOG_LEVEL_MAP_JSON environment variable. Check the variable's content is valid JSON. Aborting. Error: $_"
+        exit 1
+    }
+}
+if ($null -eq $logLevelMap) {
+    # This case should ideally not happen if top.ps1 ran, but handle defensively
+    Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
+    exit 1
+}
+
+# Check if required environment variables are set (by top.ps1 or externally)
+if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) {
+    Write-Error "FATAL: Environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
+    exit 1
+}
+if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) {
+    Write-Error "FATAL: Environment variable DEDUPLICATOR_FILE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
+    exit 1
+}
+
+# Read the environment variables directly and trim whitespace (NOW SAFE)
+$EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.Trim()
+$EffectiveFileLogLevelString    = $env:DEDUPLICATOR_FILE_LOG_LEVEL.Trim()
+
+# Look up the numeric level using the effective string and the map
+$consoleLogLevel = $logLevelMap[$EffectiveConsoleLogLevelString.ToUpper()]
+$fileLogLevel    = $logLevelMap[$EffectiveFileLogLevelString.ToUpper()]
+
+# --- Validation for THIS script's levels ---
+if ($null -eq $consoleLogLevel) {
+    Write-Error "FATAL: Invalid Console Log Level specified ('$EffectiveConsoleLogLevelString'). Check environment variable or script default. Aborting."
+    exit 1
+}
+if ($null -eq $fileLogLevel) {
+    Write-Error "FATAL: Invalid File Log Level specified ('$EffectiveFileLogLevelString'). Check environment variable or script default. Aborting."
+    exit 1
+}
+
+# --- Log Function Definition ---
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
+
+    if ($null -ne $levelIndex) {
+        if ($levelIndex -ge $consoleLogLevel) {
+            Write-Host $formatted
+        }
+        if ($levelIndex -ge $fileLogLevel) {
+            try {
+                Add-Content -Path $logFile -Value $formatted -Encoding UTF8 -ErrorAction Stop
+            } catch {
+                Write-Warning "Failed to write to log file '$logFile': $_"
+            }
+        }
+    } else {
+        Write-Warning "Invalid log level used: $Level"
+    }
+}
+
+# --- Show-ProgressBar Function Definition ---
+function Show-ProgressBar {
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$Current,
+
+        [Parameter(Mandatory = $true)]
+        [int]$Total,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    # Check if running in a host that supports progress bars
+    if ($null -eq $Host.UI.RawUI) {
+        # Fallback for non-interactive environments or simplified hosts
+        $percent = 0; 
+        if ($Total -gt 0) { 
+            $percent = [math]::Round(($Current / $Total) * 100) 
+        }
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+        return
+    }
+    try {
+        $percent = [math]::Round(($Current / $Total) * 100)
+        $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30
+        $barLength = [math]::Min($screenWidth, 80)
+        $filledLength = [math]::Round(($barLength * $percent) / 100)
+        $emptyLength = $barLength - $filledLength
+        $filledBar = ('=' * $filledLength)
+        $emptyBar = (' ' * $emptyLength)
+        Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
+    } catch {
+        $percent = 0; if ($Total -gt 0) { $percent = [math]::Round(($Current / $Total) * 100) }
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+    }
+}
+# --- End Show-ProgressBar Function Definition ---
+function Write-JsonAtomic {
+    param (
+        [Parameter(Mandatory = $true)][object]$Data,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    try {
+        $tempPath = "$Path.tmp"
+        $json = $Data | ConvertTo-Json -Depth 10
+        $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
+
+        # Validate JSON before replacing
+        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
+
+        Move-Item -Path $tempPath -Destination $Path -Force
+        Log "INFO" "✅ Atomic write succeeded: $Path"
+    } catch {
+        Log "ERROR" "❌ Atomic write failed for $Path : $_"
+        if (Test-Path $tempPath) {
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # --- Add WPF Assemblies ---
 try {
     Add-Type -AssemblyName PresentationFramework
@@ -9,27 +172,6 @@ try {
     exit 1
 }
 
-# --- Logging Setup ---
-$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
-$logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
-$logFormat = "{0} - {1}: {2}"
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
-
-$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
-$env:DEDUPLICATOR_FILE_LOG_LEVEL = $env:DEDUPLICATOR_FILE_LOG_LEVEL ?? "DEBUG"
-$logLevelMap = @{ "DEBUG" = 0; "INFO" = 1; "WARNING" = 2; "ERROR" = 3; "CRITICAL" = 4 }
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
-
-function Log {
-    param ([string]$Level, [string]$Message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
-    $levelIndex = $logLevelMap[$Level.ToUpper()]
-    if ($levelIndex -ge $consoleLogLevel) { Write-Host $formatted }
-    if ($levelIndex -ge $fileLogLevel) { Add-Content -Path $logFile -Value $formatted -Encoding UTF8 }
-}
 
 # --- Configuration ---
 $MediaExtensions = @(".jpg", ".mp4")
@@ -411,7 +553,7 @@ function Show-GeotagDialog {
 
     # --- Handle Window Closing (CRUCIAL for releasing file locks) ---
     $window.add_Closing({
-        param($sender, $e)
+        param($req_sender, $e)
         Log "DEBUG" "Closing Geotag Dialog. Releasing media resources."
         try {
             if ($targetMediaElement) {
@@ -445,7 +587,7 @@ function Show-GeotagDialog {
 
 
 # Function to parse timestamp from metadata (expecting pre-formatted string)
-function Parse-Timestamp {
+function Format-Timestamp {
     param(
         [PSCustomObject]$Metadata,
         [string[]]$TimestampTags
@@ -565,17 +707,28 @@ $withGeoAndTime = @() # Initialize
 if (Test-Path $CacheFilePath) {
     Log "INFO" "Loading reference cache from '$CacheFilePath'..."
     try {
+        # Use Where-Object *after* attempting conversion
         $withGeoAndTime = Get-Content $CacheFilePath -Raw | ConvertFrom-Json | ForEach-Object {
-            # Convert timestamp string back to DateTime
+            # Assume valid initially
+            $isValidEntry = $true
             try {
+                # Attempt to parse and add the DateTime property
                 $_.Timestamp = [datetime]::ParseExact($_.TimestampString, "o", $null)
             } catch {
                 Log "WARNING" "Could not parse timestamp '$($_.TimestampString)' for file '$($_.FilePath)' from cache. Skipping entry."
-                $_ = $null
+                # Mark the entry as invalid instead of assigning null to $_
+                $isValidEntry = $false
             }
-            $_
-        } | Where-Object { $_ -ne $null }
-        Log "INFO" "Loaded $($withGeoAndTime.Count) entries from cache."
+
+            # Only output the object if it's still considered valid
+            if ($isValidEntry) {
+                $_ # Output the potentially modified object
+            }
+            # If !$isValidEntry, nothing is output for this iteration
+        } # End ForEach-Object
+
+        Log "INFO" "Loaded $($withGeoAndTime.Count) valid entries from cache." # Count will be correct now
+
     } catch {
         Log "WARNING" "Failed to load or parse cache file '$CacheFilePath'. Regenerating... Error: $($_.Exception.Message)"
         $withGeoAndTime = @() # Ensure empty on failure
@@ -605,12 +758,12 @@ if ($withGeoAndTime.Count -eq 0 -or (Test-Path $SourceDirWithGeo -PathType Conta
                         -Tags ($TimestampTags + @("GPSLatitude", "GPSLongitude")) `
                         -DateFormat "%Y-%m-%d %H:%M:%S" # <-- ADDED DateFormat argument
             if ($metadata) {
-                # Parse-Timestamp call remains the same, but receives formatted data
-                $timestamp = Parse-Timestamp -Metadata $metadata -TimestampTags $TimestampTags
+                # Format-Timestamp call remains the same, but receives formatted data
+                $timestamp = Format-Timestamp -Metadata $metadata -TimestampTags $TimestampTags
                 $latitude = $metadata.GPSLatitude
                 $longitude = $metadata.GPSLongitude
 
-                if (($timestamp -ne $null) -and ($latitude -ne $null -and $longitude -ne $null)) {
+                if (($null -ne $timestamp) -and ($null -ne $latitude -and $null -ne $longitude)) {
                     $withGeoAndTime += [PSCustomObject]@{
                         FilePath     = $file.FullName
                         Timestamp    = $timestamp
@@ -649,7 +802,6 @@ Log "INFO" "Scanning '$SourceDirNoGeo' for target files (Time present, Geo missi
 $noGeoButTime = @() # Reset before scan
 if (Test-Path $SourceDirNoGeo -PathType Container) {
     $targetMediaFiles = Get-ChildItem -Path $SourceDirNoGeo -Recurse -File | Where-Object { $MediaExtensions -contains $_.Extension }
-    $totalTargetFiles = $targetMediaFiles.Count
     $i = 0
     foreach ($file in $targetMediaFiles) {
         $i++
@@ -662,11 +814,11 @@ if (Test-Path $SourceDirNoGeo -PathType Container) {
 
         $metadata = Get-MediaMetadata -FilePath $file.FullName -Tags ($TimestampTags + @("GPSLatitude", "GPSLongitude")) -DateFormat "%Y-%m-%d %H:%M:%S"
         if ($metadata) {
-            $timestamp = Parse-Timestamp -Metadata $metadata -TimestampTags $TimestampTags
+            $timestamp = Format-Timestamp -Metadata $metadata -TimestampTags $TimestampTags
             $latitude = $metadata.GPSLatitude
             $longitude = $metadata.GPSLongitude
-            $hasTimestamp = ($timestamp -ne $null)
-            $hasGeotag = ($latitude -ne $null -and $longitude -ne $null)
+            $hasTimestamp = ($null -ne $timestamp)
+            $hasGeotag = ($null -ne $latitude -and $null -ne $longitude)
 
             if ($hasTimestamp -and (-not $hasGeotag)) {
                  $noGeoButTime += [PSCustomObject]@{
@@ -713,7 +865,7 @@ $skippedThisRun = 0
 # --- Main Processing Loop ---
 foreach ($targetFile in $filesToProcess) {
     $processedCount++
-    Log "INFO" "`n--- Processing file $processedCount of $totalToProcess: '$($targetFile.FilePath)' ---"
+    Log "INFO" "`n--- Processing file $processedCount of $totalToProcess : '$($targetFile.FilePath)' ---"
     Log "DEBUG" "Target Timestamp: $($targetFile.Timestamp)"
 
     # Find the closest reference file by time
@@ -722,7 +874,7 @@ foreach ($targetFile in $filesToProcess) {
 
     foreach ($refFile in $withGeoAndTime) {
         # Ensure both timestamps are valid before calculating difference
-        if ($targetFile.Timestamp -ne $null -and $refFile.Timestamp -ne $null) {
+        if ($null -ne $targetFile.Timestamp -and $null -ne $refFile.Timestamp) {
             $timeDiff = ($targetFile.Timestamp - $refFile.Timestamp)
             if ($timeDiff.TotalSeconds -lt 0) { $timeDiff = $timeDiff.Negate() } # Absolute difference
 
@@ -731,11 +883,11 @@ foreach ($targetFile in $filesToProcess) {
                 $closestMatch = $refFile
             }
         } else {
-            Log "DEBUG" "Skipping comparison due to null timestamp (Target: $($targetFile.Timestamp -ne $null), Ref: $($refFile.Timestamp -ne $null))"
+            Log "DEBUG" "Skipping comparison due to null timestamp (Target: $($null -ne $targetFile.Timestamp), Ref: $($null -ne $refFile.Timestamp))"
         }
     }
 
-    if ($closestMatch -eq $null) {
+    if ($null -eq $closestMatch) {
         Log "WARNING" "Could not find any valid reference file to compare time with for '$($targetFile.FilePath)'. Skipping."
         $skippedThisRun++
         continue # Skip to the next target file

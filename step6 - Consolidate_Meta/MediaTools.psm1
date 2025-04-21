@@ -52,56 +52,98 @@ $time_formats = @(
     "yyyy:MM:dd HH:mm:ss"           # Format without timezone
 )
 
+# Define the logging function WITHIN the module
+function Add-ThreadLog {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Level,
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    # Check if the script-scoped list exists (set by the calling script block)
+    if ($null -ne $script:ThreadLogList -and $script:ThreadLogList -is [System.Collections.IList]) {
+        $logTimestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        # Get thread ID here as well
+        $threadId = [System.Threading.Thread]::CurrentThread.ManagedThreadId
+        $logEntry = "$logTimestamp - $Level - (Thread $threadId) - $Message"
+        # Add to the list stored in the script scope
+        $script:ThreadLogList.Add($logEntry)
+    } else {
+        # Fallback or warning if the list wasn't properly set up
+        Write-Warning "Add-ThreadLog: ThreadLogList not found in script scope. Message: [$Level] $Message"
+    }
+}
+
 function Get-ProcessedLog {
     param (
         [Parameter(Mandatory = $true)]
-        [string]$LogPath 
+        [string]$LogPath
     )
 
-    $validEntries = [System.Collections.Generic.List[object]]::new()
+    # Use the main Log function, NOT Add-ThreadLog
+    Log "DEBUG" "Attempting to load processed log from '$LogPath'"
+
+    $processedEntries = @() # Initialize as empty array
+
     if (Test-Path -Path $LogPath) {
-        $reader = $null
         try {
-            $reader = [System.IO.StreamReader]::new($LogPath) 
-            while ($line = $reader.ReadLine()) {
-                if ([string]::IsNullOrWhiteSpace($line)) {
-                    continue # Skip empty lines
-                }
-                try {
-                    # Attempt to parse each line as JSON
-                    $entry = $line | ConvertFrom-Json -ErrorAction Stop
-                    if ($null -ne $entry -and $entry.PSObject.Properties['path']) { # Basic check for a valid-looking entry
-                        $validEntries.Add($entry)
+            # Read the entire file content as a single string
+            $jsonContent = Get-Content -Path $LogPath -Raw -Encoding UTF8 -ErrorAction Stop
+
+            # Check if the content is not empty or just whitespace
+            if (-not [string]::IsNullOrWhiteSpace($jsonContent)) {
+                # Parse the entire content as JSON (expecting an array)
+                $parsedData = $jsonContent | ConvertFrom-Json -ErrorAction Stop
+
+                # Ensure the result is always an array, even if the JSON was a single object
+                if ($null -ne $parsedData) {
+                    if ($parsedData -is [array]) {
+                        $processedEntries = $parsedData
                     } else {
-                        Log "WARNING" "Invalid entry in log file: $line"
+                        # If ConvertFrom-Json returns a single object, wrap it in an array
+                        $processedEntries = @($parsedData)
                     }
-                } catch {
-                    Log "WARNING" "Failed to parse entry as JSON: $line"
                 }
+                Log "DEBUG" "Successfully parsed log file '$LogPath'. Found $($processedEntries.Count) initial entries."
+            } else {
+                # Log using the main Log function
+                Log "INFO" "Log file '$LogPath' exists but is empty or contains only whitespace."
             }
         } catch {
-            Log "ERROR" "Failed to parse Log File"
-            return @() # Return empty on read error
-        } finally {
-            if ($null -ne $reader) {
-                $reader.Dispose()
-            }
+            # Log the error using the main Log function
+            Log "ERROR" "Failed to read or parse log file '$LogPath': $_"
+            # Return empty array on error
+            return @()
         }
     } else {
-        Log "WARNING" "Log file not found."
-        return @() # Return empty array if file doesn't exist
-    }    
-
-    # Deduplicate based on the 'path' property, keeping the LATEST entry if timestamps differ (though unlikely here)
-    # Using a hashtable for efficient deduplication
-    $uniqueEntries = @{}
-    foreach ($entry in $validEntries) {
-        # Overwrite existing entry for the same path, effectively keeping the last one read
-         if ($null -ne $entry -and $entry.path) {
-            $uniqueEntries[$entry.path] = $entry
-         }
+        # Log using the main Log function
+        Log "INFO" "Log file '$LogPath' not found. Starting with an empty log."
+        # Return empty array if file doesn't exist
+        return @()
     }
-    Log "INFO" "Loaded $($uniqueEntries.Count) unique processed entries from Log File"  
+
+    # --- Deduplication Logic ---
+    $uniqueEntries = @{}
+    $invalidEntryCount = 0
+    foreach ($entry in $processedEntries) {
+        # Basic check for a valid-looking entry with a path
+        if ($null -ne $entry -and $entry.PSObject.Properties['path'] -and -not [string]::IsNullOrWhiteSpace($entry.path)) {
+            # Use OrdinalIgnoreCase for case-insensitive path comparison on Windows
+            $key = $entry.path
+            # Overwrite existing entry for the same path, effectively keeping the last one read
+            $uniqueEntries[$key] = $entry
+        } else {
+            # Log using the main Log function
+            Log "WARNING" "Skipping invalid or pathless entry during deduplication: $($entry | ConvertTo-Json -Depth 1 -Compress)"
+            $invalidEntryCount++
+        }
+    }
+    if ($invalidEntryCount -gt 0) {
+         Log "WARNING" "Found $invalidEntryCount invalid/pathless entries in '$LogPath'."
+    }
+    # Log using the main Log function
+    Log "INFO" "Loaded $($uniqueEntries.Count) unique processed entries from '$LogPath'."
     return @($uniqueEntries.Values)
 }
 
@@ -142,7 +184,7 @@ function Standardize_GeoTag {
 			$GPSLongitude = [double]($geoParts[2].Trim())
 			$GPSLongitudeRef = $geoParts[3].Trim()
 		} catch {
-			Log "ERROR" " "Error: Unable to convert '$stringValue' to a double.""
+			Add-ThreadLog "ERROR" "Error: Unable to convert '$stringValue' to a double."
 		}
         $resulted_geotag = "${GPSLatitude},${GPSLatitudeRef},${GPSLongitude},${GPSLongitudeRef}"
 	} elseif ($geoParts.Count -eq 2) {	
@@ -155,7 +197,7 @@ function Standardize_GeoTag {
             $GPSLongitude=$([math]::Abs($GPSLongitude)) # Absolute longitude
 
 		} catch {
-			Log "ERROR" " "Error: Unable to convert '$stringValue' to a double.""
+			Add-ThreadLog "ERROR" "Error: Unable to convert '$stringValue' to a double."
 		}
         $resulted_geotag = "${GPSLatitude},${GPSLatitudeRef},${GPSLongitude},${GPSLongitudeRef}"
 	} elseif ($geoParts.Count -eq 1) {	
@@ -167,10 +209,10 @@ function Standardize_GeoTag {
             $geotag=$geoParts[0].Trim()
             $resulted_geotag =Standardize_GeoTag_value -InputGeoTag $geotag
 		} catch {
-			Log "ERROR" " "Error: Unable to convert '$stringValue' to a double.""
+			Add-ThreadLog "ERROR" "Error: Unable to convert '$stringValue' to a double."
 		}
 	} else {
-        Log "ERROR" " "Error: Unable to convert '$stringValue' to a double.""
+        Add-ThreadLog "ERROR" "Error: Unable to convert '$stringValue' to a double."
     }    
 	return $resulted_geotag
 }
@@ -188,7 +230,7 @@ function Run_ExifToolCommand {
      # Ensure the file exists
      if (-not (Test-Path -Path $file.FullName)) {
         # Consider returning null or throwing an error specific to file not found
-        Log "ERROR" "File not found for ExifTool command: $($file.FullName)"
+        Add-ThreadLog "ERROR" "File not found for ExifTool command: $($file.FullName)"
         throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
         # return # Or just return if throwing is too disruptive downstream
     }
@@ -197,14 +239,18 @@ function Run_ExifToolCommand {
 
     # Build the command string and wrap it in additional quotes
     $commandArgs = @($ExifToolPath) + $arguments + @($fullPath) # Combine executable, specific args, and file path
-      
-    # Retry logic
+
+    # Retry Add-ThreadLogic
     $attempt = 0
     $ExifToolOutput = $null
     while ($attempt -lt $maxRetries) {
         try {
             $attempt++
+            $commandStringForLog = $commandArgs -join ' '
+            Add-ThreadLog "INFO" "RUN_EXIF: Attempt $attempt : Executing: $commandStringForLog" # <-- ADD
+ 
             $ExifToolOutput = & $commandArgs[0] $commandArgs[1..($commandArgs.Count-1)] 2>&1
+            Add-ThreadLog "DEBUG" "RUN_EXIF: Attempt $attempt : Finished execution for '$fullPath'" # <-- ADD
 
             # Check for errors or warnings in the output
             if ($ExifToolOutput -match "Error") {
@@ -212,18 +258,19 @@ function Run_ExifToolCommand {
                 throw [System.Exception]$errorMessage
             }
             if ($ExifToolOutput -match "Warning") {
-                Log "WARNING" ""ExifTool command returned a warning: $($ExifToolOutput -join '; ')""
+                Add-ThreadLog "WARNING" "ExifTool command returned a warning: $($ExifToolOutput -join '; ')"
             }
             break  # Exit the loop on success
         } catch [System.Exception] {
+            Add-ThreadLog "ERROR" "RUN_EXIF: Attempt $attempt failed for '$fullPath'. Error: $_" # <-- ENHANCE
             # Catch specific ExifTool error first
             if ($_.Exception.Message -match "ExifTool command returned an error") {
-                 Log "ERROR" "ExifTool execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
+                 Add-ThreadLog "ERROR" "ExifTool execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
                  if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
                  Start-Sleep -Seconds $retryDelay
             } else {
                 # Catch other potential exceptions during execution
-                Log "ERROR" "Unexpected error executing ExifTool on attempt $attempt for '$fullPath'. Error: $_"
+                Add-ThreadLog "ERROR" "Unexpected error executing ExifTool on attempt $attempt for '$fullPath'. Error: $_"
                 if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
                 Start-Sleep -Seconds $retryDelay
             }
@@ -260,7 +307,7 @@ function IsValid_GeoTag {
     # Validate input
     if ([string]::IsNullOrEmpty($GeoTag)) {
         $errorMessage = "GeoTag is null or empty."
-        Log "WARNING" "$errorMessage"
+        Add-ThreadLog "WARNING" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
     }
 
@@ -268,7 +315,7 @@ function IsValid_GeoTag {
     $geoParts = $GeoTag -split ","
     if ($geoParts.Count -ne 4) {
         $errorMessage = "Invalid GeoTag format: $GeoTag"
-        Log "WARNING" "$errorMessage"
+        Add-ThreadLog "WARNING" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -282,25 +329,25 @@ function IsValid_GeoTag {
         # Validate latitude and longitude ranges
         if (($latitude -lt -90 -or $latitude -gt 90) -or ($longitude -lt -180 -or $longitude -gt 180)) {
             $errorMessage = "Latitude or longitude is out of range: $GeoTag"
-            Log "WARNING" "$errorMessage"
+            Add-ThreadLog "WARNING" "$errorMessage"
             throw [System.ArgumentOutOfRangeException]$errorMessage
         }
 
         # Validate latitude and longitude references
         if (($latitudeRef -ne "N" -and $latitudeRef -ne "S") -or ($longitudeRef -ne "E" -and $longitudeRef -ne "W")) {
             $errorMessage = "Invalid latitude or longitude reference: $GeoTag"
-            Log "WARNING" "$errorMessage"
+            Add-ThreadLog "WARNING" "$errorMessage"
             throw [System.FormatException]$errorMessage
         }
     } catch [System.FormatException] {
-        Log "ERROR" ""Failed to parse GeoTag: $GeoTag. Error: $_""
+        Add-ThreadLog "ERROR" "Failed to parse GeoTag: $GeoTag. Error: $_"
         throw
     } catch [System.ArgumentOutOfRangeException] {
-        Log "ERROR" ""Failed to parse GeoTag: $GeoTag. Error: $_""
+        Add-ThreadLog "ERROR" "Failed to parse GeoTag: $GeoTag. Error: $_"
         throw
     } catch {
         $errorMessage = "An unexpected error occurred: $_"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw
     }
 
@@ -327,7 +374,7 @@ function IsValid_TimeStamp {
     try {
         $output_timestamp = Standardize_TimeStamp -InputTimestamp $timestamp_in
     } catch {
-        Log "ERROR" ""Failed to standardize timestamp: $timestamp_in. Error: $_""
+        Add-ThreadLog "ERROR" "Failed to standardize timestamp: $timestamp_in. Error: $_"
         throw
     }
 
@@ -390,7 +437,7 @@ function ParseToDecimal {
         }
     } else {
         $errorMessage = "Invalid coordinate format: $geoTag"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 }
@@ -534,7 +581,7 @@ function Get_Json_TimeStamp {
     # Check if the JSON file exists
     if (-not (Test-Path -Path $JsonFile.FullName)) {
         $errorMessage = "JSON file not found: $($JsonFile.FullName)"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -543,7 +590,7 @@ function Get_Json_TimeStamp {
         $jsonContent = Get-Content -Path $JsonFile.FullName | ConvertFrom-Json
     } catch {
         $errorMessage = "Failed to read or parse JSON file: $($JsonFile.FullName). Error: $_"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -551,13 +598,13 @@ function Get_Json_TimeStamp {
     try {
         $creationDate = Standardize_TimeStamp -InputTimestamp $jsonContent.creationTime?.formatted
     } catch {
-        Log "ERROR" ""Failed to standardize creationTime timestamp from JSON file: $($JsonFile.FullName). Error: $_""
+        Add-ThreadLog "ERROR" "Failed to standardize creationTime timestamp from JSON file: $($JsonFile.FullName). Error: $_"
         throw
     }
     try {
         $photoTakenDate = Standardize_TimeStamp -InputTimestamp $jsonContent.photoTakenTime?.formatted
     } catch {
-        Log "ERROR" ""Failed to standardize photoTakenTime timestamp from JSON file: $($JsonFile.FullName). Error: $_""
+        Add-ThreadLog "ERROR" "Failed to standardize photoTakenTime timestamp from JSON file: $($JsonFile.FullName). Error: $_"
         throw
     }
 
@@ -565,7 +612,7 @@ function Get_Json_TimeStamp {
     $result = Compare_TimeStamp -timestamp1 $creationDate -timestamp2 $photoTakenDate
 
     if (-not $result -or $result -eq $(Make_zero_TimeStamp)) {
-        Log "ERROR" ""Failed to standardize photoTakenTime timestamp from JSON file: $($JsonFile.FullName). Error: $_""
+        Add-ThreadLog "ERROR" "Failed to standardize photoTakenTime timestamp from JSON file: $($JsonFile.FullName). Error: $_"
         throw
     }
     return $result
@@ -579,7 +626,7 @@ function Get_Exif_Timestamp {
     # Ensure the file exists
     if (-not (Test-Path $File.FullName)) {
         $errorMessage = "File not found: $($File.FullName)"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -590,7 +637,7 @@ function Get_Exif_Timestamp {
     $actions = Get_Field_By_Extension -Extension $extension -FieldDictionary $TimeStampFields
     if (-not $actions -or $actions.Count -eq 0) {
         $errorMessage = "No timestamp fields defined for extension: $extension"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -615,6 +662,10 @@ function Get_Exif_Timestamp {
     return $result_TimeStamp
 }
 
+# Inside MediaTools.psm1
+
+# ... (other functions) ...
+
 function Find_and_Write_Valid_Timestamp {
     param (
         [Parameter(Mandatory = $true)]
@@ -633,9 +684,9 @@ function Find_and_Write_Valid_Timestamp {
     # Get the timestamp from the filename
     try {
         $filenameTimestamp = Parse_DateTimeFromFilename -FilePath $File
-        Log "INFO" ""Extracted TimeStamp from FileName: $filenameTimestamp""
+        Add-ThreadLog "INFO" "Extracted TimeStamp from FileName: $filenameTimestamp for $($File.Name)"
     } catch {
-        Log "WARNING" ""Failed to retrieve timestamp from filename for file: $($file.basename)""
+        Add-ThreadLog "WARNING" "Failed to retrieve timestamp from filename for file: $($File.Name). Error: $($_.Exception.Message)"
     }
 
     # Get the timestamp from the JSON metadata if the JSON file exists
@@ -643,20 +694,20 @@ function Find_and_Write_Valid_Timestamp {
         try {
             $JsonFile = [System.IO.FileInfo]$JsonPath
             $jsonTimestamp = Get_Json_TimeStamp -JsonFile $JsonFile
-            Log "INFO" ""Extracted TimeStamp from JSON: $jsonTimestamp""
+            Add-ThreadLog "INFO" "Extracted TimeStamp from JSON: $jsonTimestamp for $($File.Name)"
         } catch {
-            Log "WARNING" ""Failed to retrieve timestamp from JSON file:  $($file.basename)""
+            Add-ThreadLog "WARNING" "Failed to retrieve timestamp from JSON file: $($JsonFile.Name). Error: $($_.Exception.Message)"
         }
     } else {
-        Log "WARNING" ""There is no JSON file""
+        Add-ThreadLog "DEBUG" "No JSON file found for $($File.Name)" # Changed from WARNING to DEBUG
     }
 
     # Get the timestamp from the Exif metadata
     try {
         $exifTimestamp = Get_Exif_Timestamp -File $File
-        Log "INFO" ""Extracted TimeStamp from EXIF: $exifTimestamp""
+        Add-ThreadLog "INFO" "Extracted TimeStamp from EXIF: $exifTimestamp for $($File.Name)"
     } catch {
-        Log "WARNING" ""Failed to retrieve timestamp from Exif metadata for file:  $($file.basename)""
+        Add-ThreadLog "WARNING" "Failed to retrieve timestamp from Exif metadata for file: $($File.Name). Error: $($_.Exception.Message)"
     }
 
     # Compare the timestamps and determine the earliest valid timestamp
@@ -664,18 +715,36 @@ function Find_and_Write_Valid_Timestamp {
     $earliestTimestamp = Compare_TimeStamp -timestamp1 $earliestTimestamp -timestamp2 $exifTimestamp
 
     # Check if the earliest timestamp is valid
-    if ($earliestTimestamp -and (IsValid_TimeStamp -timestamp_in $earliestTimestamp)) {
+    $isValid = $false
+    if ($earliestTimestamp) {
+        try {
+            $isValid = IsValid_TimeStamp -timestamp_in $earliestTimestamp
+        } catch {
+            # IsValid_TimeStamp already logs, just mark as invalid
+            $isValid = $false
+        }
+    }
+
+    if ($isValid) {
         # Write the timestamp to the file
         try {
             Write_TimeStamp -File $File -TimeStamp $earliestTimestamp
+            Add-ThreadLog "INFO" "Determined and wrote valid timestamp: $earliestTimestamp for $($File.Name)" # Log success here
             return $earliestTimestamp
         } catch {
-            throw [System.IO.FileNotFoundException]$Message
+            # If Write_TimeStamp fails, throw its specific error
+            $writeErrorMsg = "Failed to WRITE timestamp '$earliestTimestamp' to file: $($File.FullName). Error: $($_.Exception.Message)"
+            Add-ThreadLog "ERROR" $writeErrorMsg
+            throw [System.IO.IOException]::new($writeErrorMsg, $_.Exception) # Throw specific error with inner exception
         }
     } else {
-        throw [System.IO.FileNotFoundException]$Message
+        # If no valid timestamp could be determined
+        $noValidTimestampMsg = "No valid timestamp could be determined for file: $($File.FullName)"
+        Add-ThreadLog "WARNING" $noValidTimestampMsg # Log as warning
+        throw [System.FormatException]::new($noValidTimestampMsg) # Throw specific error
     }
 }
+
 
 function Find_and_Write_Valid_GeoTag {
     param (
@@ -695,20 +764,20 @@ function Find_and_Write_Valid_GeoTag {
         try {
             $JsonFile = [System.IO.FileInfo]$JsonPath
             $Json_geotag = Get_Json_Geotag -JsonFile $JsonFile
-            Log "INFO" ""Extracted GeoTag from JSON: $Json_geotag""
+            Add-ThreadLog "INFO" "Extracted GeoTag from JSON: $Json_geotag"
         } catch {
-            Log "WARNING" ""Failed to retrieve geotag from JSON file: $JsonPath.""
+            Add-ThreadLog "WARNING" "Failed to retrieve geotag from JSON file: $JsonPath."
         }
     } else {
-        Log "WARNING" ""There is no JSON file""
+        Add-ThreadLog "WARNING" "There is no JSON file"
     }
 
     # Get the geotag from the Exif metadata
     try {
         $Exif_geotag = Get_Exif_Geotag -File $File
-        Log "INFO" ""Extracted GeoTag from EXIF: $Json_geotag""
+        Add-ThreadLog "INFO" "Extracted GeoTag from EXIF: $Json_geotag"
     } catch {
-        Log "WARNING" ""Failed to retrieve geotag from Exif metadata for file: $($File.basename)""
+        Add-ThreadLog "WARNING" "Failed to retrieve geotag from Exif metadata for file: $($File.basename)"
     }
 
     # Compare the geotags and determine the final geotag
@@ -730,7 +799,7 @@ function Find_and_Write_Valid_GeoTag {
         } catch {
         }
     } else {
-        Log "WARNING" ""No valid geotag found for $fullPath""
+        Add-ThreadLog "WARNING" "No valid geotag found for $fullPath"
     }
 }
 
@@ -758,7 +827,7 @@ function Parse_DateTimeFromFilename {
                 ($date -match '\d{2}-\d{2}-\d{4}') { $date.Substring(6, 4) + ":" + $date.Substring(3, 2) + ":" + $date.Substring(0, 2) }
                 ($date -match '\d{4}-\d{2}-\d{2}') { $date -replace '-', ':' }
                 default {
-                    Log "WARNING" ""Date format not recognized: $date""
+                    Add-ThreadLog "WARNING" "Date format not recognized: $date"
                     continue
                 }
             }
@@ -769,7 +838,7 @@ function Parse_DateTimeFromFilename {
                 ($time -match '\d{2}-\d{2}-\d{2}') { $time -replace '-', ':' }
                 ($time -match '\d{2}:\d{2}:\d{2}') { $time }
                 default {
-                    Log "WARNING" ""Time format not recognized: $time. Defaulting to 00:00:00.""
+                    Add-ThreadLog "WARNING" "Time format not recognized: $time. Defaulting to 00:00:00."
                     "00:00:00"
                 }
             }
@@ -790,7 +859,7 @@ function Parse_DateTimeFromFilename {
         }
     }
 
-    # Log if no match was found
+    # Add-ThreadLog if no match was found
     throw [System.FormatException] "No valid date-time found in filename: $filename"
 }
 
@@ -805,7 +874,7 @@ function Write_TimeStamp {
     # Ensure the file exists
     if (-not (Test-Path -Path $fullPath)) {
         $errorMessage = "File does not exist: $fullPath"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -814,13 +883,13 @@ function Write_TimeStamp {
     # Validate the timestamp
     if ([string]::IsNullOrEmpty($TimeStamp)) {
         $errorMessage = "No Timestamp provided."
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
     }
 
     if (-not (IsValid_TimeStamp -timestamp_in $TimeStamp)) {
         $errorMessage = "Invalid Timestamp provided: $TimeStamp"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -828,7 +897,7 @@ function Write_TimeStamp {
     $actions = Get_Field_By_Extension -Extension $extension -FieldDictionary $TimeStampFields
 
     if ($actions.Count -eq 0) {
-        Log "WARNING" ""No actions to execute for extension: $extension""
+        Add-ThreadLog "WARNING" "No actions to execute for extension: $extension"
         return
     }
 
@@ -854,16 +923,16 @@ function Update-FileMetadata {
     )
     try {
         $FinalTimestamp = Find_and_Write_Valid_Timestamp -File $File
-        Log "INFO" "Successfully wrote timestamp $FinalTimestamp"
+        Add-ThreadLog "INFO" "Successfully wrote timestamp $FinalTimestamp"
     } catch {
-        Log "WARNING" ""Failed to write timestamp for file: $($File.basename).""
+        Add-ThreadLog "WARNING" "Failed to write timestamp for file: $($File.basename)."
         throw
     }
     try {
         $FinalGeoTag = Find_and_Write_Valid_GeoTag -File $File
-        Log "INFO" "Successfully wrote GeoTag $FinalGeoTag"
+        Add-ThreadLog "INFO" "Successfully wrote GeoTag $FinalGeoTag"
     } catch {
-        Log "WARNING" ""Failed to write geotag for file: $($File.basename).""
+        Add-ThreadLog "WARNING" "Failed to write geotag for file: $($File.basename)."
         throw
     }
 }
@@ -886,21 +955,21 @@ function Move-FileToDestination {
         $desiredPath = Split-Path -Path $destination
         if (!(Test-Path -Path $desiredPath -PathType Container)) {
             New-Item -Path $desiredPath -ItemType Directory -Force | Out-Null
-            Log "INFO" ""Created destination directory: $desiredPath""
+            Add-ThreadLog "INFO" "Created destination directory: $desiredPath"
         }
     } catch {
         $errorMessage = "Failed to create destination directory: $desiredPath. Error: $_"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.DirectoryNotFoundException]$errorMessage
     }
 
     # Move the file to the destination directory
     try {
         Move-Item -Path $File.FullName -Destination $destination
-        Log "INFO" ""Successfully moved file to: $destination""
+        Add-ThreadLog "INFO" "Successfully moved file to: $destination"
     } catch {
         $errorMessage = "Failed to move file: $($File.FullName). Error: $_"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw
     }
 }
@@ -912,7 +981,7 @@ function Consolidate_Json_Exif_Data {
     try {
         Update-FileMetadata -File $File
     } catch {
-        Log "ERROR" ""Failed to update metadata for file: $($File.FullName). Error: $_""
+        Add-ThreadLog "ERROR" "Failed to update metadata for file: $($File.FullName). Error: $_"
         throw
     }
 }
@@ -925,7 +994,7 @@ function Get_Json_Geotag {
     # Check if the JSON file exists
     if (-not (Test-Path -Path $JsonFile.FullName)) {
         $errorMessage = "JSON file not found: $($JsonFile.FullName)"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -934,7 +1003,7 @@ function Get_Json_Geotag {
         $jsonContent = Get-Content -Path $JsonFile.FullName | ConvertFrom-Json
     } catch {
         $errorMessage = "Failed to read or parse JSON file: $($JsonFile.FullName). Error: $_"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -946,7 +1015,7 @@ function Get_Json_Geotag {
         # Standardize and return the geotag
         return Standardize_GeoTag -InputGeoTag "${latitude}, ${longitude}"
     } else {
-        Log "WARNING" ""GeoData is missing or incomplete in JSON file: $($JsonFile.FullName)""
+        Add-ThreadLog "WARNING" "GeoData is missing or incomplete in JSON file: $($JsonFile.FullName)"
         return $null
     }
 }
@@ -985,7 +1054,7 @@ function Standardize_TimeStamp {
 
     # Step 5: Remove invalid `00:00:00` offset
     if ($InputTimestamp -match '\s00:00:00$') {
-        Log "INFO" ""Removing invalid '00:00:00' offset from timestamp: $InputTimestamp""
+        Add-ThreadLog "INFO" "Removing invalid '00:00:00' offset from timestamp: $InputTimestamp"
         $InputTimestamp = $InputTimestamp -replace '\s00:00:00$', ''
     }
 
@@ -1000,7 +1069,7 @@ function Standardize_TimeStamp {
         try {
             $zzzFormat = Get-TimeZoneOffset -timeZoneAbbreviation $timeZoneAbbreviation
         } catch {
-            Log "WARNING" ""Invalid or unrecognized time zone abbreviation: $timeZoneAbbreviation. Using default offset '+00:00'.""
+            Add-ThreadLog "WARNING" "Invalid or unrecognized time zone abbreviation: $timeZoneAbbreviation. Using default offset '+00:00'."
         }
     }
 
@@ -1020,9 +1089,9 @@ function Standardize_TimeStamp {
         }
     }
 
-    # Log if parsing fails for all formats
+    # Add-ThreadLog if parsing fails for all formats
     $errorMessage = "Failed to parse the input timestamp: $InputTimestamp. Returning default invalid timestamp."
-    Log "WARNING" "$errorMessage"
+    Add-ThreadLog "WARNING" "$errorMessage"
     throw [System.FormatException]$errorMessage
 }
 
@@ -1051,7 +1120,7 @@ function Standardize_GeoTag_value {
             return ParseToDecimal -geoTag $coordinate -direction $direction
         } catch {
             $errorMessage = "Error during decimal conversion for geotag: $sanitizedInputGeoTag. Error: $_"
-            Log "ERROR" "$errorMessage"
+            Add-ThreadLog "ERROR" "$errorMessage"
             throw
         }
     }
@@ -1062,12 +1131,12 @@ function Standardize_GeoTag_value {
             return [double]$sanitizedInputGeoTag
         } catch {
             $errorMessage = "Error converting geotag to decimal: $sanitizedInputGeoTag. Error: $_"
-            Log "ERROR" "$errorMessage"
+            Add-ThreadLog "ERROR" "$errorMessage"
             throw
         }
     }
 
-    # Handle degrees, minutes, seconds format (e.g., "45 deg 30' 15.5\"")
+    # Handle degrees, minutes, seconds format (e.g., "45 deg 30' 15.5\")
     if ($sanitizedInputGeoTag -match "(\d+)\s*deg\s*(\d+)'\s*(\d+(\.\d+)?)>") {
         try {
             $degrees = [double]$matches[1]
@@ -1076,14 +1145,14 @@ function Standardize_GeoTag_value {
             return $degrees + ($minutes / 60) + ($seconds / 3600)
         } catch {
             $errorMessage = "Error parsing degrees, minutes, seconds format: $sanitizedInputGeoTag. Error: $_"
-            Log "ERROR" "$errorMessage"
+            Add-ThreadLog "ERROR" "$errorMessage"
             throw
         }
     }
 
-    # Log and throw error for invalid format
+    # Add-ThreadLog and throw error for invalid format
     $errorMessage = "Invalid geotag format: $InputGeoTag"
-    Log "ERROR" "$errorMessage"
+    Add-ThreadLog "ERROR" "$errorMessage"
     throw [System.FormatException]$errorMessage
 }
 
@@ -1115,7 +1184,7 @@ function AddFields_GeoTags {
                         $GPSLatitudeRef = $value
                     }  else {
                         $errorMessage = "Invalid LatitudeRef value: $value"
-                        Log "ERROR" "$errorMessage"
+                        Add-ThreadLog "ERROR" "$errorMessage"
                         throw [System.FormatException]$errorMessage
                     }
                 }
@@ -1129,7 +1198,7 @@ function AddFields_GeoTags {
                         $GPSLatitude = [double]$value
                     } catch {
                         $errorMessage = "Error: Unable to convert '$value' to a valid latitude."
-                        Log "ERROR" "$errorMessage"
+                        Add-ThreadLog "ERROR" "$errorMessage"
                         throw [System.FormatException]$errorMessage
                     }
                 }
@@ -1143,7 +1212,7 @@ function AddFields_GeoTags {
                         $GPSLongitudeRef = $value
                     } else {
                         $errorMessage = "Invalid LongitudeRef value: $value"
-                        Log "ERROR" "$errorMessage"
+                        Add-ThreadLog "ERROR" "$errorMessage"
                         throw [System.FormatException]$errorMessage
                     }
                 }                    
@@ -1157,7 +1226,7 @@ function AddFields_GeoTags {
                         $GPSLongitude = [double]$value
                     } catch {
                         $errorMessage = "Error: Unable to convert '$value' to a valid longitude."
-                        Log "ERROR" "$errorMessage"
+                        Add-ThreadLog "ERROR" "$errorMessage"
                         throw [System.FormatException]$errorMessage
                     }
                 }
@@ -1179,7 +1248,7 @@ function AddFields_GeoTags {
                 }
             }
             default {
-                Log "WARNING" ""Unknown field: $field. No changes made.""
+                Add-ThreadLog "WARNING" "Unknown field: $field. No changes made."
             }
         }
     }
@@ -1227,13 +1296,13 @@ function Get_Field_By_Extension {
 
     if ([string]::IsNullOrEmpty($Extension)) {
         $errorMessage = "Extension is null or empty. Cannot retrieve fields."
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
     }
 
     if ($null -eq $FieldDictionary) {
         $errorMessage = "FieldDictionary is null. Cannot retrieve fields."
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
     }
 
@@ -1241,7 +1310,7 @@ function Get_Field_By_Extension {
     if ($FieldDictionary.ContainsKey($normalizedExtension)) {
         return $FieldDictionary[$normalizedExtension]
     } else {
-        Log "WARNING" ""No fields defined for extension: $normalizedExtension""
+        Add-ThreadLog "WARNING" "No fields defined for extension: $normalizedExtension"
         return @()
     }
 }
@@ -1255,7 +1324,7 @@ function Get_Exif_Geotag {
     # Validate the file
     if (-not (Test-Path $File.FullName)) {
         $errorMessage = "File not found: $($File.FullName)"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
@@ -1264,7 +1333,7 @@ function Get_Exif_Geotag {
     # Get actions for the given extension
     $actions = Get_Field_By_Extension -Extension $extension -FieldDictionary $gpsFields
     if (-not $actions -or $actions.Count -eq 0) {
-        Log "WARNING" ""No actions to execute for file: $($File.FullName)""
+        Add-ThreadLog "WARNING" "No actions to execute for file: $($File.FullName)"
         return $null
     }
 
@@ -1276,7 +1345,7 @@ function Get_Exif_Geotag {
             $temp_GeoTag = Run_ExifToolCommand -Arguments $exifArgs -File $File -type "GeoTag"
             $geo_tag_fields += $temp_GeoTag
         } catch {
-            Log "ERROR" ""Failed to execute ExifTool command for action: $action. Error: $_""
+            Add-ThreadLog "ERROR" "Failed to execute ExifTool command for action: $action. Error: $_"
             throw
         }
     }
@@ -1297,20 +1366,20 @@ function Write_Geotag {
     # Ensure the file exists
     if (-not (Test-Path -Path $fullPath)) {
         $errorMessage = "File does not exist: $fullPath"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.IO.FileNotFoundException]$errorMessage
     }
 
     # Validate the GeoTag
     if ([string]::IsNullOrEmpty($GeoTag)) {
         $errorMessage = "No geotag provided."
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.ArgumentNullException]$errorMessage
     }
 
     if (-not (IsValid_GeoTag -GeoTag $GeoTag)) {
         $errorMessage = "Invalid geotag provided: $GeoTag"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -1318,7 +1387,7 @@ function Write_Geotag {
     $geoParts = $GeoTag -split ","
     if ($geoParts.Count -ne 4) {
         $errorMessage = "GeoTag does not have exactly 4 parts: $GeoTag"
-        Log "ERROR" "$errorMessage"
+        Add-ThreadLog "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 
@@ -1349,7 +1418,7 @@ function Write_Geotag {
         $temp_GeoTag = Run_ExifToolCommand -Arguments $exifArgs -File $File
         return $temp_GeoTag
     } catch {
-        Log "WARNING" ""Failed to write geotag for file: $fullPath.""
+        Add-ThreadLog "WARNING" "Failed to write geotag for file: $fullPath."
         throw
     }
 }
@@ -1391,7 +1460,7 @@ function Compare_Geotag {
             $geotag1_valid = $true
         }
     } catch {
-        Log "WARNING" ""Error validating geotag1: $geotag1. Error: $_""
+        Add-ThreadLog "WARNING" "Error validating geotag1: $geotag1. Error: $_"
     }
 
     try {
@@ -1399,7 +1468,7 @@ function Compare_Geotag {
             $geotag2_valid = $true
         }
     } catch {
-        Log "WARNING" ""Error validating geotag2: $geotag2. Error: $_""
+        Add-ThreadLog "WARNING" "Error validating geotag2: $geotag2. Error: $_"
     }
 
     # Determine the final geotag

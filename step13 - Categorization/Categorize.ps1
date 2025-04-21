@@ -1,44 +1,104 @@
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$unzipedDirectory,
+    [string]$ExifToolPath
+)
+
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
 # --- Logging Setup ---
-$scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 $logDir = Join-Path $scriptDirectory "..\Logs"
 $logFile = Join-Path $logDir "$scriptName.log"
 $logFormat = "{0} - {1}: {2}"
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
 
-$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL ?? "INFO"
-$env:DEDUPLICATOR_FILE_LOG_LEVEL = $env:DEDUPLICATOR_FILE_LOG_LEVEL ?? "DEBUG"
-$logLevelMap = @{ "DEBUG" = 0; "INFO" = 1; "WARNING" = 2; "ERROR" = 3; "CRITICAL" = 4 }
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+# Create the log directory if it doesn't exist
+if (-not (Test-Path $logDir)) {
+    try {
+        New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Error "FATAL: Failed to create log directory '$logDir'. Aborting. Error: $_"
+        exit 1
+    }
+}
 
+# Deserialize the JSON back into a hashtable
+$logLevelMap = $null
+$logLevelMap = $env:LOG_LEVEL_MAP_JSON
+
+if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
+    try {
+        # --- FIX IS HERE ---
+        # Use -AsHashtable to ensure the correct object type
+        $logLevelMap = $logLevelMap | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        # --- END FIX ---
+    } catch {
+        # Log a fatal error and exit immediately if deserialization fails
+        Write-Error "FATAL: Failed to deserialize LOG_LEVEL_MAP_JSON environment variable. Check the variable's content is valid JSON. Aborting. Error: $_"
+        exit 1
+    }
+}
+if ($null -eq $logLevelMap) {
+    # This case should ideally not happen if top.ps1 ran, but handle defensively
+    Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
+    exit 1
+}
+
+# Check if required environment variables are set (by top.ps1 or externally)
+if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) {
+    Write-Error "FATAL: Environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
+    exit 1
+}
+if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) {
+    Write-Error "FATAL: Environment variable DEDUPLICATOR_FILE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
+    exit 1
+}
+
+# Read the environment variables directly and trim whitespace (NOW SAFE)
+$EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.Trim()
+$EffectiveFileLogLevelString    = $env:DEDUPLICATOR_FILE_LOG_LEVEL.Trim()
+
+# Look up the numeric level using the effective string and the map
+$consoleLogLevel = $logLevelMap[$EffectiveConsoleLogLevelString.ToUpper()]
+$fileLogLevel    = $logLevelMap[$EffectiveFileLogLevelString.ToUpper()]
+
+# --- Validation for THIS script's levels ---
+if ($null -eq $consoleLogLevel) {
+    Write-Error "FATAL: Invalid Console Log Level specified ('$EffectiveConsoleLogLevelString'). Check environment variable or script default. Aborting."
+    exit 1
+}
+if ($null -eq $fileLogLevel) {
+    Write-Error "FATAL: Invalid File Log Level specified ('$EffectiveFileLogLevelString'). Check environment variable or script default. Aborting."
+    exit 1
+}
+
+# --- Log Function Definition ---
 function Log {
-    param ([string]$Level, [string]$Message)
+    param (
+        [string]$Level,
+        [string]$Message
+    )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
-    if ($levelIndex -ge $consoleLogLevel) { Write-Host $formatted }
-    if ($levelIndex -ge $fileLogLevel) { Add-Content -Path $logFile -Value $formatted -Encoding UTF8 }
+
+    if ($null -ne $levelIndex) {
+        if ($levelIndex -ge $consoleLogLevel) {
+            Write-Host $formatted
+        }
+        if ($levelIndex -ge $fileLogLevel) {
+            try {
+                Add-Content -Path $logFile -Value $formatted -Encoding UTF8 -ErrorAction Stop
+            } catch {
+                Write-Warning "Failed to write to log file '$logFile': $_"
+            }
+        }
+    } else {
+        Write-Warning "Invalid log level used: $Level"
+    }
 }
 
-# Define Image and video extensions
-$imageExtensions = @(".jpg")
-$videoExtensions = @(".mp4")
-
-# Define simplified metadata fields
-$TimeStampFields = @{
-    ".jpg" = @("CreateDate")
-    ".mp4" = @("MediaCreateDate")
-}
-
-$gpsFields = @{
-    ".jpg" = @("GPSPosition")
-    ".mp4" = @("GPSPosition")
-}
-
-$time_formats = @("yyyy:MM:dd HH:mm:sszzz", "yyyy:MM:dd HH:mm:ss zzz")
-
+# --- Show-ProgressBar Function Definition ---
 function Show-ProgressBar {
     param(
         [Parameter(Mandatory = $true)]
@@ -51,245 +111,57 @@ function Show-ProgressBar {
         [string]$Message
     )
 
-    $percent = [math]::Round(($Current / $Total) * 100)
-    $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30 # Adjust for message and percentage display
-    $barLength = [math]::Min($screenWidth, 80) # Limit to 80 characters, or screen width, whichever is smaller
-    $filledLength = [math]::Round(($barLength * $percent) / 100)
-    $emptyLength = $barLength - $filledLength
-
-    $filledBar = ('=' * $filledLength)
-    $emptyBar = (' ' * $emptyLength)
-
-    Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
-}
-
-#===========================================================
-#                     General functions
-#===========================================================
-function is_photo {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$file
-    )
-    return $file.Extension -eq ".jpg"
-}
-
-function is_video {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$file
-    )
-    return $file.Extension -eq ".mp4"
-}
-
-function Run_ExifToolCommand {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$file,
-        [Object[]]$arguments,
-        [string]$type = "execute",
-        [int]$maxRetries = 3,
-        [int]$retryDelay = 10
-    )
-
-     # Ensure the file exists
-     if (-not (Test-Path -Path $file.FullName)) {
-        # Consider returning null or throwing an error specific to file not found
-        Log "ERROR" "File not found for ExifTool command: $($file.FullName)"
-        throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
-        # return # Or just return if throwing is too disruptive downstream
-    }
-
-    $fullPath  = $file.FullName       # Full path of the file
-
-    # Build the command string and wrap it in additional quotes
-    $commandArgs = @($ExifToolPath) + $arguments + @($fullPath) # Combine executable, specific args, and file path
-      
-    # Retry logic
-    $attempt = 0
-    $ExifToolOutput = $null
-    while ($attempt -lt $maxRetries) {
-        try {
-            $attempt++
-            $ExifToolOutput = & $commandArgs[0] $commandArgs[1..($commandArgs.Count-1)] 2>&1
-
-            # Check for errors or warnings in the output
-            if ($ExifToolOutput -match "Error") {
-                $errorMessage = "ExifTool command returned an error: $($ExifToolOutput -join '; ')"
-                throw [System.Exception]$errorMessage
-            }
-            if ($ExifToolOutput -match "Warning") {
-                Log "WARNING" ""ExifTool command returned a warning: $($ExifToolOutput -join '; ')""
-            }
-            break  # Exit the loop on success
-        } catch [System.Exception] {
-            # Catch specific ExifTool error first
-            if ($_.Exception.Message -match "ExifTool command returned an error") {
-                 Log "ERROR" "ExifTool execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
-                 if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
-                 Start-Sleep -Seconds $retryDelay
-            } else {
-                # Catch other potential exceptions during execution
-                Log "ERROR" "Unexpected error executing ExifTool on attempt $attempt for '$fullPath'. Error: $_"
-                if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
-                Start-Sleep -Seconds $retryDelay
-            }
+    # Check if running in a host that supports progress bars
+    if ($null -eq $Host.UI.RawUI) {
+        # Fallback for non-interactive environments or simplified hosts
+        $percent = 0; 
+        if ($Total -gt 0) { 
+            $percent = [math]::Round(($Current / $Total) * 100) 
         }
-    }
-    # Process the output based on the type
-    switch ($type.ToLower()) {
-        "timestamp" {
-            if ($ExifToolOutput -and $ExifToolOutput -ne "") {
-                return Standardize_TimeStamp -InputTimestamp $ExifToolOutput
-            } else {
-                return Make_zero_TimeStamp
-            }
-        }
-        "geotag" {
-            if ($ExifToolOutput -and $ExifToolOutput -ne "") {
-                return Standardize_GeoTag -InputGeoTag $ExifToolOutput
-            } else {
-                return Make_zero_GeoTag
-            }
-        }
-        default {
-            return $ExifToolOutput
-        }
-    }
-}
-
-#===========================================================
-#                 TimeStamp functions
-#===========================================================
-function IsValid_TimeStamp {
-    param (
-        [string]$timestamp_in
-    )
-    if ($null -eq $timestamp_in -or $timestamp_in -eq "") {
-        return $false
-    }
-    $output_timestamp = Standardize_TimeStamp -InputTimestamp $timestamp_in
-    return $output_timestamp -ne "0001:01:01 00:00:00+00:00" -and $output_timestamp -ne "0000:00:00 00:00:00+00:00"
-}
-
-function Make_zero_TimeStamp {
-    return "0001:01:01 00:00:00+00:00"
-}
-
-function Get_Exif_Timestamp {
-    param (
-        [System.IO.FileInfo]$File
-    )
-    if (-not (Test-Path $File.FullName)) {
-        Verbose -message "File not found: $File" -type "error"
-        return $null
-    }
-
-    $extension = $File.Extension.ToLower()
-    $result_TimeStamp = Make_zero_TimeStamp
-
-    $action = $TimeStampFields[$extension]
-    if (-not $action) {
-        Verbose -message "No timestamp field defined for extension: $extension" -type "warning"
-        return $result_TimeStamp
-    }
-    $exifArgs = @("-${action}", "-s3", "-m")
-    $result_TimeStamp = Run_ExifToolCommand -Arguments $exifArgs -File $File -type TimeStamp
-    return $result_TimeStamp
-}
-
-function Standardize_TimeStamp {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$InputTimestamp,
-        [string]$OutputFormat = "yyyy:MM:dd HH:mm:sszzz"
-    )
-    if ([string]::IsNullOrEmpty($InputTimestamp) -or $InputTimestamp.StartsWith("0000")) {
-        return Make_zero_TimeStamp
-    }
-
-    $InputTimestamp = $InputTimestamp -replace 'Z$', '+00:00'
-    $InputTimestamp = $InputTimestamp -replace '\s+', ' '
-    $InputTimestamp = $InputTimestamp -replace ' +:', ':'
-    $InputTimestamp = $InputTimestamp.Trim()
-
-    foreach ($format in $time_formats) {
-        try {
-            $parsedDateTime = [datetimeoffset]::ParseExact($InputTimestamp, $format, $null)
-            return $parsedDateTime.ToString($OutputFormat)
-        } catch {
-            # Continue to the next format if parsing fails
-        }
-    }
-    return Make_zero_TimeStamp
-}
-
-#===========================================================
-#                 GeoTagging functions
-#===========================================================
-function Make_zero_GeoTag {
-    return "200,M,200,M"
-}
-
-function Standardize_GeoTag {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$InputGeoTag
-    )
-    $geoParts = $InputGeoTag -split ","
-    if ($geoParts.Count -eq 4) {
-        return $InputGeoTag
-    }
-    if ($geoParts.Count -eq 1) {
-        return $InputGeoTag
-    }
-    return Make_zero_GeoTag
-}
-
-function IsValid_GeoTag {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$GeoTag
-    )
-    $geoParts = $GeoTag -split ","
-    if ($geoParts.Count -ne 4) {
-        return $false
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+        return
     }
     try {
-        $latitude = [double]($geoParts[0].Trim())
-        $latitudeRef = $geoParts[1].Trim()
-        $longitude = [double]($geoParts[2].Trim())
-        $longitudeRef = $geoParts[3].Trim()
+        $percent = [math]::Round(($Current / $Total) * 100)
+        $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30
+        $barLength = [math]::Min($screenWidth, 80)
+        $filledLength = [math]::Round(($barLength * $percent) / 100)
+        $emptyLength = $barLength - $filledLength
+        $filledBar = ('=' * $filledLength)
+        $emptyBar = (' ' * $emptyLength)
+        Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
     } catch {
-        return $false
+        $percent = 0; if ($Total -gt 0) { $percent = [math]::Round(($Current / $Total) * 100) }
+        Write-Host "$Message Progress: $percent% ($Current/$Total)"
     }
-    if ($latitude -eq 200 -or $latitudeRef -eq "M" -or $longitude -eq 200 -or $longitudeRef -eq "M") {
-        return $false
-    }
-    return $true
 }
+# --- End Show-ProgressBar Function Definition ---
 
-function Get_Exif_Geotag {
+function Write-JsonAtomic {
     param (
-        [System.IO.FileInfo]$File
+        [Parameter(Mandatory = $true)][object]$Data,
+        [Parameter(Mandatory = $true)][string]$Path
     )
-    if (-not (Test-Path $File.FullName)) {
-        Verbose -message "File not found: $File" -type "error"
-        return $null
-    }
 
-    $extension = $File.Extension.ToLower()
-    $result_GeoTag = Make_zero_GeoTag
+    try {
+        $tempPath = "$Path.tmp"
+        $json = $Data | ConvertTo-Json -Depth 10
+        $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
 
-    $action = $gpsFields[$extension]
-    if (-not $action) {
-        Verbose -message "No geotag field defined for extension: $extension" -type "warning"
-        return $result_GeoTag
+        # Validate JSON before replacing
+        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
+
+        Move-Item -Path $tempPath -Destination $Path -Force
+        Log "INFO" "✅ Atomic write succeeded: $Path"
+    } catch {
+        Log "ERROR" "❌ Atomic write failed for $Path : $_"
+        if (Test-Path $tempPath) {
+            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+        }
     }
-    $exifArgs = @("-${action}", "-s3", "-m")
-    $result_GeoTag = Run_ExifToolCommand -Arguments $exifArgs -File $File -type GeoTag
-    return $result_GeoTag
 }
+
+Import-Module (Join-Path $scriptDirectory "..\step6 - Consolidate_Meta\MediaTools.psm1") -Force
 
 #===========================================================
 #                 Categorization functions
@@ -344,7 +216,7 @@ $dstDirectory = New-Item -Path "$unzippeddirectory\dst" -ItemType Directory -For
 
 # Move ONLY the target media files into the src directory
 Log "INFO" "Moving target media files (.jpg, .mp4) to $($srcDirectory.FullName)..."
-Get-ChildItem -Path $unzippeddirectory -File | Where-Object { $imageExtensions -contains $_.Extension -or $videoExtensions -contains $_.Extension } | Move-Item -Destination $srcDirectory.FullName -Force
+Get-ChildItem -Path $unzippeddirectory -File | Where-Object { $module:imageExtensions -contains $_.Extension -or $module:videoExtensions -contains $_.Extension } | Move-Item -Destination $srcDirectory.FullName -Force
 Log "INFO" "Finished moving target media files."
 
 $files = Get-ChildItem -Path $srcDirectory.FullName -Recurse -File

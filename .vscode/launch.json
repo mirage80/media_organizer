@@ -1,15 +1,18 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
+        // --- Add this configuration ---
         {
-            "name": "Python Debugger: Current File",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal"
+            "name": "PowerShell: Launch Current File", // The name VS Code is looking for
+            "type": "PowerShell",                     // Specifies the debugger type
+            "request": "launch",                      // Indicates we want to start a new process
+            "script": "${file}",                      // VS Code variable for the currently active file in the editor
+            "cwd": "${fileDirname}",                  // Sets the working directory to the directory of the current file
+            "createTemporaryIntegratedConsole": true  // Optional: Creates a new terminal for each debug session
         }
+        // --- End of added configuration ---
+
+        // You might have other configurations here already
     ]
 }
