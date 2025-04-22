@@ -1,4 +1,4 @@
-import json          
+import json
 import os
 import math
 import shutil
@@ -7,137 +7,103 @@ from math import radians, cos, sin, asin, sqrt
 import subprocess
 import argparse # <-- Add argparse
 import logging  # <-- Add logging
+import sys # Added sys import
 
-
-
+# --- Determine Project Root and Add to Path ---
+# Assumes the script is in 'stepX' directory directly under the project root
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
 
+# Add project root to path if not already there (needed for 'import Utils')
+if PROJECT_ROOT_DIR not in sys.path:
+     sys.path.append(PROJECT_ROOT_DIR)
+
+import Utils # Import the Utils module
+
+# --- Setup Logging using Utils ---
+# Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
+logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+
+# --- Define Constants ---
+# Use SCRIPT_DIR for paths relative to the script's location (as originally done)
 ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
-
-# --- Logging Setup ---
-# 1. Define a map from level names (strings) to logging constants
-LOG_LEVEL_MAP = {
-    'DEBUG': logging.DEBUG,
-    'INFO': logging.INFO,
-    'WARNING': logging.WARNING,
-    'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL
-}
-
-# 2. Define default levels (used if env var not set or invalid)
-DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
-DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
-
-# 3. Read environment variables, get level string (provide default string)
-console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
-file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
-
-# 4. Look up the actual logging level constant from the map (provide default constant)
-#    Use .get() for safe lookup, falling back to default if the string is not a valid key
-CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
-FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
-
-# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
-LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
-LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
-LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-
-# Ensure log folder exists
-os.makedirs(LOGGING_DIR, exist_ok=True)
-
-formatter = logging.Formatter(LOGGING_FORMAT)
-
-# --- File Handler ---
-log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
-log_handler.setFormatter(formatter)
-log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
-
-# --- Console Handler ---
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
-
-# --- Configure Root Logger ---
-root_logger = logging.getLogger()
-# Set root logger level to the *lowest* of the handlers to allow all messages through
-root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
-
-# --- Add Handlers ---
-if not root_logger.hasHandlers():
-    root_logger.addHandler(log_handler)
-    root_logger.addHandler(console_handler)
-
-# --- Get your specific logger ---
-logger = logging.getLogger(__name__)
 
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
 VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
 
 def write_metadata_ffmpeg(path, timestamp=None, geotag=None):
+    """Atomically write metadata using ffmpeg by creating a temporary file."""
     dir_name = os.path.dirname(path)
     base_name = os.path.basename(path)
-    temp_file = os.path.join(dir_name, f".{base_name}.tmp.mp4")
+    # Use a more unique temp file name to avoid potential collisions
+    temp_file = os.path.join(dir_name, f".{base_name}.{os.getpid()}.tmp.mp4")
 
     metadata_args = []
-
     if timestamp:
-        metadata_args += ["-metadata", f"creation_time={timestamp}"]
+        # Ensure timestamp is in ISO 8601 format for ffmpeg
+        try:
+            dt_obj = Utils.parse_timestamp(timestamp, logger=logger) # Use Utils parser
+            if dt_obj:
+                 # Format for ffmpeg 'creation_time' (UTC with Z)
+                 ffmpeg_ts = dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+                 metadata_args += ["-metadata", f"creation_time={ffmpeg_ts}"]
+            else:
+                 logger.warning(f"Could not parse timestamp '{timestamp}' for ffmpeg.")
+        except Exception as e:
+             logger.warning(f"Error formatting timestamp '{timestamp}' for ffmpeg: {e}")
 
     if geotag and len(geotag) == 2:
         lat, lon = geotag
+        # Format according to ISO 6709 Annex H (e.g., +DD.DDDD+DDD.DDDD/)
         iso6709 = f"{lat:+.6f}{lon:+.6f}/"
         metadata_args += ["-metadata", f"location={iso6709}"]
+        # Also add location-eng for broader compatibility (optional)
+        metadata_args += ["-metadata", f"location-eng={iso6709}"]
+
+    if not metadata_args:
+        logger.debug(f"No valid metadata provided to write for {path}")
+        return True # Nothing to do, consider it success
 
     try:
         cmd = [
-            "ffmpeg", "-y", "-i", path, *metadata_args,
-            "-codec", "copy", temp_file
+            "ffmpeg", "-y", "-i", path,
+            "-map_metadata", "-1", "-map", "0",
+            "-codec", "copy",
+            *metadata_args,
+            temp_file
         ]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        logger.debug(f"Running ffmpeg command: {' '.join(cmd)}")
+        # Capture stderr for better error diagnosis
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        logger.debug(f"ffmpeg output for {path}: {result.stderr}") # Log stderr on success too for info
 
         # Only replace original if everything succeeded
         os.replace(temp_file, path)
+        logger.debug(f"Successfully replaced {path} with updated metadata.")
         return True
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌ ffmpeg failed for {path}: {e}")
+        logger.error(f"❌ ffmpeg failed for {path}. Return code: {e.returncode}")
+        logger.error(f"ffmpeg stderr: {e.stderr}") # Log the specific ffmpeg error
         if os.path.exists(temp_file):
-            os.remove(temp_file)
+            try:
+                os.remove(temp_file)
+            except OSError as rm_err:
+                logger.error(f"Failed to remove temp file {temp_file}: {rm_err}")
         return False
 
     except Exception as e:
         logger.error(f"❌ Unexpected error in atomic write for {path}: {e}")
         if os.path.exists(temp_file):
-            os.remove(temp_file)
+             try:
+                os.remove(temp_file)
+             except OSError as rm_err:
+                 logger.error(f"Failed to remove temp file {temp_file}: {rm_err}")
         return False
-
-
-def show_progress_bar(current, total, message):
-    """
-    Displays a progress bar in the console.
-
-    Args:
-        current (int): The current progress value.
-        total (int): The total progress value.
-        message (str): The message to display alongside the progress bar.
-    """
-    percent = round((current / total) * 100)
-    try:
-        screen_width = shutil.get_terminal_size().columns - 30 # Adjust for message and percentage display
-    except (AttributeError, OSError): #Catch for environments where terminal size cant be determined
-        screen_width = 80 #Default to 80 characters.
-    bar_length = min(screen_width, 80)
-    filled_length = round((bar_length * percent) / 100)
-    empty_length = bar_length - filled_length
-
-    filled_bar = '=' * filled_length
-    empty_bar = ' ' * empty_length
-
-    print(f"\r{message} [{filled_bar}{empty_bar}] {percent}% ({current}/{total})", end="")
 
 def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
     """
@@ -148,37 +114,39 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
     """
     potential_merges_log = [] # For dry run return value
     prefix = "[DRY RUN] " if dry_run else ""
+    keeper_path = keeper_info["path"]
 
     try:
         # --- Check keeper's metadata first ---
-        keeper_ts_str, keeper_gps = extract_video_metadata(keeper_info["path"])
+        keeper_ts_str, keeper_gps = extract_video_metadata(keeper_path)
         keeper_has_datetime = keeper_ts_str is not None
         keeper_has_gps = keeper_gps is not None
 
         if keeper_has_datetime and keeper_has_gps:
-            logger.debug(f"{prefix}MERGE CHECK: Keeper {os.path.abspath(keeper_info['path'])} already has timestamp and GPS. No merge needed.")
+            logger.debug(f"{prefix}MERGE CHECK: Keeper {os.path.abspath(keeper_path)} already has timestamp and GPS. No merge needed.")
             return [] # Nothing to merge, return empty list
 
         found_datetime_donor_path = None
         found_gps_donor_path = None
+        donor_ts_to_merge = None # Store the actual data to merge
+        donor_gps_to_merge = None
 
         # --- Find potential donors ---
-        logger.debug(f"{prefix}MERGE CHECK: Searching donors for missing metadata in {os.path.abspath(keeper_info['path'])} (Needs DateTime: {not keeper_has_datetime}, Needs GPS: {not keeper_has_gps})")
+        logger.debug(f"{prefix}MERGE CHECK: Searching donors for missing metadata in {os.path.abspath(keeper_path)} (Needs DateTime: {not keeper_has_datetime}, Needs GPS: {not keeper_has_gps})")
         for donor_path in donor_paths:
-            if donor_path == keeper_info['path']: # Should not happen if donor_paths is constructed correctly
+            if donor_path == keeper_path:
                 continue
-
-            # Avoid re-opening the same donor multiple times if possible
             try:
                 donor_ts_str, donor_gps = extract_video_metadata(donor_path)
-
                 if not keeper_has_datetime and donor_ts_str and not found_datetime_donor_path:
                     found_datetime_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential timestamp donor {os.path.abspath(donor_path)}")
+                    donor_ts_to_merge = donor_ts_str # Store the value
+                    logger.debug(f"{prefix}MERGE CHECK: Found potential timestamp donor {os.path.abspath(donor_path)} with value {donor_ts_to_merge}")
 
                 if not keeper_has_gps and donor_gps and not found_gps_donor_path:
                     found_gps_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential GPS donor {os.path.abspath(donor_path)}")
+                    donor_gps_to_merge = donor_gps # Store the value
+                    logger.debug(f"{prefix}MERGE CHECK: Found potential GPS donor {os.path.abspath(donor_path)} with value {donor_gps_to_merge}")
 
                 # Stop searching if we found donors for all missing fields
                 if (keeper_has_datetime or found_datetime_donor_path) and \
@@ -191,140 +159,119 @@ def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
 
         # --- Log or Perform Merge ---
         if not found_datetime_donor_path and not found_gps_donor_path:
-            logger.debug(f"{prefix}MERGE CHECK: No suitable donors found for missing metadata in {os.path.abspath(keeper_info['path'])}.")
+            logger.debug(f"{prefix}MERGE CHECK: No suitable donors found for missing metadata in {os.path.abspath(keeper_path)}.")
             return [] # No donors found
 
         if dry_run:
             if found_datetime_donor_path:
-                log_msg = f"Timestamp from {os.path.abspath(found_datetime_donor_path)}"
+                log_msg = f"Timestamp ({donor_ts_to_merge}) from {os.path.abspath(found_datetime_donor_path)}"
                 potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
+                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_path)}")
             if found_gps_donor_path:
-                log_msg = f"GPS from {os.path.abspath(found_gps_donor_path)}"
+                log_msg = f"GPS ({donor_gps_to_merge}) from {os.path.abspath(found_gps_donor_path)}"
                 potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
+                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_path)}")
             return potential_merges_log # Return descriptions for dry run logging
 
         # ACTUAL MERGE
-        logger.info(f"Attempting to merge metadata into: {os.path.abspath(keeper_info['path'])}")
+        logger.info(f"Attempting to merge metadata into: {os.path.abspath(keeper_path)}")
 
-        # Prepare ffmpeg metadata args
-        metadata_args = []
-        if found_datetime_donor_path:
-            donor_ts_str, _ = extract_video_metadata(found_datetime_donor_path)
-            if donor_ts_str:
-                metadata_args += ["-metadata", f"creation_time={donor_ts_str}"]
-                logger.info(f"  - Merged Timestamp from {os.path.abspath(found_datetime_donor_path)}")
-        if found_gps_donor_path:
-            _, donor_gps = extract_video_metadata(found_gps_donor_path)
-            if donor_gps:
-                gps_str = f"{donor_gps[0]:+08.4f}{donor_gps[1]:+09.4f}"
-                metadata_args += ["-metadata", f"location={gps_str}"]
-                logger.info(f"  - Merged GPS from {os.path.abspath(found_gps_donor_path)}")
-
-        if not metadata_args:
-            logger.info("No metadata to merge.")
-            return []
-        input_path = os.path.abspath(keeper_info['path'])
-        # Build ffmpeg command
+        # Pass the actual data found to write_metadata_ffmpeg
         success = write_metadata_ffmpeg(
-            input_path,
-            timestamp=donor_ts_str if found_datetime_donor_path else None,
-            geotag=donor_gps if found_gps_donor_path else None
+            keeper_path,
+            timestamp=donor_ts_to_merge, # Pass the stored value
+            geotag=donor_gps_to_merge    # Pass the stored value
         )
         if success:
-            logger.info(f"✅ Successfully merged metadata into {os.path.abspath(input_path)}")
+            logger.info(f"✅ Successfully merged metadata into {os.path.abspath(keeper_path)}")
         else:
-            logger.error(f"❌ Failed to merge metadata into {os.path.abspath(input_path)}")
+            logger.error(f"❌ Failed to merge metadata into {os.path.abspath(keeper_path)}")
 
     except Exception as e:
-        logger.error(f"Error accessing keeper image {os.path.abspath(keeper_info['path'])} for merge check: {e}")
+        logger.error(f"Error during metadata merge process for {os.path.abspath(keeper_path)}: {e}")
         return []
 
     return [] # Return empty list for non-dry run
 
 def extract_video_metadata(video_path):
+    """Extract creation_time and location (GPS) using ffprobe."""
+    # Ensure ffprobe is in PATH or provide full path
     cmd = [
         "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "format_tags=creation_time:format_tags=location",
-        "-of", "default=noprint_wrappers=1:nokey=0",
+        "-select_streams", "v:0", # Check video stream 0
+        "-show_entries", "format_tags=creation_time,location,location-eng", # Get relevant tags
+        "-of", "default=noprint_wrappers=1:nokey=0", # Simple key=value output
         video_path
     ]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    logger.debug(f"Running ffprobe command: {' '.join(cmd)}")
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8')
+    except FileNotFoundError:
+        logger.critical("ffprobe command not found. Please ensure ffmpeg (which includes ffprobe) is installed and in your system's PATH.")
+        return None, None
+    except subprocess.CalledProcessError as e:
+        logger.error(f"ffprobe failed for {video_path}. Return code: {e.returncode}")
+        logger.error(f"ffprobe stderr: {e.stderr}")
+        return None, None
+    except Exception as e:
+        logger.error(f"Unexpected error running ffprobe for {video_path}: {e}")
+        return None, None
 
     timestamp = None
     gps = None
+    location_str = None
+
+    logger.debug(f"ffprobe output for {video_path}:\n{result.stdout}")
 
     for line in result.stdout.splitlines():
-        if line.startswith("creation_time"):
+        if line.startswith("TAG:creation_time="):
             timestamp = line.split("=", 1)[1].strip()
-        elif line.startswith("location"):
-            loc_str = line.split("=", 1)[1].strip()
-            if loc_str.startswith('+') or loc_str.startswith('-'):
-                try:
-                    lat = float(loc_str[:8])
-                    lon = float(loc_str[8:])
-                    gps = (lat, lon)
-                except Exception as e:
-                    logger.warning(f"Failed to parse GPS from {loc_str}: {e}")
+            logger.debug(f"  Found creation_time: {timestamp}")
+        # Prioritize location-eng if available, then location
+        elif line.startswith("TAG:location-eng="):
+             location_str = line.split("=", 1)[1].strip()
+             logger.debug(f"  Found location-eng: {location_str}")
+        elif line.startswith("TAG:location=") and not location_str: # Only use if location-eng wasn't found
+            location_str = line.split("=", 1)[1].strip()
+            logger.debug(f"  Found location: {location_str}")
 
-    return timestamp, gps
-
-def convert_gps(coord, ref):
-    """Convert GPS coordinates (IFDRational format) to float format."""
-    if coord is None or not isinstance(coord, tuple) or len(coord) != 3:
-        return None
-    try:
-        # Check if coordinates are TiffVideoPlugin.IFDRational
-        # Handle cases where they might already be floats/ints if EXIF is non-standard
-        degrees = float(coord[0])
-        minutes = float(coord[1])
-        seconds = float(coord[2])
-
-        decimal = degrees + minutes / 60.0 + seconds / 3600.0
-        if ref in ['S', 'W']:
-            decimal = -decimal
-        return decimal
-    except (ValueError, TypeError, ZeroDivisionError) as e:
-         logger.warning(f"Could not convert GPS coordinate part {coord} with ref {ref}: {e}")
-         return None
-
-
-def parse_timestamp(ts_str):
-    """Parses EXIF timestamp string into a datetime object."""
-    if not ts_str or not isinstance(ts_str, str):
-        return None
-    try:
-        # Common EXIF format
-        return datetime.strptime(ts_str, "%Y:%m:%d %H:%M:%S")
-    except ValueError:
+    # Parse location string (ISO 6709 format like +DD.DDDD+DDD.DDDD/)
+    if location_str:
+        location_str = location_str.strip('/') # Remove trailing slash if present
         try:
-            # Attempt ISO format as a fallback (less common in EXIF)
-            return datetime.fromisoformat(ts_str)
-        except ValueError:
-            logger.warning(f"Could not parse timestamp string: {ts_str}")
-            return None
+            # Find the sign of the longitude part
+            lon_sign_index = -1
+            if '+' in location_str[1:]:
+                lon_sign_index = location_str.find('+', 1)
+            elif '-' in location_str[1:]:
+                lon_sign_index = location_str.find('-', 1)
 
-
-def haversine(lat1, lon1, lat2, lon2):
-    """Calculate distance between two lat/lon points in meters."""
-    if None in [lat1, lon1, lat2, lon2]:
-        return float('inf') # Cannot compare if coordinates are missing
-    R = 6371000  # Radius of Earth in meters
-    dlat = radians(lat2 - lat1)
-    dlon = radians(lon2 - lon1)
-    a = sin(dlat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a))
-    return R * c
+            if lon_sign_index > 0:
+                lat_str = location_str[:lon_sign_index]
+                lon_str = location_str[lon_sign_index:]
+                lat = float(lat_str)
+                lon = float(lon_str)
+                # Basic validation
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    gps = (lat, lon)
+                    logger.debug(f"  Parsed GPS: {gps}")
+                else:
+                    logger.warning(f"Parsed GPS coordinates out of range for {video_path}: Lat={lat}, Lon={lon}")
+            else:
+                 logger.warning(f"Could not parse ISO 6709 GPS string format for {video_path}: '{location_str}'")
+        except ValueError as e:
+            logger.warning(f"Failed to parse GPS from '{location_str}' for {video_path}: {e}")
+        except Exception as e:
+             logger.warning(f"Unexpected error parsing GPS from '{location_str}' for {video_path}: {e}")
+    return timestamp, gps
 
 def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
     """Check if two metadata items match within tolerances."""
-    t1 = parse_timestamp(meta1["timestamp"]) # Parse here
-    t2 = parse_timestamp(meta2["timestamp"]) # Parse here
+    # Use Utils.parse_timestamp and pass logger
+    t1 = Utils.parse_timestamp(meta1["timestamp"], logger=logger) # Parse here
+    t2 = Utils.parse_timestamp(meta2["timestamp"], logger=logger) # Parse here
     g1 = meta1["geotag"]
     g2 = meta2["geotag"]
-
     time_matches = False
     if t1 and t2:
         if abs((t1 - t2).total_seconds()) <= time_tolerance_sec:
@@ -342,7 +289,8 @@ def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
     if g1 and g2:
         lat1, lon1 = g1
         lat2, lon2 = g2
-        distance = haversine(lat1, lon1, lat2, lon2)
+        # Use Utils.haversine
+        distance = Utils.haversine(lat1, lon1, lat2, lon2)
         if distance <= gps_tolerance_m:
             gps_matches = True
         else:
@@ -379,6 +327,7 @@ def group_by_metadata_conflict(metadata_list):
             match_all = True
             for other in group:
                 other_path = other["file"]["path"] # For logging
+                # Uses the local metadata_match which now calls Utils functions
                 if not metadata_match(item, other):
                     logger.debug(f"    - Conflicts with {os.path.abspath(other_path)} in group {i}. Trying next group.")
                     match_all = False
@@ -411,6 +360,7 @@ def choose_file_to_keep(file_list):
     for file_info in file_list:
         path = file_info['path']
         logger.debug(f"  Extracting metadata for {os.path.abspath(path)}...")
+        # Uses local extract_video_metadata which now calls Utils.convert_gps
         ts, gps = extract_video_metadata(path)
         metadata_list.append({
             "file": file_info, # Keep original file info dict
@@ -420,6 +370,7 @@ def choose_file_to_keep(file_list):
         logger.debug(f"    - Timestamp: {ts}, Geotag: {gps}")
 
     # Group files based on whether their metadata conflicts
+    # Uses local group_by_metadata_conflict which now calls Utils functions via metadata_match
     conflict_groups = group_by_metadata_conflict(metadata_list)
 
     keepers = []
@@ -439,119 +390,6 @@ def choose_file_to_keep(file_list):
             logger.warning(f"  - Group {i} is empty, skipping.")
 
     return keepers
-
-
-def remove_files_not_available(grouping_json_path, video_info_json_path, is_dry_run=False): # <-- Add is_dry_run flag
-    """
-    Removes entries for files that are no longer available on disk from both
-    grouping_info.json and video_info.json. Also removes groups with one or fewer entries
-    from both grouping categories. Skips writing changes in is_dry_run mode.
-
-    Args:
-        grouping_json_path (str): The path to the grouping_info.json file.
-        video_info_json_path (str): The path to the video_info.json file.
-        is_dry_run (bool): If True, only log intended changes, do not write to files.
-    """
-    prefix = "[DRY RUN] " if is_dry_run else ""
-    logger.info(f"{prefix}Starting cleanup of JSON files for non-existent paths...")
-
-    # --- Clean grouping_info.json ---
-    try:
-        with open(grouping_json_path, 'r') as f:
-            grouping_data = json.load(f)
-    except FileNotFoundError:
-        logger.error(f"Error: File not found at {grouping_json_path}")
-        return False # Indicate failure
-    except json.JSONDecodeError:
-        logger.error(f"Error: Invalid JSON format in {grouping_json_path}")
-        return False # Indicate failure
-
-    original_group_counts = {}
-    cleaned_grouping_data = {} # Work on a copy
-
-    # Process both grouping keys
-    for grouping_key in ["grouped_by_name_and_size", "grouped_by_hash"]:
-        if grouping_key not in grouping_data:
-            logger.warning(f"'{grouping_key}' key not found in grouping JSON data. Skipping.")
-            cleaned_grouping_data[grouping_key] = {}
-            continue
-
-        groups = grouping_data[grouping_key]
-        original_group_counts[grouping_key] = len(groups)
-        cleaned_groups = {}
-        groups_removed = 0
-        members_removed = 0
-
-        for group_key, group_members in groups.items():
-            original_member_count = len(group_members)
-            # Filter out files that no longer exist
-            valid_members = [member for member in group_members if os.path.exists(member["path"])]
-            members_removed += (original_member_count - len(valid_members))
-
-            # Keep the group only if it has more than one valid member
-            if len(valid_members) > 1:
-                cleaned_groups[group_key] = valid_members
-            else:
-                groups_removed += 1
-                logger.debug(f"{prefix}Removing group '{group_key}' from '{grouping_key}' (<= 1 valid member).")
-
-        cleaned_grouping_data[grouping_key] = cleaned_groups
-        logger.info(f"{prefix}Cleaned '{grouping_key}': Removed {members_removed} non-existent file entries and {groups_removed} groups (<=1 member).")
-        logger.info(f"{prefix}Original count: {original_group_counts[grouping_key]} groups. New count: {len(cleaned_groups)} groups.")
-
-
-    # Save the cleaned grouping_info.json (if not dry run)
-    if not is_dry_run:
-        try:
-            with open(grouping_json_path, 'w') as f:
-                json.dump(cleaned_grouping_data, f, indent=4)
-            logger.info(f"Successfully updated {grouping_json_path}")
-        except OSError as e:
-            logger.error(f"Error updating grouping JSON file {grouping_json_path}: {e}")
-            return False # Indicate failure
-    else:
-        logger.info(f"{prefix}Skipped writing changes to {grouping_json_path}")
-
-
-    # --- Clean video_info.json ---
-    try:
-        with open(video_info_json_path, 'r') as f:
-            # IMPORTANT: Assuming video_info.json is a LIST, based on HashANDGroupPossibleVideoDuplicates.py
-            video_info_list = json.load(f)
-            if not isinstance(video_info_list, list):
-                 logger.error(f"Error: Expected {video_info_json_path} to contain a JSON list, but found {type(video_info_list)}. Cannot clean.")
-                 return False # Indicate structure error
-    except FileNotFoundError:
-        logger.error(f"Error: File not found at {video_info_json_path}")
-        return False # Indicate failure
-    except json.JSONDecodeError:
-        logger.error(f"Error: Invalid JSON format in {video_info_json_path}")
-        return False # Indicate failure
-
-    original_count = len(video_info_list)
-    # Remove entries for files that no longer exist
-    cleaned_video_info_list = [
-        video for video in video_info_list if os.path.exists(video["path"])
-    ]
-    updated_count = len(cleaned_video_info_list)
-    removed_count = original_count - updated_count
-
-    logger.info(f"{prefix}Cleaned '{os.path.abspath(video_info_json_path)}': Removed {removed_count} non-existent file entries.")
-    logger.info(f"{prefix}Original count: {original_count} entries. New count: {updated_count} entries.")
-
-    # Save the cleaned video_info.json (if not dry run)
-    if not is_dry_run:
-        try:
-            with open(video_info_json_path, 'w') as f:
-                json.dump(cleaned_video_info_list, f, indent=4)
-            logger.info(f"Successfully updated {video_info_json_path}")
-        except OSError as e:
-            logger.error(f"Error updating video info JSON file {video_info_json_path}: {e}")
-            return False # Indicate failure
-    else:
-         logger.info(f"{prefix}Skipped writing changes to {video_info_json_path}")
-
-    return True # Indicate success
 
 def remove_duplicate_videos(json_file_path, is_dry_run=False):
     prefix = "[DRY RUN] " if is_dry_run else ""
@@ -598,7 +436,8 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
         if is_dry_run:
             logger.info(f"{prefix}Group {processed_group}/{total_groups}: {group_key} ({len(group_members)} files)")
         else:
-            show_progress_bar(processed_group, total_groups, "Removing Duplicates")
+            # Use Utils.show_progress_bar
+            Utils.show_progress_bar(processed_group, total_groups, "Removing Duplicates")
 
         if not group_members:
             logger.warning(f"{prefix}Group {group_key} is empty. Removing.")
@@ -626,6 +465,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                 final_members_for_group.append(keeper)
                 continue
 
+            # Uses local choose_file_to_keep which now calls Utils functions indirectly
             keepers = choose_file_to_keep(file_list)
             if not keepers:
                 logger.error(f"{prefix}    ERROR: No keepers selected. Keeping all files.")
@@ -640,6 +480,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             keeper_merge_details = {}
             if is_dry_run:
                 for keeper in keepers:
+                    # Uses local merge_metadata_into_keeper
                     merge_descriptions = merge_metadata_into_keeper(
                         {"path": keeper["path"], "length": keeper["length"]}, donor_paths, dry_run=True
                     )
@@ -652,6 +493,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
 
             for f_del_info in files_to_delete_for_hash:
                 deleted_path = f_del_info["path"]
+                # Simple assumption: first keeper is the corresponding one for logging
                 corresponding_keeper = keepers[0]
                 corresponding_keeper_path = corresponding_keeper["path"]
 
@@ -659,7 +501,8 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                     transferred_parts = []
                     if corresponding_keeper_path in keeper_merge_details:
                         for desc in keeper_merge_details[corresponding_keeper_path]:
-                            if os.path.basename(deleted_path) in desc:
+                            # Check if the donor path is mentioned in the description
+                            if os.path.abspath(deleted_path) in desc:
                                 if "Timestamp" in desc:
                                     transferred_parts.append("Timestamp")
                                 if "GPS" in desc:
@@ -675,13 +518,14 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             if not is_dry_run:
                 logger.debug(f"    Merging metadata into {len(keepers)} keeper(s)...")
                 for keeper in keepers:
+                    # Uses local merge_metadata_into_keeper
                     merge_metadata_into_keeper({"path": keeper["path"], "length": keeper["length"]}, donor_paths, dry_run=False)
 
                 # 🔥 Delete actual files now
                 if files_to_delete_in_group:
                     deleted_log_path = os.path.join(SCRIPT_DIR, "deleted_videos.log")
                     try:
-                        with open(deleted_log_path, "a") as log_del:
+                        with open(deleted_log_path, "a", encoding='utf-8') as log_del: # Added encoding
                             for file_path in files_to_delete_in_group:
                                 log_del.write(file_path + "\n")
                     except Exception as e_log:
@@ -709,7 +553,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             total_keepers_count += len(final_members_for_group)
 
     if not is_dry_run:
-        print()
+        print() # Newline after progress bar
 
     logger.info(f"{prefix}--- Phase 1 Complete ---")
 
@@ -734,12 +578,11 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
 
     # === Save updated grouping data
     if not is_dry_run:
-        try:
-            with open(json_file_path, "w") as f:
-                json.dump(data, f, indent=4)
+        # Use Utils.write_json_atomic
+        if Utils.write_json_atomic(data, json_file_path, logger=logger):
             logger.info("Grouping JSON saved.")
-        except Exception as e:
-            logger.error(f"Failed to save updated grouping JSON: {e}")
+        else:
+            logger.error(f"Failed to save updated grouping JSON: {json_file_path}")
     else:
         logger.info(f"{prefix}Skipped saving changes to {json_file_path}")
 
@@ -747,12 +590,11 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
     if not is_dry_run and video_info_list_for_sync is not None:
         synced_list = [v for v in video_info_list_for_sync if os.path.exists(v["path"])]
         removed_sync = len(video_info_list_for_sync) - len(synced_list)
-        try:
-            with open(VIDEO_INFO_FILE, "w") as f:
-                json.dump(synced_list, f, indent=4)
+        # Use Utils.write_json_atomic
+        if Utils.write_json_atomic(synced_list, VIDEO_INFO_FILE, logger=logger):
             logger.info(f"{VIDEO_INFO_FILE} synced. Removed {removed_sync} stale entries.")
-        except Exception as e:
-            logger.error(f"Failed to sync {VIDEO_INFO_FILE}: {e}")
+        else:
+            logger.error(f"Failed to sync {VIDEO_INFO_FILE}")
     elif is_dry_run:
         logger.info(f"{prefix}Skipped syncing {VIDEO_INFO_FILE}")
     elif video_info_list_for_sync is None:
@@ -781,9 +623,10 @@ if __name__ == "__main__":
     logger.info("--- Starting Dry Run Mode ---" if arg_dry_run else "--- Starting Actual Run Mode ---")
 
     # 1. Clean up JSON files first
-    if not remove_files_not_available(VIDEO_GROUPING_INFO_FILE, VIDEO_INFO_FILE, is_dry_run=arg_dry_run):
+    # Use Utils.remove_files_not_available and pass logger
+    if not Utils.remove_files_not_available(VIDEO_GROUPING_INFO_FILE, VIDEO_INFO_FILE, logger=logger, is_dry_run=arg_dry_run):
         logger.error("Aborting duplicate removal due to errors during JSON cleanup.")
     else:
         logger.info(f"Cleaned up {os.path.abspath(VIDEO_GROUPING_INFO_FILE)} and {os.path.abspath(VIDEO_INFO_FILE)}.")
         # 2. Remove duplicates
-        remove_duplicate_videos(VIDEO_GROUPING_INFO_FILE, is_dry_run=arg_dry_run) 
+        remove_duplicate_videos(VIDEO_GROUPING_INFO_FILE, is_dry_run=arg_dry_run)

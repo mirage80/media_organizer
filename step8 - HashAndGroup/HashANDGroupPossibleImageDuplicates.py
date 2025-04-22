@@ -9,109 +9,29 @@ import subprocess
 import math
 import shutil
 import tempfile
+import sys # Added sys import
 
-def write_json_atomic(data, path):
-    dir_name = os.path.dirname(path)
-    try:
-        with tempfile.NamedTemporaryFile("w", delete=False, dir=dir_name, suffix=".tmp", encoding='utf-8') as tmp:
-            json.dump(data, tmp, indent=4)
-            temp_path = tmp.name
-        os.replace(temp_path, path)
-        return True
-    except Exception as e:
-        logging.error(f"❌ Failed to write JSON to {path}: {e}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return False
-
-def show_progress_bar(current, total, message):
-    """
-    Displays a progress bar in the console.
-
-    Args:
-        current (int): The current progress value.
-        total (int): The total progress value.
-        message (str): The message to display alongside the progress bar.
-    """
-    percent = round((current / total) * 100)
-    try:
-        screen_width = shutil.get_terminal_size().columns - 30 # Adjust for message and percentage display
-    except (AttributeError, OSError): #Catch for environments where terminal size cant be determined
-        screen_width = 80 #Default to 80 characters.
-    bar_length = min(screen_width, 80)
-    filled_length = round((bar_length * percent) / 100)
-    empty_length = bar_length - filled_length
-
-    filled_bar = '=' * filled_length
-    empty_bar = ' ' * empty_length
-
-    print(f"\r{message} [{filled_bar}{empty_bar}] {percent}% ({current}/{total})", end="")
-
-# Get the directory of the current script
-SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# --- Determine Project Root and Add to Path ---
+# Assumes the script is in 'stepX' directory directly under the project root
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+# Add project root to path if not already there (needed for 'import Utils')
+if PROJECT_ROOT_DIR not in sys.path:
+     sys.path.append(PROJECT_ROOT_DIR)
 
-# --- Logging Setup ---
-# 1. Define a map from level names (strings) to logging constants
-LOG_LEVEL_MAP = {
-    'DEBUG': logging.DEBUG,
-    'INFO': logging.INFO,
-    'WARNING': logging.WARNING,
-    'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL
-}
+import Utils # Import the Utils module
 
-# 2. Define default levels (used if env var not set or invalid)
-DEFAULT_CONSOLE_LOG_LEVEL_STR = 'INFO'
-DEFAULT_FILE_LOG_LEVEL_STR = 'DEBUG'
+# --- Setup Logging using Utils ---
+# Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
+logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
 
-# 3. Read environment variables, get level string (provide default string)
-console_log_level_str = os.getenv('DEDUPLICATOR_CONSOLE_LOG_LEVEL', DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
-file_log_level_str = os.getenv('DEDUPLICATOR_FILE_LOG_LEVEL', DEFAULT_FILE_LOG_LEVEL_STR).upper()
-
-# 4. Look up the actual logging level constant from the map (provide default constant)
-#    Use .get() for safe lookup, falling back to default if the string is not a valid key
-CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
-FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
-
-# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
-LOGGING_DIR = os.path.join(SCRIPT_DIR, "..", "Logs")
-LOGGING_FILE = os.path.join(LOGGING_DIR, f"{SCRIPT_NAME}.log")
-LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-
-# Ensure log folder exists
-os.makedirs(LOGGING_DIR, exist_ok=True)
-
-formatter = logging.Formatter(LOGGING_FORMAT)
-
-# --- File Handler ---
-log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
-log_handler.setFormatter(formatter)
-log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
-
-# --- Console Handler ---
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(formatter)
-console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
-
-# --- Configure Root Logger ---
-root_logger = logging.getLogger()
-# Set root logger level to the *lowest* of the handlers to allow all messages through
-root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
-
-# --- Add Handlers ---
-if not root_logger.hasHandlers():
-    root_logger.addHandler(log_handler)
-    root_logger.addHandler(console_handler)
-
-# --- Get your specific logger ---
-logger = logging.getLogger(__name__)
-
+# --- Define Constants ---
+# Use PROJECT_ROOT_DIR to build paths relative to the project root
+ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "output")
 
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
@@ -131,7 +51,7 @@ def generate_image_hash(image_path):
                 hasher.update(chunk)
         return hasher.hexdigest()
     except OSError as e:
-        logging.error(f"Error processing {image_path}: {e}")
+        logger.error(f"Error processing {image_path}: {e}")
         return None
 
 
@@ -139,30 +59,45 @@ def get_image_info(image_path):
     """Get image information including name, size, and hash."""
     if image_path is None:
         return None
-    image_name = os.path.basename(image_path)
-    image_size = os.path.getsize(image_path)
-    image_hash = generate_image_hash(image_path)
-    if image_hash is None:
+    try:
+        image_name = os.path.basename(image_path)
+        image_size = os.path.getsize(image_path)
+        image_hash = generate_image_hash(image_path)
+        if image_hash is None:
+            return None
+        return {
+            "name": image_name,
+            "size": image_size,
+            "hash": image_hash,
+            "path": image_path
+        }
+    except FileNotFoundError:
+        logger.warning(f"File not found during get_image_info: {image_path}")
         return None
-    return {
-        "name": image_name,
-        "size": image_size,
-        "hash": image_hash,
-        "path": image_path
-    }
+    except UnidentifiedImageError:
+        logger.warning(f"Cannot identify image file (PIL): {image_path}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error in get_image_info for {image_path}: {e}")
+        return None
 
 
 def load_existing_image_info(file_path):
     """Load existing image info from the JSON file."""
     if os.path.exists(file_path):
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, 'r', encoding='utf-8') as f: # Added encoding
                 data = json.load(f)
-                if not data:
+                # Ensure it's a list, return empty list if file is empty or not a list
+                if not isinstance(data, list):
+                    logger.warning(f"Expected a list in {file_path}, found {type(data)}. Returning empty list.")
                     return []
                 return data
         except json.JSONDecodeError:
-            logging.error(f"Error decoding JSON from {file_path}. Returning empty list.")
+            logger.error(f"Error decoding JSON from {file_path}. Returning empty list.")
+            return []
+        except Exception as e:
+            logger.error(f"Error loading {file_path}: {e}")
             return []
     return []
 
@@ -183,26 +118,40 @@ def process_images(directory, existing_image_info):
     existing_paths = {info['path'] for info in existing_image_info}
     total_files = count_image_files(directory)
     processed_files = 0
+    new_files_processed = 0
+
+    logger.info(f"Scanning directory: {directory}")
+    logger.info(f"Found {total_files} potential image files with supported extensions.")
 
     for root, _, files in os.walk(directory):
         for file in files:
             if file.lower().endswith(SUPPORTED_EXTENSIONS):
                 image_path = os.path.join(root, file)
+                processed_files += 1
+
                 if image_path in existing_paths:
-                    processed_files += 1
                     continue
                 image_info = get_image_info(image_path)
                 if image_info is None:
-                    processed_files += 1
                     continue
+
                 image_info_list.append(image_info)
-                processed_files += 1
-                show_progress_bar(processed_files, total_files, "Hashing")
+                new_files_processed += 1
+                # Update progress based on total files scanned, not just new ones
+                Utils.show_progress_bar(processed_files, total_files, "Hashing")
 
-    # ✅ Write only once at the end
-    if image_info_list:
-        write_json_atomic(image_info_list, IMAGE_INFO_FILE)
+    # Write only once at the end if new files were processed
+    if new_files_processed > 0:
+        logger.info(f"\nProcessed {new_files_processed} new image files.")
+        if Utils.write_json_atomic(image_info_list, IMAGE_INFO_FILE, logger=logger):
+             logger.info(f"Successfully saved updated image info to {IMAGE_INFO_FILE}")
+        else:
+             logger.error(f"Failed to save updated image info to {IMAGE_INFO_FILE}")
+    else:
+        logger.info("\nNo new image files found to process.")
 
+    # Return the potentially updated list
+    return image_info_list
 
 
 def group_images_by_name_and_size(image_info_list):
@@ -210,13 +159,16 @@ def group_images_by_name_and_size(image_info_list):
     processed_files = 0
     total_files = len(image_info_list)
     grouped_images = {}
+    logger.info("Grouping images by name and size...")
     for info in image_info_list:
         key = f"{info['name']}_{info['size']}"
         if key not in grouped_images:
             grouped_images[key] = []
         grouped_images[key].append(info)
         processed_files += 1
-        show_progress_bar(processed_files, total_files, "By Name")
+        Utils.show_progress_bar(processed_files, total_files, "By Name")
+    print() # Newline after progress bar
+    logger.info("Finished grouping by name and size.")
     return grouped_images
 
 
@@ -225,36 +177,47 @@ def group_images_by_hash(image_info_list):
     processed_files = 0
     total_files = len(image_info_list)
     grouped_images = {}
+    logger.info("Grouping images by hash...")
     for info in image_info_list:
-        key = info["hash"]
-        if key not in grouped_images:
-            grouped_images[key] = []
-        grouped_images[key].append(info)
+        # Ensure hash exists, though get_image_info should prevent None hashes
+        img_hash = info.get("hash")
+        if img_hash:
+            if img_hash not in grouped_images:
+                grouped_images[img_hash] = []
+            grouped_images[img_hash].append(info)
+        else:
+            logger.warning(f"Image missing hash: {info.get('path')}")
         processed_files += 1
-        show_progress_bar(processed_files, total_files, "By Hash")
+        Utils.show_progress_bar(processed_files, total_files, "By Hash")
+    print() # Newline after progress bar
+    logger.info("Finished grouping by hash.")
     return grouped_images
 
 
-def generate_grouping_image():
+def generate_grouping_image(image_info_list): # Pass the list directly
     """Generate a grouping file for images based on name & size or hash."""
+    if not image_info_list:
+        logger.warning("No image information provided to generate grouping file.")
+        return
+
     try:
-        with open(IMAGE_INFO_FILE, 'r') as f:
-            image_info_list = json.load(f)
-    except FileNotFoundError:
-        logging.error(f"Error: {IMAGE_INFO_FILE} not found.")
-        return
-    except json.JSONDecodeError:
-        logging.error(f"Error: Invalid JSON format in {IMAGE_INFO_FILE}.")
-        return
+        grouped_by_name_and_size = group_images_by_name_and_size(image_info_list)
+        grouped_by_hash = group_images_by_hash(image_info_list)
+        grouping_info = {
+            "grouped_by_name_and_size": grouped_by_name_and_size,
+            "grouped_by_hash": grouped_by_hash
+        }
 
-    grouped_by_name_and_size = group_images_by_name_and_size(image_info_list)
-    grouped_by_hash = group_images_by_hash(image_info_list)
-    grouping_info = {
-        "grouped_by_name_and_size": grouped_by_name_and_size,
-        "grouped_by_hash": grouped_by_hash
-    }
+        # Utils.write_json_atomic already handles its own errors and logs them
+        if Utils.write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE, logger=logger):
+            # Log success here if needed, or rely on Utils function's log
+            logger.info(f"Successfully generated and saved grouping info to {IMAGE_GROUPING_INFO_FILE}")
+        else:
+            # Log failure here if needed, or rely on Utils function's log
+            logger.error(f"Failed to save grouping info (see previous error from write_json_atomic).")
 
-    write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE)
+    except Exception as e: # <-- Catch potential errors during grouping
+        logger.error(f"An unexpected error occurred during grouping generation: {e}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process images in a directory and group them by hash.")
@@ -262,10 +225,18 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     directory = args.directory
+    if not os.path.isdir(directory):
+        logger.critical(f"Error: Provided directory does not exist: {directory}")
+        sys.exit(1)
+
+    # Load existing info first
     existing_image_info = load_existing_image_info(IMAGE_INFO_FILE)
-    logging.info(f"Starting with {len(existing_image_info)} hashed images.")
-    process_images(directory, existing_image_info)
-    generate_grouping_image()
-    logging.info(f"✅ Finished. Total image processed: {len(existing_image_info)}")
-    logging.info(f"Grouping info saved to {IMAGE_GROUPING_INFO_FILE}")
-    logging.info(f"Image info saved to {IMAGE_INFO_FILE}")
+    logger.info(f"Starting with {len(existing_image_info)} previously processed images.")
+
+    # Process images (hashes new ones, returns full list)
+    all_image_info = process_images(directory, existing_image_info)
+
+    # Generate grouping based on the full list
+    generate_grouping_image(all_image_info)
+
+    logger.info(f"✅ Finished. Total images in info file: {len(all_image_info)}")

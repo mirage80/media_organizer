@@ -1,5 +1,3 @@
-$ffmpegPath = "ffmpeg"
-$ffprobePath = "ffprobe"
 $verbosity = 1
 $logFile = "C:\path\to\logfile.txt"
 
@@ -149,7 +147,7 @@ function Log-Message {
         [string]$type
     )
     $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    $logMessage = "[$timestamp] $type: $message"
+    $logMessage = "[$timestamp] $type : $message"
     Add-Content -Path $logFile -Value $logMessage
     if ($verbosity -eq 1) {
         switch ($type.ToLower()) {

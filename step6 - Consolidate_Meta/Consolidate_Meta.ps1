@@ -8,6 +8,12 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
+#Utils Dirctory
+$UtilDirectory = Join-Path $scriptDirectory "..\Utils"
+$UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+$MediaToolsFile = Join-Path $UtilDirectory "MediaTools.psm1"
+Import-Module $UtilFile -Force
+
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
 $logFile = Join-Path $logDir "$scriptName.log"
@@ -164,9 +170,9 @@ function Write-JsonAtomic {
 # --- Script Setup ---
 $modulePath = Join-Path $scriptDirectory 'MediaTools.psm1'
 try {
-    Import-Module $modulePath -Force
+    Import-Module $MediaToolsFile -Force
 } catch {
-    Log "CRITICAL" "Failed to import MediaTools module from '$modulePath'. Error: $_. Aborting."
+    Log "CRITICAL" "Failed to import MediaTools module from '$MediaToolsFile'. Error: $_. Aborting."
     exit 1
 }
 
@@ -236,7 +242,7 @@ foreach ($file in $filesToProcess) {
             # Set the ExifToolPath variable in the script scope *before* importing the module
             $script:ExifToolPath = $ExifToolPath
             # Import the module *after* setting script scope variables
-            Import-Module $modulePath -Force
+            Import-Module $MediaToolsFile -Force
             $fileInfo = [System.IO.FileInfo]$filePath
             # Call the function from MediaTools.psm1
             Consolidate_Json_Exif_Data -File $fileInfo
