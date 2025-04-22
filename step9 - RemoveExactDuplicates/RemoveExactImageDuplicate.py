@@ -1,17 +1,19 @@
 import json
 import os
-import math
-import shutil
-from datetime import datetime, timedelta
 from math import radians, cos, sin, asin, sqrt
 import subprocess
-from PIL import UnidentifiedImageError
-from PIL import Image
-from PIL.ExifTags import TAGS, GPSTAGS
-# from PIL import TiffImagePlugin # Often not strictly needed unless dealing with complex TIFF EXIF
-import argparse # <-- Add argparse
-import logging  # <-- Add logging
-import sys # Added sys import
+import argparse
+import sys
+import tkinter as tk
+from tkinter import ttk, messagebox
+import argparse
+import matplotlib
+matplotlib.use('TkAgg') # Use Tkinter backend for Matplotlib
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
+from matplotlib.widgets import Button
+import time # May be needed for delays if file locking occurs
+
 
 # --- Determine Project Root and Add to Path ---
 # Assumes the script is in 'stepX' directory directly under the project root
@@ -39,330 +41,304 @@ MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
 
-# EXIF tag constants
-DATETIME_TAG = 36867  # DateTimeOriginal
-GPSINFO_TAG = 34853   # GPSInfo
+# --- Popup Utilities remain the same ---
+def simple_choice_popup(title, options):
+    choice = tk.StringVar()
+    top = tk.Toplevel()
+    top.title(title)
+    for option in options:
+        ttk.Radiobutton(top, text=str(option), variable=choice, value=str(option)).pack(anchor=tk.W)
+    ttk.Radiobutton(top, text="None (leave empty)", variable=choice, value="None").pack(anchor=tk.W)
+    ttk.Button(top, text="Select", command=top.destroy).pack()
+    top.wait_window()
+    selected = choice.get()
+    if selected == "None" or not selected:
+        return None
+    return selected
 
-def write_exif_atomic(img, path, exif_data):
-    temp_path = path + ".tmp.jpg"
+def map_choice_popup(title, geotag_list, callback, map_path=MAP_FILE):
+    selected = {"value": None}
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.canvas.manager.set_window_title(title)
+
+    if not os.path.exists(map_path):
+        logger.error(f"Map image not found at: {map_path}")
+        plt.close(fig)
+        callback(None, None)
+        return
+
+    img = mpimg.imread(map_path)
+    ax.imshow(img, extent=[-180, 180, -90, 90])
+    ax.set_xlim(-180, 180)
+    ax.set_ylim(-90, 90)
+    ax.set_title("Click a red dot to select a geotag")
+
+    lats = [lat for lat, lon in geotag_list]
+    lons = [lon for lat, lon in geotag_list]
+    scatter = ax.scatter(lons, lats, color='red', s=100, picker=True)
+
+    none_ax = plt.axes([0.4, 0.01, 0.2, 0.05])
+    none_button = Button(none_ax, "None (Clear Selection)")
+
+    def on_pick(event):
+        ind = event.ind[0]
+        selected["value"] = geotag_list[ind]
+        callback(selected["value"], fig)
+
+    def on_none(event):
+        selected["value"] = None
+        callback(selected["value"], fig)
+
+    fig.canvas.mpl_connect("pick_event", on_pick)
+    none_button.on_clicked(on_none)
+
+    plt.show()
+
+# --- Metadata Extraction (Image Specific - Exiftool) ---
+														  
+		   
+			
+								   
+										
+													
+							  
+																							  
+								
+																							  
+				 
+						   
+
+												 
+							  
+														  
+					   
+			   
+
+def extract_metadata_exiftool(path):
     try:
-        img.save(temp_path, exif=exif_data)
-        os.replace(temp_path, path)
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to write EXIF to {path}: {e}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        return False
+        # Ensure exiftool is in PATH or provide full path
+        result = subprocess.run([
+            "exiftool", "-j", "-n", "-DateTimeOriginal", "-GPSLatitude", "-GPSLongitude", path
+									 
+										   
+						  
+				
+        ], capture_output=True, text=True, timeout=5, check=True, encoding='utf-8')
 
-def merge_metadata_into_keeper(keeper_info, donor_paths, dry_run=False):
-    """
-    Merges missing EXIF GPS/timestamp metadata into the keeper image from a list of donor images.
-    Only writes to keeper if it lacks those fields.
-    If dry_run is True, logs intended actions and returns a list of strings describing the potential merges.
-    If dry_run is False, performs the merge and returns an empty list.
-    """
-    potential_merges_log = [] # For dry run return value
-    prefix = "[DRY RUN] " if dry_run else ""
+        data = json.loads(result.stdout)[0]
+													 
 
-    try:
-        # --- Check keeper's metadata first ---
-        keeper_ts_str, keeper_gps = extract_image_metadata(keeper_info["path"])
-        keeper_has_datetime = keeper_ts_str is not None
-        keeper_has_gps = keeper_gps is not None
+        timestamp = data.get("DateTimeOriginal")
+        lat = data.get("GPSLatitude")
+        lon = data.get("GPSLongitude")
+										
+									   
+								   
+		 
 
-        if keeper_has_datetime and keeper_has_gps:
-            logger.debug(f"{prefix}MERGE CHECK: Keeper {os.path.abspath(keeper_info['path'])} already has timestamp and GPS.")
-            return [] # Nothing to merge, return empty list
+        geotag = (lat, lon) if lat is not None and lon is not None else None
+        return {"timestamp": timestamp, "geotag": geotag}
 
-        found_datetime_donor_path = None
-        found_gps_donor_path = None
-
-        # --- Find potential donors ---
-        logger.debug(f"{prefix}MERGE CHECK: Searching donors for missing metadata in {os.path.abspath(keeper_info['path'])} (Needs DateTime: {not keeper_has_datetime}, Needs GPS: {not keeper_has_gps})")
-        for donor_path in donor_paths:
-            if donor_path == keeper_info['path']: # Should not happen if donor_paths is constructed correctly
-                continue
-
-            # Avoid re-opening the same donor multiple times if possible
-            try:
-                donor_ts_str, donor_gps = extract_image_metadata(donor_path)
-
-                if not keeper_has_datetime and donor_ts_str and not found_datetime_donor_path:
-                    found_datetime_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential timestamp donor {os.path.abspath(donor_path)}")
-
-                if not keeper_has_gps and donor_gps and not found_gps_donor_path:
-                    found_gps_donor_path = donor_path
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential GPS donor {os.path.abspath(donor_path)}")
-
-                # Stop searching if we found donors for all missing fields
-                if (keeper_has_datetime or found_datetime_donor_path) and \
-                   (keeper_has_gps or found_gps_donor_path):
-                    logger.debug(f"{prefix}MERGE CHECK: Found potential donors for all missing fields.")
-                    break
-            except Exception as e:
-                logger.warning(f"{prefix}MERGE CHECK: Error reading donor {os.path.abspath(donor_path)}: {e}")
-                continue
-
-        # --- Log or Perform Merge ---
-        if not found_datetime_donor_path and not found_gps_donor_path:
-            logger.debug(f"{prefix}MERGE CHECK: No suitable donors found for missing metadata in {os.path.abspath(keeper_info['path'])}.")
-            return [] # No donors found
-
-        if dry_run:
-            if found_datetime_donor_path:
-                log_msg = f"Timestamp from {os.path.abspath(found_datetime_donor_path)}"
-                potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
-            if found_gps_donor_path:
-                log_msg = f"GPS from {os.path.abspath(found_gps_donor_path)}"
-                potential_merges_log.append(log_msg)
-                logger.info(f"{prefix}Would merge {log_msg} into {os.path.abspath(keeper_info['path'])}")
-            return potential_merges_log # Return descriptions for dry run logging
-
-        # ACTUAL MERGE
-        logger.info(f"Attempting to merge metadata into: {os.path.abspath(keeper_info['path'])}")
-
-        with Image.open(keeper_info["path"]) as keeper_img:
-            keeper_exif = keeper_img.getexif()
-            if keeper_exif is None:
-                keeper_exif = Image.Exif()
-                logger.warning(f"Creating new EXIF for keeper: {os.path.abspath(keeper_info['path'])}")
-            merged_something = False
-
-            # Merge timestamp
-            if found_datetime_donor_path:
-                try:
-                    with Image.open(found_datetime_donor_path) as donor_img:
-                        donor_exif = donor_img.getexif()
-                        if donor_exif and DATETIME_TAG in donor_exif:
-                            keeper_exif[DATETIME_TAG] = donor_exif[DATETIME_TAG]
-                            logger.info(f"  - Merged Timestamp from {os.path.abspath(found_datetime_donor_path)}")
-                            merged_something = True
-                        else:
-                            logger.warning(f"  - Timestamp donor {os.path.abspath(found_datetime_donor_path)} had no tag {DATETIME_TAG}")
-                except Exception as e:
-                    logger.error(f"  - Error accessing timestamp donor: {e}")
-
-            # Merge GPS
-            if found_gps_donor_path:
-                try:
-                    with Image.open(found_gps_donor_path) as donor_img:
-                        donor_exif = donor_img.getexif()
-                        if donor_exif and GPSINFO_TAG in donor_exif:
-                            keeper_exif[GPSINFO_TAG] = donor_exif[GPSINFO_TAG]
-                            logger.info(f"  - Merged GPS from {os.path.abspath(found_gps_donor_path)}")
-                            merged_something = True
-                        else:
-                            logger.warning(f"  - GPS donor {os.path.abspath(found_gps_donor_path)} had no tag {GPSINFO_TAG}")
-                except Exception as e:
-                    logger.error(f"  - Error accessing GPS donor: {e}")
-
-            # Save updated EXIF
-            if merged_something:
-                try:
-                    # Pass the original image object, not the path
-                    if write_exif_atomic(keeper_img, keeper_info["path"], keeper_exif):
-                        logger.info(f"✅ Successfully updated metadata in {os.path.abspath(keeper_info['path'])}")
-                    else:
-                        logger.error(f"❌ Failed to save metadata for {os.path.abspath(keeper_info['path'])}")
-                except Exception as e:
-                    logger.error(f"❌ Failed to save metadata: {e}")
-            else:
-                logger.info(f"No metadata was actually merged into {os.path.abspath(keeper_info['path'])}")
-
+														  
     except FileNotFoundError:
-        logger.error(f"Keeper not found: {keeper_info['path']}")
-    except UnidentifiedImageError:
-        logger.error(f"Unrecognized image file: {keeper_info['path']}")
+        logger.critical("exiftool command not found. Please ensure ExifTool is installed and in your system's PATH.")
+        return {"timestamp": None, "geotag": None}
+    except subprocess.CalledProcessError as e:
+        logger.error(f"exiftool failed for {path}. Return code: {e.returncode}")
+        logger.error(f"exiftool stderr: {e.stderr}")
+        return {"timestamp": None, "geotag": None}
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to decode exiftool JSON output for {path}: {e}")
+        logger.debug(f"exiftool stdout was: {result.stdout}")
+        return {"timestamp": None, "geotag": None}
     except Exception as e:
-        logger.error(f"Error accessing keeper image {os.path.abspath(keeper_info['path'])} for merge check: {e}")
-        return []
+        logger.error(f"ffprobe error: {e}")
+        return { "timestamp": None, "geotag": None}
 
-    return [] # Return empty list for non-dry run
+def consolidate_metadata(keepers, discarded, callback):
+    # Uses extract_metadata_exiftool for images
+    all_meta = [extract_metadata_exiftool(p) for p in keepers + discarded]
+    timestamps = list(set(m["timestamp"] for m in all_meta if m["timestamp"]))
+    geotags = list(set(m["geotag"] for m in all_meta if m["geotag"]))
 
-def extract_image_metadata(image_path):
-    """Extract timestamp and GPS data from an image if available."""
-    try:
-        with Image.open(image_path) as img:
-            # Use getexif() which is preferred over _getexif()
-            exif_data = img.getexif()
-            if not exif_data:
-                logger.debug(f"No EXIF data found in {os.path.abspath(image_path)}")
-                return None, None
-            decoded_exif = {TAGS.get(key, key): val for key, val in exif_data.items()}
+    def finalize_consolidation(timestamp, geotag, callback, fig=None):
+        if fig:
+            plt.close(fig)
+        callback(timestamp, geotag)
 
-            # --- Timestamp Extraction ---
-            timestamp_str = None
-            # Prefer DateTimeOriginal (more specific)
-            if "DateTimeOriginal" in decoded_exif:
-                timestamp_str = decoded_exif["DateTimeOriginal"]
-            # Fallback to DateTime (often modification time)
-            elif "DateTime" in decoded_exif:
-                timestamp_str = decoded_exif["DateTime"]
-                logger.debug(f"Using DateTime as fallback timestamp for {os.path.abspath(image_path)}")
+    # Timestamp logic
+    best_timestamp = timestamps[0] if len(timestamps) == 1 else None
+    if not best_timestamp and len(timestamps) > 1:
+        best_timestamp = simple_choice_popup("Choose Timestamp", timestamps)
 
-            # --- GPS Extraction ---
-            gps_info_dict = None
-            geotag = None
-            if "GPSInfo" in decoded_exif:
-                gps_info_raw = decoded_exif["GPSInfo"]
-                gps_info_dict = {GPSTAGS.get(key, key): val for key, val in gps_info_raw.items()}
+    # Geotag logic
+    if len(geotags) == 1:
+        finalize_consolidation(best_timestamp, geotags[0], callback)
+    elif len(geotags) > 1:
+        map_choice_popup(
+            "Choose Geotag",
+            geotags,
+            lambda selected_geotag, fig: finalize_consolidation(best_timestamp, selected_geotag, callback, fig)
+        )
+    else:
+        finalize_consolidation(best_timestamp, None, callback)
 
-                if "GPSLatitude" in gps_info_dict and "GPSLongitude" in gps_info_dict:
-                    # Use Utils.convert_gps and pass logger
-                    lat = Utils.convert_gps(gps_info_dict["GPSLatitude"], gps_info_dict.get("GPSLatitudeRef", "N"), logger=logger)
-                    lon = Utils.convert_gps(gps_info_dict["GPSLongitude"], gps_info_dict.get("GPSLongitudeRef", "E"), logger=logger)
-                    if lat is not None and lon is not None:
-                         geotag = (lat, lon)
-                    else:
-                        logger.warning(f"Failed to convert GPS coordinates for {os.path.abspath(image_path)}")
-                else:
-                     logger.debug(f"GPSInfo found but missing Lat/Lon tags in {os.path.abspath(image_path)}")
-            else:
-                logger.debug(f"No GPSInfo tag found in {os.path.abspath(image_path)}")
-            return timestamp_str, geotag # Return raw timestamp string
-
-    except FileNotFoundError:
-        logger.error(f"File not found: {image_path}")
-        return None, None
-    except UnidentifiedImageError:
-        logger.error(f"Cannot identify image file (possibly corrupt or unsupported format): {image_path}")
-        return None, None
-    except Exception as e: # Catch other potential PIL errors
-        logger.error(f"Error reading EXIF from {image_path}: {e}")
-        return None, None
-
-def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
-    """Check if two metadata items match within tolerances."""
-    # Use Utils.parse_timestamp and pass logger
-    t1 = Utils.parse_timestamp(meta1["timestamp"], logger=logger) # Parse here
-    t2 = Utils.parse_timestamp(meta2["timestamp"], logger=logger) # Parse here
-    g1 = meta1["geotag"]
-    g2 = meta2["geotag"]
-    time_matches = False
-    if t1 and t2:
-        if abs((t1 - t2).total_seconds()) <= time_tolerance_sec:
-            time_matches = True
-        else:
-            logger.debug(f"Time mismatch: {t1} vs {t2} (Tolerance: {time_tolerance_sec}s)")
-            return False # Definite mismatch
-    elif t1 or t2: # One has time, the other doesn't
-        logger.debug(f"Time mismatch: One has timestamp, the other does not ({t1} vs {t2})")
-        return False # Consider this a mismatch
-    else: # Neither has time
-        time_matches = True # They match in lacking time
-
-    gps_matches = False
-    if g1 and g2:
-        lat1, lon1 = g1
-        lat2, lon2 = g2
-        # Use Utils.haversine
-        distance = Utils.haversine(lat1, lon1, lat2, lon2)
-        if distance <= gps_tolerance_m:
-            gps_matches = True
-        else:
-            logger.debug(f"GPS mismatch: {g1} vs {g2} (Distance: {distance:.2f}m, Tolerance: {gps_tolerance_m}m)")
-            return False # Definite mismatch
-    elif g1 or g2: # One has GPS, the other doesn't
-        logger.debug(f"GPS mismatch: One has geotag, the other does not ({g1} vs {g2})")
-        return False # Consider this a mismatch
-    else: # Neither has GPS
-        gps_matches = True # They match in lacking GPS
-
-    # Return True only if both time and GPS comparisons didn't result in a False
-    return time_matches and gps_matches
-
-
-def group_by_metadata_conflict(metadata_list):
+def select_keepers_popup(parent_window, file_list):
     """
-    Groups images into clusters with non-conflicting metadata.
-    Uses ±5 sec timestamp tolerance and 10 meter GPS tolerance.
-
-    Returns:
-        List of lists of metadata entries (non-conflicting groups).
+    Shows a popup to interactively select which files to keep from a list.
+    Returns (list_of_keeper_paths, list_of_discarded_paths).
     """
-    groups = []
-    logger.debug(f"Grouping {len(metadata_list)} items by metadata conflict...")
+    top = tk.Toplevel(parent_window)
+    top.title("Select Keepers")
+    ttk.Label(top, text="Select which file(s) to keep. Metadata will be consolidated.").pack(pady=5)
 
-    for item in metadata_list:
-        placed = False
-        item_path = item["file"]["path"] # For logging
-        logger.debug(f"  Attempting to place {os.path.abspath(item_path)}...")
-
-        for i, group in enumerate(groups):
-            # Check if item matches ALL items currently in the group
-            match_all = True
-            for other in group:
-                other_path = other["file"]["path"] # For logging
-                # Uses the local metadata_match which now calls Utils functions
-                if not metadata_match(item, other):
-                    logger.debug(f"    - Conflicts with {os.path.abspath(other_path)} in group {i}. Trying next group.")
-                    match_all = False
-                    break # No need to check further within this group
-
-            if match_all:
-                logger.debug(f"    - Matches all in group {i}. Adding {os.path.abspath(item_path)}.")
-                group.append(item)
-                placed = True
-                break # Item placed, move to next item
-
-        if not placed:
-            logger.debug(f"  - No matching group found. Creating new group for {os.path.abspath(item_path)}.")
-            groups.append([item])
-
-    logger.debug(f"Finished grouping. Found {len(groups)} distinct metadata groups.")
-    return groups
-
-
-def choose_file_to_keep(file_list):
-    """
-    Choose one file per metadata group based on timestamp and geotag.
-    Returns a list of files to keep (one from each non-conflicting group).
-    """
-    if not file_list:
-        return []
-
-    logger.debug(f"Choosing keeper(s) from {len(file_list)} files with hash {file_list[0]['hash']}:")
-    metadata_list = []
-    for file_info in file_list:
+    keep_vars = {}
+    for i, file_info in enumerate(file_list):
         path = file_info['path']
-        logger.debug(f"  Extracting metadata for {os.path.abspath(path)}...")
-        # Uses local extract_image_metadata which now calls Utils.convert_gps
-        ts, gps = extract_image_metadata(path)
-        metadata_list.append({
-            "file": file_info, # Keep original file info dict
-            "timestamp": ts,   # Raw timestamp string or None
-            "geotag": gps      # (lat, lon) tuple or None
-        })
-        logger.debug(f"    - Timestamp: {ts}, Geotag: {gps}")
+        frame = ttk.Frame(top, padding=5, borderwidth=1, relief="groove")
+        frame.pack(pady=2, padx=5, fill=tk.X)
 
-    # Group files based on whether their metadata conflicts
-    # Uses local group_by_metadata_conflict which now calls Utils functions via metadata_match
-    conflict_groups = group_by_metadata_conflict(metadata_list)
+        # Extract metadata for display
+        meta = extract_metadata_exiftool(path) # Returns a dict
+        ts = meta.get("timestamp")            # Get timestamp from dict
+        gps = meta.get("geotag")             # Get geotag from dict
 
-    keepers = []
-    logger.debug(f"Selecting one keeper from each of the {len(conflict_groups)} metadata groups:")
-    for i, group in enumerate(conflict_groups):
-        if group:
-            # Simple strategy: keep the first file in the group.
-            # Could be enhanced (e.g., keep file with most metadata, oldest/newest, etc.)
-            keeper_meta = group[0]
-            keeper_file_info = keeper_meta["file"]
-            keepers.append(keeper_file_info)
-            logger.debug(f"  - Group {i}: Keeping {os.path.abspath(keeper_file_info['path'])}")
-            # Log other files in the same metadata group for clarity
-            for other_meta in group[1:]:
-                 logger.debug(f"    - (Metadata matched: {os.path.abspath(other_meta['file']['path'])})")
+        # Display info
+        ttk.Label(frame, text=f"Path: {os.path.abspath(path)}").pack(anchor=tk.W)
+        ttk.Label(frame, text=f"Size: {file_info.get('size', 'N/A')} bytes").pack(anchor=tk.W)
+        # Dimensions could be added here if needed by reading image with PIL
+        ttk.Label(frame, text=f"Timestamp: {ts or 'None'}").pack(anchor=tk.W) # Use extracted ts
+        ttk.Label(frame, text=f"GPS: {gps or 'None'}").pack(anchor=tk.W)       # Use extracted gps
+
+        var = tk.BooleanVar(value=True) # Default to keep
+        cb = ttk.Checkbutton(frame, text="Keep this file", variable=var)
+        cb.pack(anchor=tk.W)
+        keep_vars[path] = var
+
+    result = {"keepers": None, "discarded": None}
+
+    def on_confirm():
+        keepers = [path for path, var in keep_vars.items() if var.get()]
+        discarded = [path for path, var in keep_vars.items() if not var.get()]
+
+        if not keepers:
+            messagebox.showwarning("No Keepers", "You must select at least one file to keep.", parent=top)
+            return
+
+        result["keepers"] = keepers
+        result["discarded"] = discarded
+        top.destroy()
+
+    def on_cancel():
+        # Indicate cancellation or treat as "keep all" / "skip"?
+        # For now, treat cancel as selecting nothing, leading to "keep all" in the main loop
+        result["keepers"] = []
+        result["discarded"] = list(keep_vars.keys())
+        top.destroy()
+
+    button_frame = ttk.Frame(top)
+    button_frame.pack(pady=10)
+    ttk.Button(button_frame, text="Confirm Selection", command=on_confirm).pack(side=tk.LEFT, padx=5)
+    ttk.Button(button_frame, text="Cancel (Keep All)", command=on_cancel).pack(side=tk.LEFT, padx=5)
+
+    top.wait_window() # Block until popup is closed
+
+    return result["keepers"], result["discarded"]
+
+def write_metadata(keepers, combined_meta):
+    """Writes chosen metadata to keeper images using ExifTool."""
+    all_successful = True
+    exiftool_found = True
+    for path in keepers:
+        timestamp = combined_meta["timestamp"]
+        geotag = combined_meta["geotag"]
+
+					  
+				 
+														   
+			
+																					   
+					  
+																 
+																  
+																			 
+				 
+        if not timestamp and not geotag:
+							  
+            logger.debug(f"No metadata to write for keeper: {path}")
+            continue
+
+        if not exiftool_found:
+            all_successful = False
+            continue
+										  
+															 
+																	
+																 
+
+        args = ["exiftool", "-overwrite_original", "-ignoreMinorErrors"] # Add ignoreMinorErrors
+																	   
+														
+
+        if timestamp:
+            # Exiftool expects YYYY:MM:DD HH:MM:SS format for DateTimeOriginal
+            try:
+                dt_obj = Utils.parse_timestamp(timestamp, logger=logger)
+                if dt_obj:
+                    exif_ts = dt_obj.strftime('%Y:%m:%d %H:%M:%S')
+                    args.append(f"-DateTimeOriginal={exif_ts}")
+                else:
+                    logger.warning(f"Could not parse timestamp '{timestamp}' for exiftool.")
+            except Exception as e:
+                 logger.warning(f"Error formatting timestamp '{timestamp}' for exiftool: {e}")
+																									   
+
+        if geotag and len(geotag) == 2:
+            lat, lon = geotag
+            args += [
+                f"-GPSLatitude={abs(lat)}", f"-GPSLatitudeRef={'N' if lat >= 0 else 'S'}",
+                f"-GPSLongitude={abs(lon)}", f"-GPSLongitudeRef={'E' if lon >= 0 else 'W'}"
+            ]
+
+        # Only run exiftool if there are actual metadata args added
+        if len(args) > 3: # exiftool, -overwrite_original, -ignoreMinorErrors, path
+            args.append(path)
+									 
+            try:
+                logger.debug(f"Running exiftool command: {' '.join(args)}")
+                result = subprocess.run(args, check=True, capture_output=True, text=True, encoding='utf-8')
+                if result.stderr: # Log warnings even on success
+                    logger.warning(f"exiftool stderr for {path}: {result.stderr.strip()}")
+                logger.info(f"✅ Metadata written to: {path}")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"❌ Failed to write metadata with exiftool for {path}: {e}")
+                logger.error(f"exiftool stderr: {e.stderr.strip()}")
+                all_successful = False
+            except FileNotFoundError:
+                 logger.critical("exiftool command not found. Cannot write metadata.")
+                 exiftool_found = False
+                 all_successful = False
+            except Exception as e:
+                 logger.error(f"❌ Unexpected error writing metadata for {path}: {e}")
+                 all_successful = False
         else:
-            logger.warning(f"  - Group {i} is empty, skipping.")
+            logger.debug(f"No valid metadata arguments generated for {path}. Skipping exiftool call.")
 
-    return keepers
+
+    if not exiftool_found:
+        messagebox.showerror("ExifTool Error", "ExifTool command not found. Cannot write metadata.\nPlease ensure ExifTool is installed and in your system PATH.")
+    return all_successful
+				 
+									
+									  
+																				  
+					
 
 def remove_duplicate_images(json_file_path, is_dry_run=False):
     prefix = "[DRY RUN] " if is_dry_run else ""
     logger.info(f"{prefix}--- Starting Duplicate Image Removal Process ---")
+    if is_dry_run:
+        logger.warning(f"{prefix}Metadata consolidation popups WILL still appear in dry run mode.")
 
     try:
         with open(json_file_path, 'r') as f:
@@ -374,13 +350,20 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
         logger.error(f"Error: Invalid JSON format in {json_file_path}")
         return
 
+    try:
+        root = tk.Tk()
+        root.withdraw() # Hide the main root window
+    except tk.TclError as e:
+        logger.error(f"Could not initialize Tkinter display: {e}. Interactive prompts will fail.")
+        sys.exit(f"Error: GUI required for consolidation but unavailable ({e})")
+
     image_info_list_for_sync = []
     if not is_dry_run:
         try:
             with open(IMAGE_INFO_FILE, 'r') as f:
                 image_info_list_for_sync = json.load(f)
                 if not isinstance(image_info_list_for_sync, list):
-                    logger.error(f"Error: Expected {IMAGE_INFO_FILE} to be a list. Aborting sync.")
+                    logger.error(f"Expected {IMAGE_INFO_FILE} to be a list. Aborting sync.")
                     image_info_list_for_sync = None
         except Exception as e:
             logger.warning(f"Could not load {IMAGE_INFO_FILE} for syncing: {e}")
@@ -393,12 +376,9 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
     groups = data["grouped_by_name_and_size"]
     total_groups = len(groups)
     processed_group = 0
-    total_files_deleted_count = 0
-    total_keepers_count = 0
 
     logger.info(f"{prefix}Processing {total_groups} groups from 'grouped_by_name_and_size'...")
-    # Use list(groups.keys()) to avoid issues when deleting keys during iteration
-    for group_key in list(groups.keys()):
+    for group_key in list(groups.keys()): # Use list() for safe iteration
         group_members = groups[group_key]
         processed_group += 1
         # Use logger for progress in dry run, keep progress bar for actual run
@@ -423,106 +403,129 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
             else:
                 logger.warning(f"{prefix}Missing file: {file_info['path']}")
 
-        final_members_for_group = []
+        final_members_for_group = [] # Reset for each name_size group
 
         for h, file_list in hash_to_files.items():
             logger.info(f"{prefix}  Processing hash {h[:8]} ({len(file_list)} files)")
 
-            if len(file_list) == 1:
+            if len(file_list) <= 1:
+                # Only one file with this hash, keep it, no consolidation needed
                 keeper = file_list[0]
-                logger.info(f"{prefix}    KEEPING: {os.path.abspath(keeper['path'])} (only file with hash)")
-                final_members_for_group.append(keeper)
-                continue
-
-            # Uses local choose_file_to_keep which now calls Utils functions indirectly
-            keepers = choose_file_to_keep(file_list)
-            if not keepers:
-                logger.error(f"{prefix}    ERROR: No keepers selected. Keeping all files.")
-                final_members_for_group.extend(file_list)
-                continue
-
-            final_members_for_group.extend(keepers)
-            keeper_paths = {k["path"] for k in keepers}
-            files_to_delete_for_hash = [f for f in file_list if f["path"] not in keeper_paths]
-            donor_paths = [f["path"] for f in files_to_delete_for_hash]
-
-            keeper_merge_details = {}
-            if is_dry_run:
-                for keeper in keepers:
-                    # Uses local merge_metadata_into_keeper
-                    merge_descriptions = merge_metadata_into_keeper(
-                        {"path": keeper["path"]}, donor_paths, dry_run=True
-                    )
-                    keeper_merge_details[keeper["path"]] = merge_descriptions
-
-            for k in keepers:
-                logger.info(f"{prefix}    KEEPING: {os.path.abspath(k['path'])}")
-
-            files_to_delete_in_group = []
-
-            for f_del_info in files_to_delete_for_hash:
-                deleted_path = f_del_info["path"]
-                # Simple assumption: first keeper is the corresponding one for logging
-                corresponding_keeper = keepers[0]
-                corresponding_keeper_path = corresponding_keeper["path"]
-
-                if is_dry_run:
-                    transferred_parts = []
-                    if corresponding_keeper_path in keeper_merge_details:
-                        for desc in keeper_merge_details[corresponding_keeper_path]:
-                            # Check if the donor path is mentioned in the description
-                            if os.path.abspath(deleted_path) in desc:
-                                if "Timestamp" in desc:
-                                    transferred_parts.append("Timestamp")
-                                if "GPS" in desc:
-                                    transferred_parts.append("Geotag")
-                    merged_info_string = "nothing" if not transferred_parts else " and ".join(sorted(set(transferred_parts)))
-                    logger.info(f"{prefix}File {os.path.abspath(deleted_path)} would be deleted because file {os.path.abspath(corresponding_keeper_path)} is kept. Metadata transferred: {merged_info_string}.")
-                    files_to_delete_in_group.append(deleted_path)
+                if os.path.exists(keeper['path']):
+                    logger.info(f"{prefix}    KEEPING: {os.path.abspath(keeper['path'])} (only file with hash)")
+                    final_members_for_group.append(keeper)
                 else:
-                    logger.info(f"    DELETING: {os.path.abspath(deleted_path)} (duplicate of {os.path.abspath(corresponding_keeper_path)})")
-                    files_to_delete_in_group.append(deleted_path)
+                    logger.warning(f"{prefix}    Skipping missing file: {os.path.abspath(keeper['path'])}")
+                continue
 
-            # 🔄 Perform metadata merge now
-            if not is_dry_run:
-                logger.debug(f"    Merging metadata into {len(keepers)} keeper(s)...")
-                for keeper in keepers:
-                    # Uses local merge_metadata_into_keeper
-                    merge_metadata_into_keeper(keeper, donor_paths, dry_run=False)
+            # --- START: Interactive Keeper Selection & Consolidation ---
 
-                # 🔥 Delete actual files now
-                if files_to_delete_in_group:
-                    deleted_log_path = os.path.join(SCRIPT_DIR, "deleted_images.log")
-                    try:
-                        with open(deleted_log_path, "a", encoding='utf-8') as log_del: # Added encoding
-                            for file_path in files_to_delete_in_group:
-                                log_del.write(file_path + "\n")
-                    except Exception as e_log:
-                        logger.error(f"    Error writing to deleted log: {e_log}")
+            # 1. Select Keepers Interactively
+            logger.info(f"{prefix}    Prompting user to select keepers for hash {h[:8]}...")
+            keepers_paths, discarded_paths = select_keepers_popup(root, file_list)
 
-                    for file_path in files_to_delete_in_group:
-                        try:
-                            os.remove(file_path)
-                            logger.info(f"    Deleted: {os.path.abspath(file_path)}")
-                            total_files_deleted_count += 1
-                        except FileNotFoundError:
-                            logger.warning(f"    Not found during deletion: {file_path}")
-                        except OSError as e:
-                            logger.error(f"    Error deleting {file_path}: {e}")
-            else:
-                total_files_deleted_count += len(files_to_delete_in_group)
+            if not keepers_paths:
+                logger.warning(f"{prefix}    User cancelled or selected no keepers for hash {h[:8]}. Keeping all {len(file_list)} files.")
+                final_members_for_group.extend([f for f in file_list if os.path.exists(f['path'])])
+                continue # Move to the next hash group
 
-        # Clean or update group
+            logger.info(f"{prefix}    Selected Keepers: {len(keepers_paths)}, Discarded: {len(discarded_paths)}")
+
+            # 2. Define the callback function (closure)
+            # This will be executed *after* the user interacts with consolidate_metadata popups
+            _consolidation_result = {"status": "pending"} # Use a dict to pass status back
+
+            def _handle_consolidation_result(chosen_timestamp, chosen_geotag):
+                # This function now receives the final metadata chosen by the user (or None)
+                logger.info(f"{prefix}    Consolidated metadata chosen: TS={chosen_timestamp}, GPS={chosen_geotag}")
+                metadata_written_ok = True # Assume success for dry run or if no writing needed
+                combined_meta = {"timestamp": chosen_timestamp, "geotag": chosen_geotag} # Prepare dict for write_metadata
+
+                if not is_dry_run:
+                    # --- Write chosen metadata to ALL keepers ---
+                    if chosen_timestamp or chosen_geotag: # Only write if there's something to write
+                        logger.info(f"    Writing consolidated metadata to {len(keepers_paths)} keepers...")
+												
+													  
+																									
+														   
+																   
+
+                        # Call the image-specific write_metadata function
+                        if not write_metadata(keepers_paths, combined_meta):
+                            metadata_written_ok = False
+                            logger.error(f"    Metadata write failed for one or more keepers in hash group {h[:8]}.")
+                        else:
+											   
+                            logger.info(f"    Metadata write successful for all keepers.")
+                    else:
+                        logger.info(f"    No consolidated metadata selected/needed to write.")
+
+                    # --- Proceed with deletion only if metadata write was OK ---
+                    if metadata_written_ok:
+                        if discarded_paths:
+                            logger.info(f"    Deleting {len(discarded_paths)} discarded files...")
+                            # Use Utils.delete_files for safer deletion (move to .deleted)
+                            try:
+                                Utils.delete_files(discarded_paths, logger=logger, base_dir=SCRIPT_DIR)
+                            except Exception as del_e:
+                                logger.error(f"    Error during file deletion: {del_e}")
+                                # Decide if this should prevent status being success? Maybe not critical.
+                        else:
+                            logger.info(f"    No files selected for deletion.")
+                    else:
+                        logger.error("    Skipping deletion due to metadata write failure.")
+                        _consolidation_result["status"] = "failed_write"
+
+                else: # Dry run logging
+                    if chosen_timestamp or chosen_geotag:
+                        logger.info(f"{prefix}    Would write metadata (TS={chosen_timestamp}, GPS={chosen_geotag}) to {len(keepers_paths)} keepers.")
+                    else:
+                        logger.info(f"{prefix}    No consolidated metadata selected/needed to write.")
+                    if discarded_paths:
+                        logger.info(f"{prefix}    Would delete {len(discarded_paths)} files.")
+                    else:
+                         logger.info(f"{prefix}    No files selected for deletion.")
+                    _consolidation_result["status"] = "dry_run_ok"
+
+                # Update status if not already failed
+                if _consolidation_result["status"] == "pending":
+                    _consolidation_result["status"] = "success"
+
+
+            # 3. Call consolidate_metadata (This is BLOCKING)
+            #    Pass ALL paths (keepers + discarded) to gather all potential metadata
+            logger.info(f"{prefix}    Starting metadata consolidation prompt for hash {h[:8]}...")
+            try:
+                # *** CRITICAL: Call consolidate_metadata here ***
+                consolidate_metadata(keepers_paths, discarded_paths, _handle_consolidation_result)
+            except Exception as e:
+                 logger.error(f"    Error during interactive consolidation: {e}", exc_info=True) # Add traceback
+                 _consolidation_result["status"] = "failed_consolidation"
+
+
+            # 4. Update final list based on consolidation outcome
+            if _consolidation_result["status"] in ["success", "dry_run_ok"]:
+                # Add keeper dicts back (find them in original file_list)
+                keeper_dicts = [f for f in file_list if f["path"] in keepers_paths and os.path.exists(f["path"])]
+                final_members_for_group.extend(keeper_dicts)
+            else: # Handle failure cases (failed_write, failed_consolidation)
+                logger.warning(f"    Keeping all original files for hash {h[:8]} due to consolidation/write failure.")
+                final_members_for_group.extend([f for f in file_list if os.path.exists(f['path'])]) # Add existing back
+
+            # --- END: Interactive Keeper Selection & Consolidation ---
+
+        # --- Update group logic based on final_members_for_group ---
         if len(final_members_for_group) <= 1:
             logger.info(f"{prefix}Removing group '{group_key}' (<=1 file remains).")
             if group_key in groups:
                 del groups[group_key]
         else:
             groups[group_key] = final_members_for_group
-            total_keepers_count += len(final_members_for_group)
 
+    # Print newline after progress bar if not in dry run
     if not is_dry_run:
-        print() # Newline after progress bar
+        print()
 
     logger.info(f"{prefix}--- Phase 1 Complete ---")
 
@@ -559,7 +562,7 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
     if not is_dry_run and image_info_list_for_sync is not None:
         synced_list = [v for v in image_info_list_for_sync if os.path.exists(v["path"])]
         removed_sync = len(image_info_list_for_sync) - len(synced_list)
-        # Use Utils.write_json_atomic
+									 
         if Utils.write_json_atomic(synced_list, IMAGE_INFO_FILE, logger=logger):
             logger.info(f"{IMAGE_INFO_FILE} synced. Removed {removed_sync} stale entries.")
         else:
@@ -573,16 +576,21 @@ def remove_duplicate_images(json_file_path, is_dry_run=False):
     final_kept_count = sum(len(g) for g in data.get("grouped_by_name_and_size", {}).values())
     logger.info(f"{prefix}--- Duplicate Removal Complete ---")
     logger.info(f"{prefix}Processed {total_groups} groups.")
-    logger.info(f"{prefix}Deleted / would delete: {total_files_deleted_count} files")
     logger.info(f"{prefix}Total keepers: {final_kept_count}")
     if is_dry_run:
         logger.info(f"{prefix}Dry run complete — no files changed.")
     else:
         logger.info("Actual run complete.")
 
+    # --- Clean up Tkinter root window ---
+    try:
+        root.destroy()
+    except:
+        pass # Ignore if already destroyed or failed to init
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Find and remove exact duplicate image files...",
+        description="Find and remove exact duplicate Image files...",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument("--dry-run", action="store_true", help="Simulate deletion and metadata merging.")
@@ -598,4 +606,4 @@ if __name__ == "__main__":
     else:
         logger.info(f"Cleaned up {os.path.abspath(IMAGE_GROUPING_INFO_FILE)} and {os.path.abspath(IMAGE_INFO_FILE)}.")
         # 2. Remove duplicates
-        remove_duplicate_images(IMAGE_GROUPING_INFO_FILE, is_dry_run=arg_dry_run)
+        remove_duplicate_images(IMAGE_GROUPING_INFO_FILE, is_dry_run=arg_dry_run) # <-- Call image function

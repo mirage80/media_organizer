@@ -1,18 +1,29 @@
-$zipDirectory = 'D:'
-$unzipedDirectory = 'C:\Users\sawye\Downloads\Telegram Desktop\ChatExport_2025-04-18'
-$RecycleBinPath = Join-Path -Path $unzipedDirectory -ChildPath '$RECYCLE.BIN'
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$zipDirectory = 'D:',
+    [Parameter(Mandatory=$true)]
+    [string]$unzipedDirectory = 'C:\Users\sawye\Downloads\Telegram Desktop\ChatExport_2025-04-18',
+    [Parameter(Mandatory=$true)]
+    [string]$7zip = 'C:\Program Files\7-Zip\7z.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$ExifToolPath = 'C:\Program Files\exiftools\exiftool.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$magickPath = 'C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$pythonExe = 'C:\Program Files\Python313\python.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$ffmpeg = 'C:\Program Files\ffmpeg\bin\ffmpeg.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$ffprobe = 'C:\Program Files\ffmpeg\bin\ffprobe.exe',
+    [Parameter(Mandatory=$true)]
+    [string]$DefaultConsoleLogLevelString = "WARNING",
+    [Parameter(Mandatory=$true)]
+    [string]$DefaultFileLogLevelString    = "WARNING"      
+)
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
-$7zip = 'C:\Program Files\7-Zip\7z.exe'
-$ExifToolPath = 'C:\Program Files\exiftools\exiftool.exe'
-$magickPath = 'C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe'  # Update this path if needed
-$pythonExe = 'C:\Program Files\Python313\python.exe' # Or 'py.exe' if that's preferred/works
-$ffmpeg = 'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
+$RecycleBinPath = Join-Path -Path $unzipedDirectory -ChildPath '$RECYCLE.BIN'
 $logger = 0
-
-# --- Define the desired DEFAULT log levels ---
-$DefaultConsoleLogLevelString = "WARNING"
-$DefaultFileLogLevelString    = "WARNING"
 
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
@@ -189,7 +200,7 @@ function Use-ValidDirectoriesRecursively {
     Use-ValidDirectoryName -DirectoryPath $RootDirectory #sanitize the root directory also.
 }
 
-<#
+
 #count 1
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
@@ -281,7 +292,7 @@ foreach ($batchFile in $batchFiles) {
         }
     }
 }
-#>
+
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
@@ -328,7 +339,7 @@ Log "INFO" "step6 use 6 - Consolidate_Meta to combine time stamps"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
-<#
+
 #step 7 - $RECYCLE.BIN
 Log "INFO" "Step 7 RECYCLE.BIN"
 # Ensure the Recycle Bin path exists before attempting to change attributes
@@ -406,11 +417,13 @@ $logger++
 
 #step 12-1 Reconstruction of corrupt Videos
 Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos" -ffmpeg $ffmpeg
-& "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1"
+$videoReconList = Join-Path $scriptDirectory "Output\video_reconstruct_info.json" # Or wherever it's actually saved
+& "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -ffmpeg $ffmpeg -ffprob $ffprobe -reconstructListPath $videoReconList
 
 #step 12-2 Reconstruction of corrupt Images
 Log "INFO" "step 12-2 use ImageReconstruction.ps1 to Reconstruct of corrupt Images" -magickPath $magickPath
-& "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1"
+$imageReconList = Join-Path $scriptDirectory "Output\image_reconstruct_info.json" # Or wherever it's actually saved
+& "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1" -magickPath $magickPath -reconstructListPath $imageReconList
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
@@ -434,4 +447,3 @@ Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
 $logger++
-#>

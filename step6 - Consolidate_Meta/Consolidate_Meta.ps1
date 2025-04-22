@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$unzipedDirectory,
-    [string]$ExifToolPath = 'C:\Program Files\exiftools\exiftool.exe'
+    [string]$ExifToolPath
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent

@@ -1,6 +1,10 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$magickPath
+    [string]$magickPath,
+								
+					 
+    [Parameter(Mandatory=$true)] 
+    [string]$reconstructListPath
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -102,9 +106,10 @@ function Log {
     }
 }
 
-# Define paths relative to the main script directory assumed by top.ps1
-$outputDir = Join-Path -Path $scriptDirectory -ChildPath "output"
-$reconstructListPath = Join-Path -Path $outputDir -ChildPath "image_reconstruct_info.json"
+if (-not (Test-Path -Path $magickPath -PathType Leaf)) {
+    Log "CRITICAL" "Magick executable not found at specified path: '$magickPath'. Aborting."
+    exit 1
+}
 
 # --- Helper Function for ImageMagick ---
 function Invoke-Magick {
@@ -114,6 +119,7 @@ function Invoke-Magick {
         [Parameter(Mandatory = $true)]
         [string]$OutputPath
         # Optional: Add [string[]]$Arguments if more complex operations are needed later
+														
     )
 
     $processInfo = New-Object System.Diagnostics.ProcessStartInfo
@@ -203,28 +209,58 @@ foreach ($imagePath in $imagesToReconstruct) {
     # Define temporary output path
     $tempOutputPath = "$imagePath.repaired.jpg"
 
-    # Attempt reconstruction (re-saving) using ImageMagick
+    # Attempt reconstruction (re-muxing)
+													 
     $result = Invoke-Magick -InputPath $imagePath -OutputPath $tempOutputPath
 
-
     if ($result.Success) {
+        $isValidOutput = $false
+        try {
+            Log "DEBUG" "Verifying re-muxed output: $tempOutputPath"
+            $identifyOutput = & $magickPath identify "$tempOutputPath" 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Log "DEBUG" "Verification successful for '$tempOutputPath'."
+                $isValidOutput = $true
+            } else {
+                Log "WARNING" "ImageMagick identify verification failed for '$tempOutputPath'. Exit code: $LASTEXITCODE."
+                Log "DEBUG" "ImageMagick identify Output/Error:`n$identifyOutput"
+            }
+        } catch {
+            Log "WARNING" "Error during ffprobe verification for '$tempOutputPath': $_"
+        }
+
         # Verify temp file exists and has size before replacing original
-        if ((Test-Path $tempOutputPath) -and ((Get-Item $tempOutputPath).Length -gt 0)) {
-            Log "INFO" "Successfully re-saved '$baseName'."
+        if ($isValidOutput -and (Test-Path $tempOutputPath) -and ((Get-Item $tempOutputPath).Length -gt 0)) {
+            Log "INFO" "Successfully re-muxed '$baseName'."
+            $backupPath = "$imagePath.bak"
             try {
-                Remove-Item -Path $imagePath -Force -ErrorAction Stop
+                # 1. Rename original to backup
+                Rename-Item -Path $imagePath -NewName $backupPath -Force -ErrorAction Stop
+                Log "DEBUG" "Renamed original '$imagePath' to '$backupPath'."
+            
+                # 2. Rename temp file to original name
                 Rename-Item -Path $tempOutputPath -NewName $baseName -Force -ErrorAction Stop
-                Log "INFO" "Replaced original with repaired version: '$imagePath'"
+                Log "INFO" "Replaced original with re-muxed version: '$imagePath'"
+            
+                # 3. If successful, remove backup
+                Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
+                Log "DEBUG" "Removed backup file '$backupPath'."
+            
                 $successfullyReconstructed.Add($imagePath)
                 $successCount++
             } catch {
-                Log "ERROR" "Failed to replace original file '$imagePath' with repaired version '$tempOutputPath': $_"
-                # Attempt to clean up temp file if replacement failed
+                Log "ERROR" "Failed during replacement process for '$imagePath'. Error: $_"
+                # Attempt rollback if possible
+                if (Test-Path $backupPath -and -not (Test-Path $imagePath)) {
+                    Log "INFO" "Attempting to restore original from backup '$backupPath'..."
+                    Rename-Item -Path $backupPath -NewName $baseName -Force
+                }
+                # Clean up temp file if it still exists
                 if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue }
                 $failCount++
             }
         } else {
-            Log "ERROR" "Re-saving seemed successful for '$baseName', but output file '$tempOutputPath' is missing or empty."
+            Log "ERROR" "Re-muxing seemed successful for '$baseName', but output file '$tempOutputPath' is missing or empty."
             if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue } # Clean up invalid temp file
             $failCount++
         }
@@ -249,4 +285,3 @@ $remainingImages = $imagesToReconstruct | Where-Object { $successfullyReconstruc
 Write-JsonAtomic -Data $remainingImages -Path $reconstructListPath
 Log "INFO" "Reconstruction list updated. $($remainingImages.Count) images remain."
 Log "INFO" "Summary: Success=$successCount, Failed=$failCount, Remaining=$($remainingImages.Count)"
-

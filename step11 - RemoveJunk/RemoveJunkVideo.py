@@ -6,9 +6,7 @@ import cv2
 from PIL import Image, ImageTk
 import argparse
 import gc
-import logging
 import time
-import tempfile
 import sys
 
 # --- Determine Project Root and Add to Path ---

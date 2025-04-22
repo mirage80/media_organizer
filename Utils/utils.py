@@ -55,7 +55,7 @@ def restore_json_files(image_info_backup, image_info_file, image_grouping_backup
         logger.info("✅ Restored image_info.json")
 
     if image_grouping_backup:
-        write_json_atomic(image_grouping_backup, image_grouping_info_file)
+        write_json_atomic(image_grouping_backup, image_grouping_info_file,  logger=logger)
         logger.info("✅ Restored image_grouping_info.json")
 
 def setup_logging(base_dir, script_name, console_level_env="DEDUPLICATOR_CONSOLE_LOG_LEVEL", 

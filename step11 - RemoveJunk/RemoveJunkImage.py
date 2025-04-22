@@ -5,9 +5,7 @@ from tkinter import ttk, messagebox
 from PIL import Image, ImageTk
 import argparse
 import gc
-import logging
 import time
-import tempfile
 import sys
 
 # --- Determine Project Root and Add to Path ---
@@ -34,9 +32,6 @@ OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
 # Paths
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 RECONSTRUCT_INFO_FILE = os.path.join(OUTPUT_DIR, "image_reconstruct_info.json")
-
-# --- Removed local logging setup block ---
-# --- Removed local write_json_atomic function ---
 
 class JunkImageReviewer:
     def __init__(self, master):

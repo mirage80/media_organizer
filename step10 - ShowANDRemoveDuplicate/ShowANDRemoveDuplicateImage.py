@@ -9,9 +9,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.widgets import Button
 matplotlib.use('TkAgg')
-import logging
 import sys
-import shutil # Needed for backup_json_files in Utils
 
 # --- Determine Project Root and Add to Path ---
 # Assumes the script is in 'stepX' directory directly under the project root

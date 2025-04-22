@@ -1,6 +1,10 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$ffmpeg
+    [string]$ffmpeg,
+    [Parameter(Mandatory=$true)]
+    [string]$ffprobe,
+    [Parameter(Mandatory=$true)] 
+    [string]$reconstructListPath
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -102,9 +106,10 @@ function Log {
     }
 }
 
-# Define paths relative to the main script directory assumed by top.ps1
-$outputDir = Join-Path -Path $scriptDirectory -ChildPath "output"
-$reconstructListPath = Join-Path -Path $outputDir -ChildPath "video_reconstruct_info.json"
+if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
+    Log "CRITICAL" "FFmpeg executable not found at specified path: '$ffmpeg'. Aborting."
+    exit 1
+}
 
 # --- Helper Function for FFmpeg ---
 function Invoke-FFmpeg {
@@ -209,18 +214,48 @@ foreach ($videoPath in $videosToReconstruct) {
     $result = Invoke-FFmpeg -InputPath $videoPath -OutputPath $tempOutputPath -Arguments $ffmpegArgs
 
     if ($result.Success) {
+        $isValidOutput = $false
+        try {
+            Log "DEBUG" "Verifying re-muxed output: $tempOutputPath"
+            # Example: Check if ffprobe can read streams without error
+            $ffprobeOutput = & $ffprobe -v error -show_streams "$tempOutputPath" 2>&1 # Assuming $ffprobe is available/passed
+            if ($LASTEXITCODE -eq 0 -and $ffprobeOutput) { # Check exit code AND if output is not empty
+                Log "DEBUG" "Verification successful for '$tempOutputPath'."
+                $isValidOutput = $true
+            } else {
+                Log "WARNING" "Verification failed for '$tempOutputPath'. FFprobe exit code: $LASTEXITCODE. Output/Error: $ffprobeOutput"
+            }
+        } catch {
+            Log "WARNING" "Error during ffprobe verification for '$tempOutputPath': $_"
+        }
+
         # Verify temp file exists and has size before replacing original
-        if ((Test-Path $tempOutputPath) -and ((Get-Item $tempOutputPath).Length -gt 0)) {
+        if ($isValidOutput -and (Test-Path $tempOutputPath) -and ((Get-Item $tempOutputPath).Length -gt 0)) {
             Log "INFO" "Successfully re-muxed '$baseName'."
+            $backupPath = "$videoPath.bak"
             try {
-                Remove-Item -Path $videoPath -Force -ErrorAction Stop
+                # 1. Rename original to backup
+                Rename-Item -Path $videoPath -NewName $backupPath -Force -ErrorAction Stop
+                Log "DEBUG" "Renamed original '$videoPath' to '$backupPath'."
+            
+                # 2. Rename temp file to original name
                 Rename-Item -Path $tempOutputPath -NewName $baseName -Force -ErrorAction Stop
-                Log "INFO" "Replaced original with repaired version: '$videoPath'"
+                Log "INFO" "Replaced original with re-muxed version: '$videoPath'"
+            
+                # 3. If successful, remove backup
+                Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
+                Log "DEBUG" "Removed backup file '$backupPath'."
+            
                 $successfullyReconstructed.Add($videoPath)
                 $successCount++
             } catch {
-                Log "ERROR" "Failed to replace original file '$videoPath' with repaired version '$tempOutputPath': $_"
-                # Attempt to clean up temp file if replacement failed
+                Log "ERROR" "Failed during replacement process for '$videoPath'. Error: $_"
+                # Attempt rollback if possible
+                if (Test-Path $backupPath -and -not (Test-Path $videoPath)) {
+                    Log "INFO" "Attempting to restore original from backup '$backupPath'..."
+                    Rename-Item -Path $backupPath -NewName $baseName -Force
+                }
+                # Clean up temp file if it still exists
                 if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue }
                 $failCount++
             }
@@ -250,4 +285,3 @@ $remainingVideos = $videosToReconstruct | Where-Object { $successfullyReconstruc
 Write-JsonAtomic -Data $remainingVideos -Path $reconstructListPath
 Log "INFO" "Reconstruction list updated. $($remainingVideos.Count) videos remain."
 Log "INFO" "Summary: Success=$successCount, Failed=$failCount, Remaining=$($remainingVideos.Count)"
-

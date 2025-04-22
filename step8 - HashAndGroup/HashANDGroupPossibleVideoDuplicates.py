@@ -1,14 +1,8 @@
 import os
 import hashlib
 import json
-import time
 import argparse
 import cv2
-import logging
-import subprocess
-import math
-import shutil
-import tempfile
 import sys # Added sys import
 
 # --- Determine Project Root and Add to Path ---
@@ -96,11 +90,18 @@ def load_existing_video_info(file_path):
     if os.path.exists(file_path):
         try:
             with open(file_path, 'r', encoding='utf-8') as f: # Add encoding
-                data = json.load(f)
+                # Handle empty file case gracefully
+                content = f.read()
+                if not content:
+                    logger.warning(f"File {file_path} is empty. Returning empty list.")
+                    return []
+                data = json.loads(content) # Load from content
+                
                 # Add this check for consistency
                 if not isinstance(data, list):
                     logger.warning(f"Expected a list in {file_path}, found {type(data)}. Returning empty list.")
-                return []
+                    return [] # <<< FIX: Add this return
+
             return data
         except json.JSONDecodeError:
             logger.error(f"Error decoding JSON from {file_path}. Returning empty list.")

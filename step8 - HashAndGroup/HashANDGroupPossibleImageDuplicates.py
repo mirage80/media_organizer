@@ -1,14 +1,8 @@
 import os
 import hashlib
 import json
-import time
 import argparse
-from PIL import Image, UnidentifiedImageError
-import logging
-import subprocess
-import math
-import shutil
-import tempfile
+from PIL import UnidentifiedImageError
 import sys # Added sys import
 
 # --- Determine Project Root and Add to Path ---

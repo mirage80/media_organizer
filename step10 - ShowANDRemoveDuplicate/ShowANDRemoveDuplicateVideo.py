@@ -1,21 +1,15 @@
 import matplotlib
-import shutil
 import os
 import json
 import cv2
 import tkinter as tk
 from tkinter import ttk, messagebox
-from functools import partial
-import numpy as np
-from datetime import datetime
-import math
 import subprocess
 from PIL import Image, ImageTk  # Add this at the top
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.widgets import Button
 matplotlib.use('TkAgg')
-import logging
 import time
 import sys
 
