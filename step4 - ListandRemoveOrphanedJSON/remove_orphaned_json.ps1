@@ -6,6 +6,9 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
+#Outputs Dirctory
+$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
@@ -109,7 +112,7 @@ if (-not (Test-Path -Path $unzipedDirectory -PathType Container)) {
 }
 
 # Define output file for orphaned .json files
-$outputFile = Join-Path -Path $scriptDirectory -ChildPath 'orphaned_json_files.txt'
+$outputFile = Join-Path -Path $OutputDirectory -ChildPath 'orphaned_json_files.txt'
 Log "INFO" "Output will be saved to: $outputFile"
 
 # Initialize collection
@@ -124,7 +127,7 @@ Log "INFO" "Scanning $totalItems .json files for orphaned entries..."
 
 foreach ($jsonFile in $jsonFiles) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Scanning for Orphaned JSON"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "OrphanJson"
 
     $sourceFileName = $jsonFile.BaseName
     $sourcePath = Join-Path -Path $jsonFile.DirectoryName -ChildPath $sourceFileName
@@ -135,7 +138,31 @@ foreach ($jsonFile in $jsonFiles) {
     }
 }
 
+function Purge 
+{
+    param (
+        [string]$list_file
+    )
+    Get-Content -Path $list_file | ForEach-Object {
+        $file = $_.Trim() # Remove any leading or trailing whitespace
+
+        # Check if the file exists before attempting to delete it
+        if (Test-Path -Path "$file" -PathType Leaf) {
+            try {
+                # Delete the file
+                Remove-Item -Path "$file" -Force
+            } catch {
+                Log "WARNING" "Failed to delete '$file': $_"
+            }
+        } else {
+            Log "WARNING" "File not found: $file"
+        }
+    }
+}
+
 # Write results
 $orphanedJsonFiles | Out-File -FilePath $outputFile -Encoding UTF8
+Purge -list_file $outputFile
+
 Log "INFO" "Found $($orphanedJsonFiles.Count) orphaned JSON files."
 Log "INFO" "Wrote orphaned JSON list to '$outputFile'"

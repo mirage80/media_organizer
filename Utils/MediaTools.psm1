@@ -82,7 +82,7 @@ function Get-ProcessedLog {
     )
 
     # Use the main Log function, NOT Add-ThreadLog
-    Log "DEBUG" "Attempting to load processed log from '$LogPath'"
+   #Log "DEBUG" "Attempting to load processed log from '$LogPath'"
 
     $processedEntries = @() # Initialize as empty array
 
@@ -105,20 +105,20 @@ function Get-ProcessedLog {
                         $processedEntries = @($parsedData)
                     }
                 }
-                Log "DEBUG" "Successfully parsed log file '$LogPath'. Found $($processedEntries.Count) initial entries."
+               #Log "DEBUG" "Successfully parsed log file '$LogPath'. Found $($processedEntries.Count) initial entries."
             } else {
                 # Log using the main Log function
-                Log "INFO" "Log file '$LogPath' exists but is empty or contains only whitespace."
+               #Log "INFO" "Log file '$LogPath' exists but is empty or contains only whitespace."
             }
         } catch {
             # Log the error using the main Log function
-            Log "ERROR" "Failed to read or parse log file '$LogPath': $_"
+           #Log "ERROR" "Failed to read or parse log file '$LogPath': $_"
             # Return empty array on error
             return @()
         }
     } else {
         # Log using the main Log function
-        Log "INFO" "Log file '$LogPath' not found. Starting with an empty log."
+       #Log "INFO" "Log file '$LogPath' not found. Starting with an empty log."
         # Return empty array if file doesn't exist
         return @()
     }
@@ -135,15 +135,15 @@ function Get-ProcessedLog {
             $uniqueEntries[$key] = $entry
         } else {
             # Log using the main Log function
-            Log "WARNING" "Skipping invalid or pathless entry during deduplication: $($entry | ConvertTo-Json -Depth 1 -Compress)"
+           #Log "WARNING" "Skipping invalid or pathless entry during deduplication: $($entry | ConvertTo-Json -Depth 1 -Compress)"
             $invalidEntryCount++
         }
     }
     if ($invalidEntryCount -gt 0) {
-         Log "WARNING" "Found $invalidEntryCount invalid/pathless entries in '$LogPath'."
+        #Log "WARNING" "Found $invalidEntryCount invalid/pathless entries in '$LogPath'."
     }
     # Log using the main Log function
-    Log "INFO" "Loaded $($uniqueEntries.Count) unique processed entries from '$LogPath'."
+   #Log "INFO" "Loaded $($uniqueEntries.Count) unique processed entries from '$LogPath'."
     return @($uniqueEntries.Values)
 }
 

@@ -14,17 +14,19 @@ import sys
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-# Add project root to path if not already there (needed for 'import Utils')
+# Add project root to path if not already there (needed for 'import utils')
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-import Utils # Import the Utils module
+from Utils import utils # Import the utils module
 
-# --- Setup Logging using Utils ---
+# --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+logger = utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
@@ -53,9 +55,9 @@ class JunkVideoReviewer:
         self.show_video()
 
     def save_state(self):
-        # Use Utils.write_json_atomic and pass logger
-        Utils.write_json_atomic(self.video_info_data, VIDEO_INFO_FILE, logger=logger)
-        Utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger)
+        # Use utils.write_json_atomic and pass logger
+        utils.write_json_atomic(self.video_info_data, VIDEO_INFO_FILE, logger=logger)
+        utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger)
         logger.info("📝 Saved current progress.")
 
     def load_video_info(self):
@@ -298,8 +300,15 @@ class JunkVideoReviewer:
         self.master.destroy()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Review and delete junk videos.")
+    parser = argparse.ArgumentParser(description="Review and delete junk images.")
+    parser.add_argument("directory", help="The directory containing the images to process.")
     args = parser.parse_args()
+
+    directory = args.directory
+    if not os.path.isdir(directory):
+        logger.critical(f"Error: Provided directory does not exist: {directory}")
+        sys.exit(1)
+
 
     root = tk.Tk()
     app = JunkVideoReviewer(root)

@@ -7,12 +7,12 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
-import Utils # Import the Utils module
+from Utils import utils # <--- CHANGE THIS LINE
 
 # --- Setup Logging using Utils ---
 # Assuming the script name should be 'counter' for logging
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
-logger = Utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME)
+logger = utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME)
 
 def count_file_types_in_directory(root_dir):
     """

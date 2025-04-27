@@ -18,17 +18,20 @@ import sys
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-# Add project root to path if not already there (needed for 'import Utils')
+# Add project root to path if not already there (needed for 'import utils')
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-import Utils # Import the Utils module
+from Utils import utils # Import the utils module
 
-# --- Setup Logging using Utils ---
+
+# --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+logger = utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
@@ -75,9 +78,9 @@ def read_current_grouping_info():
         return {}
 
 def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
-    # Use Utils.parse_timestamp and pass logger
-    t1 = Utils.parse_timestamp(meta1.get("timestamp"), logger=logger)
-    t2 = Utils.parse_timestamp(meta2.get("timestamp"), logger=logger) # Pass logger here too
+    # Use utils.parse_timestamp and pass logger
+    t1 = utils.parse_timestamp(meta1.get("timestamp"), logger=logger)
+    t2 = utils.parse_timestamp(meta2.get("timestamp"), logger=logger) # Pass logger here too
     g1 = meta1.get("geotag")
     g2 = meta2.get("geotag")
 
@@ -90,8 +93,8 @@ def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
     if g1 and g2:
         lat1, lon1 = g1
         lat2, lon2 = g2
-        # Use Utils.haversine
-        distance = Utils.haversine(lat1, lon1, lat2, lon2)
+        # Use utils.haversine
+        distance = utils.haversine(lat1, lon1, lat2, lon2)
         if distance > gps_tolerance_m:
             return False
     elif g1 or g2:
@@ -122,43 +125,47 @@ def extract_geotag_from_tags(tags):
 
 # --- extract_metadata_ffprobe remains the same ---
 def extract_metadata_ffprobe(path):
+    """Extracts timestamp and geotag using ffprobe, includes path in result."""
+    ffprobe_executable = os.getenv('FFPROBE_PATH', 'ffprobe')
+    logger.debug(f"Using ffprobe executable: {ffprobe_executable}")
     try:
         result = subprocess.run([
-            "ffprobe", "-v", "error",
+            ffprobe_executable, "-v", "error",
             "-select_streams", "v:0",
             "-show_entries", "format_tags",
             "-of", "json",
             path
-        ], capture_output=True, text=True, timeout=5, check=True, encoding='utf-8') # Added encoding
+        ], capture_output=True, text=True, timeout=5, check=True, encoding='utf-8')
 
         data = json.loads(result.stdout)
         tags = data.get("format", {}).get("tags", {})
 
-        # Timestamp fallback list
         timestamp = (
             tags.get("com.apple.quicktime.creationdate") or
             tags.get("creation_time") or
             tags.get("encoded_date") or
             tags.get("tagged_date")
         )
-
         geotag = extract_geotag_from_tags(tags)
 
-        return { "timestamp": timestamp, "geotag": geotag}
+        return { "timestamp": timestamp, "geotag": geotag, "path": path } # Include path
     except FileNotFoundError:
-        logger.critical("ffprobe command not found. Please ensure ffmpeg (which includes ffprobe) is installed and in your system's PATH.")
-        return {"timestamp": None, "geotag": None}
+        logger.critical(
+            f"{ffprobe_executable} command not found. "
+            f"Ensure FFmpeg/ffprobe is in system PATH or FFPROBE_PATH environment variable is set correctly."
+        )
+        return {"timestamp": None, "geotag": None, "path": path} # Include path
     except subprocess.CalledProcessError as e:
         logger.error(f"ffprobe failed for {path}. Return code: {e.returncode}")
         logger.error(f"ffprobe stderr: {e.stderr}")
-        return {"timestamp": None, "geotag": None}
+        return {"timestamp": None, "geotag": None, "path": path} # Include path
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode ffprobe JSON output for {path}: {e}")
         logger.debug(f"ffprobe stdout was: {result.stdout}")
-        return {"timestamp": None, "geotag": None}
+        return {"timestamp": None, "geotag": None, "path": path} # Include path
     except Exception as e:
-        logger.error(f"ffprobe error: {e}")
-        return { "timestamp": None, "geotag": None}
+        logger.error(f"ffprobe error for {path}: {e}")
+        return { "timestamp": None, "geotag": None, "path": path } # Include path
 
 # --- Metadata Consolidation remains the same ---
 def consolidate_metadata(keepers, discarded, callback):
@@ -241,89 +248,99 @@ def map_choice_popup(title, geotag_list, callback, map_path=MAP_FILE):
 
     plt.show()
 
-# --- write_metadata remains the same ---
-def write_metadata(keepers, combined_meta):
-    all_successful = True # Initialize flag
-    ffmpeg_found = True # Track if ffmpeg exists
-    for path in keepers:
-        # Ensure handles are released before ffmpeg tries to access
-        release_video_handles(path)
-        time.sleep(0.1) # Small delay just in case
-
-        timestamp = combined_meta["timestamp"]
-        geotag = combined_meta["geotag"]
-
-        if not timestamp and not geotag:
-            logger.debug(f"No metadata to write for keeper: {path}")
-            continue # Nothing to do for this keeper
-
-        # Skip further attempts if ffmpeg is known to be missing
-        if not ffmpeg_found:
-            all_successful = False
-            continue
-
-        temp_output = path + ".temp.mp4" # Use a simpler temp name for clarity
-        ffmpeg_cmd = ["ffmpeg", "-y", "-i", path, "-map_metadata", "-1", "-map", "0", "-c", "copy"]
-        metadata_args = []
-
-        # ... (Build metadata_args as before using Utils.parse_timestamp) ...
-        if timestamp:
-            try:
-                dt_obj = Utils.parse_timestamp(timestamp, logger=logger)
-                if dt_obj:
-                     ffmpeg_ts = dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
-                     metadata_args += ["-metadata", f"creation_time={ffmpeg_ts}"]
-                else: logger.warning(f"Could not parse timestamp '{timestamp}' for ffmpeg.")
-            except Exception as e: logger.warning(f"Error formatting timestamp '{timestamp}' for ffmpeg: {e}")
-        if geotag:
-            lat, lon = geotag
-            iso6709 = f"{lat:+.6f}{lon:+.6f}/"
-            metadata_args += ["-metadata", f"location={iso6709}"]
-            metadata_args += ["-metadata", f"location-eng={iso6709}"]
-        # ... (End build metadata_args) ...
-
-        if not metadata_args:
-            logger.debug(f"No valid metadata to write for {path} after parsing.")
-            continue # Skip ffmpeg call if nothing valid to write
-
-        ffmpeg_cmd += metadata_args
-        ffmpeg_cmd += [temp_output]
-
+# --- write_metadata_ffmpeg remains the same ---
+def write_metadata_ffmpeg(path, timestamp=None, geotag=None):
+    """Atomically write metadata using ffmpeg by creating a temporary file."""
+    dir_name = os.path.dirname(path)
+    base_name = os.path.basename(path)
+    # Use a more unique temp file name to avoid potential collisions
+    temp_file = os.path.join(dir_name, f".{base_name}.{os.getpid()}.tmp.mp4")
+    metadata_args = []
+    if timestamp:
+        # Ensure timestamp is in ISO 8601 format for ffmpeg
         try:
-            logger.debug(f"Running ffmpeg command: {' '.join(ffmpeg_cmd)}")
-            result = subprocess.run(ffmpeg_cmd, check=True, capture_output=True, text=True, encoding='utf-8')
-            logger.debug(f"ffmpeg output for {path}: {result.stderr}") # Log stderr even on success
-
-            # Ensure all handles are released *before* replacing the file
-            release_all_video_captures() # Release GUI captures
-            release_video_handles(path) # Release any lingering handle on original
-            time.sleep(0.3) # Increased delay before replace
-
-            os.replace(temp_output, path)
-            logger.info(f"✅ Updated metadata written to: {path}")
-
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Failed to write metadata for {path}: {e}")
-            logger.error(f"ffmpeg stderr: {e.stderr}") # Log specific ffmpeg error
-            if os.path.exists(temp_output):
-                try: os.remove(temp_output)
-                except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_output}: {rm_err}")
-            all_successful = False # Mark failure
-        except FileNotFoundError: # Check if ffmpeg itself is missing
-             logger.critical("ffmpeg command not found. Cannot write metadata.")
-             ffmpeg_found = False
-             all_successful = False
+            dt_obj = utils.parse_timestamp(timestamp, logger=logger) # Use utils parser
+            if dt_obj:
+                 # Format for ffmpeg 'creation_time' (UTC with Z)
+                 ffmpeg_ts = dt_obj.strftime('%Y-%m-%dT%H:%M:%SZ')
+                 metadata_args += ["-metadata", f"creation_time={ffmpeg_ts}"]
+            else:
+                 logger.warning(f"Could not parse timestamp '{timestamp}' for ffmpeg.")
         except Exception as e:
-             logger.error(f"❌ Unexpected error writing metadata for {path}: {e}")
-             if os.path.exists(temp_output):
-                 try: os.remove(temp_output)
-                 except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_output}: {rm_err}")
-             all_successful = False # Mark failure
+             logger.warning(f"Error formatting timestamp '{timestamp}' for ffmpeg: {e}")
+    if geotag and len(geotag) == 2:
+        lat, lon = geotag
+        # Format according to ISO 6709 Annex H (e.g., +DD.DDDD+DDD.DDDD/)
+        iso6709 = f"{lat:+.6f}{lon:+.6f}/"
+        metadata_args += ["-metadata", f"location={iso6709}"]
+        # Also add location-eng for broader compatibility (optional)
+        metadata_args += ["-metadata", f"location-eng={iso6709}"]
+    if not metadata_args:
+        logger.debug(f"No valid metadata provided to write for {path}")
+        return True # Nothing to do, consider it success
 
-    # Return the overall success status
-    if not ffmpeg_found:
-        messagebox.showerror("FFmpeg Error", "FFmpeg command not found. Cannot write metadata.\nPlease ensure FFmpeg is installed and in your system PATH.")
-    return all_successful
+    ffmpeg_executable = os.getenv('FFMPEG_PATH', 'ffmpeg')
+    logger.debug(f"Using ffmpeg executable: {ffmpeg_executable}")
+    try:
+        cmd = [
+            ffmpeg_executable, "-y", "-i", path,
+            "-map_metadata", "-1", # Remove existing metadata before adding new
+            # --- MODIFIED LINE: Map only video and audio streams ---
+            "-map", "0:v", "-map", "0:a?",
+            # --- END MODIFIED LINE ---
+            "-codec", "copy", # Use codec copy for speed
+            *metadata_args,
+            temp_file
+        ]
+        logger.debug(f"Running ffmpeg command: {' '.join(cmd)}")
+        # Capture stderr for better error diagnosis
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding='utf-8')
+        if result.stderr: # Log stderr even on success for potential warnings
+            logger.debug(f"ffmpeg stderr for {path}: {result.stderr.strip()}")
+
+        # --- Add delay and retry for os.replace ---
+        max_retries = 3
+        retry_delay = 0.5 # seconds
+        for attempt in range(max_retries):
+            try:
+                os.replace(temp_file, path)
+                logger.info(f"✅ Successfully replaced {path} with updated metadata.")
+                return True
+            except PermissionError as pe:
+                logger.warning(f"Attempt {attempt + 1}/{max_retries}: PermissionError replacing {path}. Retrying in {retry_delay}s... Error: {pe}")
+                time.sleep(retry_delay)
+            except Exception as e_replace:
+                 logger.error(f"❌ Error replacing {path} after ffmpeg success: {e_replace}")
+                 # Try to clean up temp file even if replace failed
+                 if os.path.exists(temp_file):
+                     try: os.remove(temp_file)
+                     except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_file} after replace error: {rm_err}")
+                 return False # Indicate failure
+
+        logger.error(f"❌ Failed to replace {path} after {max_retries} attempts due to persistent PermissionError.")
+        if os.path.exists(temp_file):
+            try: os.remove(temp_file)
+            except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_file} after final replace failure: {rm_err}")
+        return False # Indicate failure
+        # --- End delay and retry ---
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ ffmpeg failed for {path}. Return code: {e.returncode}")
+        logger.error(f"ffmpeg stderr: {e.stderr.strip()}") # Log the specific ffmpeg error
+        if os.path.exists(temp_file):
+            try: os.remove(temp_file)
+            except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_file} after ffmpeg error: {rm_err}")
+        return False
+    except FileNotFoundError:
+         logger.critical(f"{ffmpeg_executable} command not found. Cannot write metadata.")
+         # Set a flag or handle globally if needed, here just return False for this file
+         return False
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in atomic write for {path}: {e}")
+        if os.path.exists(temp_file):
+             try: os.remove(temp_file)
+             except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_file} after unexpected error: {rm_err}")
+        return False
 
 def update_json(keepers=None, discarded=None):
     # --- Update video_info.json --- #
@@ -358,8 +375,8 @@ def update_json(keepers=None, discarded=None):
 
     updated_video_info = list(path_map.values())
 
-    # Use Utils.write_json_atomic
-    if not Utils.write_json_atomic(updated_video_info, VIDEO_INFO_FILE, logger=logger):
+    # Use utils.write_json_atomic
+    if not utils.write_json_atomic(updated_video_info, VIDEO_INFO_FILE, logger=logger):
         return f"❌ Failed to update {VIDEO_INFO_FILE}."
 
     # --- Update video_grouping_info.json --- #
@@ -412,8 +429,8 @@ def update_json(keepers=None, discarded=None):
         for gid in keys_to_remove:
             group_dict.pop(gid, None)
 
-    # Use Utils.write_json_atomic
-    if not Utils.write_json_atomic(grouping_info, VIDEO_GROUPING_INFO_FILE, logger=logger):
+    # Use utils.write_json_atomic
+    if not utils.write_json_atomic(grouping_info, VIDEO_GROUPING_INFO_FILE, logger=logger):
         return f"❌ Failed to update {VIDEO_GROUPING_INFO_FILE}."
 
     logger.info("✅ JSON files (video info + grouping info) updated successfully.")
@@ -640,8 +657,8 @@ class VideoDeduplicationGUI:
                 self._refresh_job = None
             release_all_video_captures() # Release GUI captures
 
-            # Use Utils.backup_json_files
-            Utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files
+            utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE) # Corrected function name if needed
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -653,13 +670,21 @@ class VideoDeduplicationGUI:
 
             combined_meta = {"timestamp": timestamp, "geotag": geotag}
 
-            # --- Call write_metadata and check status ---
-            metadata_success = write_metadata(self.keepers, combined_meta)
+            # --- CORRECTED: Call write_metadata_ffmpeg in a loop ---
+            all_writes_successful = True
+            for keeper_path in self.keepers: # Iterate through the list of keepers
+                if not write_metadata_ffmpeg(keeper_path, timestamp=combined_meta["timestamp"], geotag=combined_meta["geotag"]):
+                    all_writes_successful = False
+                    # Optional: break here if one failure should stop all writes for the group
+                    # break
+
+            metadata_success = all_writes_successful # Use the aggregated result
+            # --- END CORRECTION ---
 
             if metadata_success:
                 logger.info("Metadata write successful. Proceeding with deletion and JSON update.")
-                # Use Utils.delete_files
-                _ = Utils.delete_files(self.discarded, logger=logger, base_dir=SCRIPT_DIR)
+                # Use utils.delete_files
+                _ = utils.delete_files(self.discarded, logger=logger, base_dir=SCRIPT_DIR)
                 _ = update_json(keepers=self.keepers, discarded=self.discarded)
             else:
                 logger.error("Metadata write failed for one or more keepers. Skipping file deletion and JSON update for this group.")
@@ -691,8 +716,8 @@ class VideoDeduplicationGUI:
                 self._refresh_job = None
             release_all_video_captures() # Release GUI captures
 
-            # Use Utils.backup_json_files
-            Utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files
+            utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE) # Corrected function name if needed
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -704,8 +729,16 @@ class VideoDeduplicationGUI:
 
             combined_meta = {"timestamp": timestamp, "geotag": geotag}
 
-            # --- Call write_metadata and check status ---
-            metadata_success = write_metadata(keepers, combined_meta)
+            # --- CORRECTED: Call write_metadata_ffmpeg in a loop ---
+            all_writes_successful = True
+            for keeper_path in keepers: # Iterate through the local 'keepers' list
+                if not write_metadata_ffmpeg(keeper_path, timestamp=combined_meta["timestamp"], geotag=combined_meta["geotag"]):
+                    all_writes_successful = False
+                    # Optional: break here if one failure should stop all writes for the group
+                    # break
+
+            metadata_success = all_writes_successful # Use the aggregated result
+            # --- END CORRECTION ---
 
             if metadata_success:
                 logger.info("Metadata write successful. Proceeding with JSON update.")
@@ -725,8 +758,8 @@ class VideoDeduplicationGUI:
 
     def skip_group(self):
         _ = skip_group_actions()
-        # Use Utils.backup_json_files (pass video file paths)
-        Utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
+        # Use utils.backup_json_files (pass video file paths)
+        utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
         self.trace_stack.append({
             "group": self.group.copy(),
             "group_index": self.group_index,
@@ -744,11 +777,11 @@ class VideoDeduplicationGUI:
 
         state = self.trace_stack.pop()
 
-        # Use Utils.restore_deleted_files
-        Utils.restore_deleted_files(state.get("discarded", []), logger=logger, base_dir=SCRIPT_DIR)
+        # Use utils.restore_deleted_files
+        utils.restore_deleted_files(state.get("discarded", []), logger=logger, base_dir=SCRIPT_DIR)
 
-        # Use Utils.restore_json_files (pass video file paths)
-        Utils.restore_json_files(
+        # Use utils.restore_json_files (pass video file paths)
+        utils.restore_json_files(
             image_info_backup=state.get("previous_info"), # Name mismatch, but pass data
             image_info_file=VIDEO_INFO_FILE,
             image_grouping_backup=state.get("previous_grouping"),
@@ -791,8 +824,8 @@ class VideoDeduplicationGUI:
 
         if group_len == 2:
             logger.info("Only 2 videos in group. Removing group from JSON.")
-            # Use Utils.backup_json_files (pass video file paths)
-            Utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files (pass video file paths)
+            utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -806,8 +839,8 @@ class VideoDeduplicationGUI:
                 # Remove from both grouping types if present
                 self.grouping_data.get("grouped_by_name_and_size", {}).pop(self.current_group_key, None)
                 self.grouping_data.get("grouped_by_hash", {}).pop(self.current_group_key, None) # Assuming key might be hash sometimes? Check logic.
-                # Use Utils.write_json_atomic
-                if Utils.write_json_atomic(self.grouping_data, VIDEO_GROUPING_INFO_FILE, logger=logger):
+                # Use utils.write_json_atomic
+                if utils.write_json_atomic(self.grouping_data, VIDEO_GROUPING_INFO_FILE, logger=logger):
                     logger.info(f"✅ Removed group: {self.current_group_key}")
                 else:
                      logger.error(f"Failed to save grouping data after removing group {self.current_group_key}")
@@ -816,8 +849,8 @@ class VideoDeduplicationGUI:
 
         else:
             logger.info("Prompting user to split multi-video group manually.")
-            # Use Utils.backup_json_files (pass video file paths)
-            Utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files (pass video file paths)
+            utils.backup_json_files(logger=logger, image_info_file=VIDEO_INFO_FILE, image_grouping_info_file=VIDEO_GROUPING_INFO_FILE)
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -920,8 +953,8 @@ class VideoDeduplicationGUI:
             self.all_groups[original_index:original_index] = new_groups_temp
 
             # Save the modified grouping data
-            # Use Utils.write_json_atomic
-            if not Utils.write_json_atomic(self.grouping_data, VIDEO_GROUPING_INFO_FILE, logger=logger):
+            # Use utils.write_json_atomic
+            if not utils.write_json_atomic(self.grouping_data, VIDEO_GROUPING_INFO_FILE, logger=logger):
                  logger.error("Failed to save grouping data after split.")
                  messagebox.showerror("Error", "Failed to save split groups.")
                  return

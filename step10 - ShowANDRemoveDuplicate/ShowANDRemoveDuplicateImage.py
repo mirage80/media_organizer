@@ -16,17 +16,19 @@ import sys
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-# Add project root to path if not already there (needed for 'import Utils')
+# Add project root to path if not already there (needed for 'import utils')
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-import Utils # Import the Utils module
+from Utils import utils # Import the utils module
 
-# --- Setup Logging using Utils ---
+# --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+logger = utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
@@ -52,9 +54,9 @@ def read_current_grouping_info():
         return {} # Return empty dict on error
 
 def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
-    # Use Utils.parse_timestamp and pass logger
-    t1 = Utils.parse_timestamp(meta1.get("timestamp"), logger=logger)
-    t2 = Utils.parse_timestamp(meta2.get("timestamp"), logger=logger) # Pass logger here too
+    # Use utils.parse_timestamp and pass logger
+    t1 = utils.parse_timestamp(meta1.get("timestamp"), logger=logger)
+    t2 = utils.parse_timestamp(meta2.get("timestamp"), logger=logger) # Pass logger here too
     g1 = meta1.get("geotag")
     g2 = meta2.get("geotag")
 
@@ -67,8 +69,8 @@ def metadata_match(meta1, meta2, time_tolerance_sec=5, gps_tolerance_m=10):
     if g1 and g2:
         lat1, lon1 = g1
         lat2, lon2 = g2
-        # Use Utils.haversine
-        distance = Utils.haversine(lat1, lon1, lat2, lon2)
+        # Use utils.haversine
+        distance = utils.haversine(lat1, lon1, lat2, lon2)
         if distance > gps_tolerance_m:
             return False
     elif g1 or g2:
@@ -97,37 +99,51 @@ def extract_geotag_from_tags(tags):
             return None
     return None
 
-# --- extract_metadata_exiftool remains the same ---
+# --- Metadata Extraction (Image Specific - Exiftool) ---
 def extract_metadata_exiftool(path):
+    """Extracts timestamp and geotag using ExifTool, includes path in result."""
+    exiftool_executable = os.getenv('EXIFTOOL_PATH', 'exiftool') # Use environment variable or default
+    logger.debug(f"Using exiftool executable: {exiftool_executable}")
     try:
-        # Ensure exiftool is in PATH or provide full path
         result = subprocess.run([
-            "exiftool", "-j", "-n", "-DateTimeOriginal", "-GPSLatitude", "-GPSLongitude", path
+            exiftool_executable, "-j", "-n", # JSON output, numeric values
+            "-DateTimeOriginal", "-GPSLatitude", "-GPSLongitude", # Tags to extract
+            path
         ], capture_output=True, text=True, timeout=5, check=True, encoding='utf-8')
 
-        data = json.loads(result.stdout)[0]
+        data = json.loads(result.stdout)[0] # Exiftool returns a list with one dict
 
         timestamp = data.get("DateTimeOriginal")
         lat = data.get("GPSLatitude")
         lon = data.get("GPSLongitude")
 
         geotag = (lat, lon) if lat is not None and lon is not None else None
-        return {"timestamp": timestamp, "geotag": geotag}
+        # Include path in result for consistency with video version's meta_map usage
+        return {"timestamp": timestamp, "geotag": geotag, "path": path}
 
     except FileNotFoundError:
-        logger.critical("exiftool command not found. Please ensure ExifTool is installed and in your system's PATH.")
-        return {"timestamp": None, "geotag": None}
+        logger.critical(
+            f"{exiftool_executable} command not found. "
+            f"Ensure ExifTool is installed and in system PATH or EXIFTOOL_PATH environment variable is set correctly."
+        )
+        return {"timestamp": None, "geotag": None, "path": path}
     except subprocess.CalledProcessError as e:
         logger.error(f"exiftool failed for {path}. Return code: {e.returncode}")
-        logger.error(f"exiftool stderr: {e.stderr}")
-        return {"timestamp": None, "geotag": None}
+        # Exiftool often prints errors to stdout when using -j, check there too
+        logger.error(f"exiftool stdout: {e.stdout.strip()}")
+        logger.error(f"exiftool stderr: {e.stderr.strip()}")
+        return {"timestamp": None, "geotag": None, "path": path}
     except json.JSONDecodeError as e:
         logger.error(f"Failed to decode exiftool JSON output for {path}: {e}")
         logger.debug(f"exiftool stdout was: {result.stdout}")
-        return {"timestamp": None, "geotag": None}
+        return {"timestamp": None, "geotag": None, "path": path}
+    except IndexError: # Handle case where exiftool returns empty list
+         logger.error(f"exiftool returned empty JSON output for {path}")
+         logger.debug(f"exiftool stdout was: {result.stdout}")
+         return {"timestamp": None, "geotag": None, "path": path}
     except Exception as e:
-        logger.error(f"exiftool error while reading {path}: {e}")
-        return {"timestamp": None, "geotag": None}
+        logger.error(f"exiftool error for {path}: {e}")
+        return {"timestamp": None, "geotag": None, "path": path}
 
 def consolidate_metadata(keepers, discarded, callback):
     all_meta = [extract_metadata_exiftool(p) for p in keepers + discarded]
@@ -210,58 +226,97 @@ def map_choice_popup(title, geotag_list, callback, map_path=MAP_FILE):
 
     plt.show()
 
-# Modify the write_metadata function
-def write_metadata(keepers, combined_meta):
-    all_successful = True # Initialize flag
-    exiftool_found = True # Track if exiftool exists
+# --- Metadata Writing (Image Specific - Exiftool) ---
+def write_metadata_exiftool(keepers, combined_meta):
+    """Writes chosen metadata to keeper images using ExifTool."""
+    all_successful = True
+    exiftool_found = True
+    exiftool_executable = os.getenv('EXIFTOOL_PATH', 'exiftool') # Use environment variable or default
+    logger.debug(f"Using exiftool executable: {exiftool_executable}")
+
     for path in keepers:
         timestamp = combined_meta["timestamp"]
         geotag = combined_meta["geotag"]
 
         if not timestamp and not geotag:
             logger.debug(f"No metadata to write for keeper: {path}")
-            continue # Nothing to do for this keeper
+            continue
 
-        # Skip further attempts if exiftool is known to be missing
         if not exiftool_found:
             all_successful = False
             continue
 
-        args = ["exiftool", "-overwrite_original"]
+        # Base arguments for ExifTool
+        args = [exiftool_executable, "-overwrite_original", "-ignoreMinorErrors"]
 
         if timestamp:
-            args.append(f"-DateTimeOriginal={timestamp}")
+            # Exiftool expects YYYY:MM:DD HH:MM:SS format for DateTimeOriginal
+            try:
+                dt_obj = utils.parse_timestamp(timestamp, logger=logger)
+                if dt_obj:
+                    exif_ts = dt_obj.strftime('%Y:%m:%d %H:%M:%S')
+                    args.append(f"-DateTimeOriginal={exif_ts}")
+                else:
+                    logger.warning(f"Could not parse timestamp '{timestamp}' for exiftool.")
+            except Exception as e:
+                 logger.warning(f"Error formatting timestamp '{timestamp}' for exiftool: {e}")
 
-        if geotag:
+        if geotag and len(geotag) == 2:
             lat, lon = geotag
-            args += [
-                f"-GPSLatitude={abs(lat)}", f"-GPSLatitudeRef={'N' if lat >= 0 else 'S'}",
-                f"-GPSLongitude={abs(lon)}", f"-GPSLongitudeRef={'E' if lon >= 0 else 'W'}"
-            ]
+            # Ensure lat/lon are numbers before formatting
+            try:
+                lat_f = float(lat)
+                lon_f = float(lon)
+                args += [
+                    f"-GPSLatitude={abs(lat_f)}", f"-GPSLatitudeRef={'N' if lat_f >= 0 else 'S'}",
+                    f"-GPSLongitude={abs(lon_f)}", f"-GPSLongitudeRef={'E' if lon_f >= 0 else 'W'}"
+                ]
+            except (ValueError, TypeError) as e:
+                 logger.warning(f"Invalid geotag format for exiftool ({lat}, {lon}): {e}")
 
-        args.append(path)
+        # Only run exiftool if there are actual metadata args added beyond the base args
+        if len(args) > 3: # More than just executable, -overwrite_original, -ignoreMinorErrors
+            args.append(path) # Add the file path last
 
-        try:
-            # Run exiftool
-            logger.debug(f"Running exiftool command: {' '.join(args)}")
-            subprocess.run(args, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE) # Capture stderr on error
-            logger.info(f"✅ Metadata written to: {path}")
-        except subprocess.CalledProcessError as e:
-            logger.error(f"❌ Failed to write metadata with exiftool for {path}: {e}")
-            logger.error(f"exiftool stderr: {e.stderr.decode(errors='ignore')}") # Log stderr
-            all_successful = False # Mark failure
-        except FileNotFoundError:
-             logger.critical("exiftool command not found. Cannot write metadata.")
-             exiftool_found = False # Mark as missing for subsequent loops
-             all_successful = False # Mark failure
-             # No need to return immediately, let loop finish logging attempts
-        except Exception as e:
-             logger.error(f"❌ Unexpected error writing metadata for {path}: {e}")
-             all_successful = False # Mark failure
+            try:
+                logger.debug(f"Running exiftool command: {' '.join(args)}")
+                result = subprocess.run(args, check=True, capture_output=True, text=True, encoding='utf-8')
+                # Exiftool warnings often go to stderr, even on success (return code 0)
+                if result.stderr:
+                    logger.warning(f"exiftool stderr for {path}: {result.stderr.strip()}")
+                # Exiftool success message goes to stdout
+                if result.stdout:
+                    logger.info(f"exiftool stdout for {path}: {result.stdout.strip()}") # Log success message
+                # logger.info(f"✅ Metadata written to: {path}") # Redundant if stdout logged
 
-    # Return the overall success status
+            except subprocess.CalledProcessError as e:
+                logger.error(f"❌ Failed to write metadata with exiftool for {path}. Return code: {e.returncode}")
+                logger.error(f"exiftool stdout: {e.stdout.strip()}")
+                logger.error(f"exiftool stderr: {e.stderr.strip()}")
+                all_successful = False
+            except FileNotFoundError:
+                 logger.critical(f"{exiftool_executable} command not found. Cannot write metadata.")
+                 exiftool_found = False
+                 all_successful = False
+            except Exception as e:
+                 logger.error(f"❌ Unexpected error writing metadata for {path}: {e}")
+                 all_successful = False
+        else:
+            logger.debug(f"No valid metadata arguments generated for {path}. Skipping exiftool call.")
+
+    # Show error message once at the end if ExifTool was not found
     if not exiftool_found:
-        messagebox.showerror("ExifTool Error", "ExifTool command not found. Cannot write metadata.\nPlease ensure ExifTool is installed and in your system PATH.")
+        # Check if root window exists before showing messagebox
+        try:
+            # Attempt to get the root window if it exists (might fail if Tk not fully initialized)
+            root_maybe = tk._default_root
+            if root_maybe and root_maybe.winfo_exists():
+                 messagebox.showerror("ExifTool Error", "ExifTool command not found. Cannot write metadata.\nPlease ensure ExifTool is installed and in your system PATH or EXIFTOOL_PATH is set.")
+            else:
+                 logger.critical("ExifTool Error: ExifTool command not found (GUI window not available for message box).")
+        except Exception:
+             logger.critical("ExifTool Error: ExifTool command not found (GUI window not available for message box).")
+
     return all_successful
 
 def update_json(keepers=None, discarded=None):
@@ -297,8 +352,8 @@ def update_json(keepers=None, discarded=None):
 
     updated_image_info = list(path_map.values())
 
-    # Use Utils.write_json_atomic
-    if not Utils.write_json_atomic(updated_image_info, IMAGE_INFO_FILE, logger=logger):
+    # Use utils.write_json_atomic
+    if not utils.write_json_atomic(updated_image_info, IMAGE_INFO_FILE, logger=logger):
         return f"❌ Failed to update {IMAGE_INFO_FILE}."
 
     # --- Update image_grouping_info.json --- #
@@ -351,8 +406,8 @@ def update_json(keepers=None, discarded=None):
         for gid in keys_to_remove:
             group_dict.pop(gid, None)
 
-    # Use Utils.write_json_atomic
-    if not Utils.write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE, logger=logger):
+    # Use utils.write_json_atomic
+    if not utils.write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE, logger=logger):
         return f"❌ Failed to update {IMAGE_GROUPING_INFO_FILE}."
 
     logger.info("✅ JSON files (image info + grouping info) updated successfully.")
@@ -507,8 +562,8 @@ class ImageDeduplicationGUI:
 
     def confirm_selection(self):
         def on_consolidated(timestamp, geotag):
-            # Use Utils.backup_json_files
-            Utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files
+            utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -520,13 +575,13 @@ class ImageDeduplicationGUI:
 
             combined_meta = {"timestamp": timestamp, "geotag": geotag}
 
-            # --- Call write_metadata and check status ---
-            metadata_success = write_metadata(self.keepers, combined_meta)
+            # --- Call write_metadata_exiftool and check status ---
+            metadata_success = write_metadata_exiftool(self.keepers, combined_meta)
 
             if metadata_success:
                 logger.info("Metadata write successful. Proceeding with deletion and JSON update.")
-                # Use Utils.delete_files
-                _ = Utils.delete_files(self.discarded, logger=logger, base_dir=SCRIPT_DIR)
+                # Use utils.delete_files
+                _ = utils.delete_files(self.discarded, logger=logger, base_dir=SCRIPT_DIR)
                 _ = update_json(keepers=self.keepers, discarded=self.discarded)
             else:
                 logger.error("Metadata write failed for one or more keepers. Skipping file deletion and JSON update for this group.")
@@ -553,8 +608,8 @@ class ImageDeduplicationGUI:
         keepers = [path for _, path in self.keep_vars] # All are keepers
 
         def on_consolidated(timestamp, geotag):
-            # Use Utils.backup_json_files
-            Utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files
+            utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -566,8 +621,8 @@ class ImageDeduplicationGUI:
 
             combined_meta = {"timestamp": timestamp, "geotag": geotag}
 
-            # --- Call write_metadata and check status ---
-            metadata_success = write_metadata(keepers, combined_meta)
+            # --- Call write_metadata_exiftool and check status ---
+            metadata_success = write_metadata_exiftool(keepers, combined_meta)
 
             if metadata_success:
                 logger.info("Metadata write successful. Proceeding with JSON update.")
@@ -588,8 +643,8 @@ class ImageDeduplicationGUI:
     def skip_group(self):
         _ = skip_group_actions()  # ✅ C-1
         # ✅ C-2: Push undo state
-        # Use Utils.backup_json_files
-        Utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
+        # Use utils.backup_json_files
+        utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
         self.trace_stack.append({
             "group": self.group.copy(),
             "group_index": self.group_index,
@@ -607,11 +662,11 @@ class ImageDeduplicationGUI:
 
         state = self.trace_stack.pop()  # ✅ b-2
 
-        # Use Utils.restore_deleted_files
-        Utils.restore_deleted_files(state.get("discarded", []), logger=logger, base_dir=SCRIPT_DIR)
+        # Use utils.restore_deleted_files
+        utils.restore_deleted_files(state.get("discarded", []), logger=logger, base_dir=SCRIPT_DIR)
 
-        # Use Utils.restore_json_files
-        Utils.restore_json_files(
+        # Use utils.restore_json_files
+        utils.restore_json_files(
             image_info_backup=state.get("previous_info"),
             image_info_file=IMAGE_INFO_FILE,
             image_grouping_backup=state.get("previous_grouping"),
@@ -656,8 +711,8 @@ class ImageDeduplicationGUI:
 
         if group_len == 2:
             logger.info("Only 2 images in group. Removing group from JSON.")
-            # Use Utils.backup_json_files
-            Utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
+            # Use utils.backup_json_files
+            utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE)
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -671,8 +726,8 @@ class ImageDeduplicationGUI:
                 # Remove from both grouping types if present
                 self.grouping_data.get("grouped_by_name_and_size", {}).pop(self.current_group_key, None)
                 self.grouping_data.get("grouped_by_hash", {}).pop(self.current_group_key, None) # Assuming key might be hash sometimes? Check logic.
-                # Use Utils.write_json_atomic
-                if Utils.write_json_atomic(self.grouping_data, IMAGE_GROUPING_INFO_FILE, logger=logger):
+                # Use utils.write_json_atomic
+                if utils.write_json_atomic(self.grouping_data, IMAGE_GROUPING_INFO_FILE, logger=logger):
                     logger.info(f"✅ Removed group: {self.current_group_key}")
                 else:
                      logger.error(f"Failed to save grouping data after removing group {self.current_group_key}")
@@ -682,7 +737,7 @@ class ImageDeduplicationGUI:
 
         else:
             logger.info("Prompting user to split multi-image group manually.")
-            # Use Utils.backup_json_files
+            # Use utils.backup_json_files
        
             # e-2-1: show UI
             self.split_group_ui()  # ✅ Call UI last so it runs after state is saved
@@ -732,7 +787,7 @@ class ImageDeduplicationGUI:
                 return
 
             # Push undo
-            Utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE) # Pass args
+            utils.backup_json_files(logger=logger, image_info_file=IMAGE_INFO_FILE, image_grouping_info_file=IMAGE_GROUPING_INFO_FILE) # Pass args
             self.trace_stack.append({
                 "group": self.group.copy(),
                 "group_index": self.group_index,
@@ -779,8 +834,8 @@ class ImageDeduplicationGUI:
             self.all_groups[original_index:original_index] = new_groups_temp
 
             # Save the modified grouping data
-            # Use Utils.write_json_atomic
-            if not Utils.write_json_atomic(self.grouping_data, IMAGE_GROUPING_INFO_FILE, logger=logger):
+            # Use utils.write_json_atomic
+            if not utils.write_json_atomic(self.grouping_data, IMAGE_GROUPING_INFO_FILE, logger=logger):
                  logger.error("Failed to save grouping data after split.")
                  # Consider how to handle this failure - maybe revert?
                  messagebox.showerror("Error", "Failed to save split groups.")

@@ -10,22 +10,24 @@ import sys # Added sys import
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-# Add project root to path if not already there (needed for 'import Utils')
-if PROJECT_ROOT_DIR not in sys.path:
-     sys.path.append(PROJECT_ROOT_DIR)
+# Add project root to path if not already there (needed for 'import utils')
+if PROJECT_ROOT not in sys.path:
+     sys.path.append(PROJECT_ROOT)
 
-import Utils # Import the Utils module
+from Utils import utils # Import the utils module
 
-# --- Setup Logging using Utils ---
-# Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+# --- Setup Logging using utils ---
+# Pass PROJECT_ROOT as base_dir for logs to go into media_organizer/Logs
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+logger = utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
-# Use PROJECT_ROOT_DIR to build paths relative to the project root
-ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "output")
+# Use PROJECT_ROOT to build paths relative to the project root
+ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
 
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
@@ -132,12 +134,12 @@ def process_images(directory, existing_image_info):
                 image_info_list.append(image_info)
                 new_files_processed += 1
                 # Update progress based on total files scanned, not just new ones
-                Utils.show_progress_bar(processed_files, total_files, "Hashing")
+                utils.show_progress_bar(processed_files, total_files, "Hashing/Scanning", logger=logger)
 
     # Write only once at the end if new files were processed
     if new_files_processed > 0:
         logger.info(f"\nProcessed {new_files_processed} new image files.")
-        if Utils.write_json_atomic(image_info_list, IMAGE_INFO_FILE, logger=logger):
+        if utils.write_json_atomic(image_info_list, IMAGE_INFO_FILE, logger=logger):
              logger.info(f"Successfully saved updated image info to {IMAGE_INFO_FILE}")
         else:
              logger.error(f"Failed to save updated image info to {IMAGE_INFO_FILE}")
@@ -160,7 +162,7 @@ def group_images_by_name_and_size(image_info_list):
             grouped_images[key] = []
         grouped_images[key].append(info)
         processed_files += 1
-        Utils.show_progress_bar(processed_files, total_files, "By Name")
+        utils.show_progress_bar(processed_files, total_files, "Grouping by Name", logger=logger)
     print() # Newline after progress bar
     logger.info("Finished grouping by name and size.")
     return grouped_images
@@ -182,7 +184,7 @@ def group_images_by_hash(image_info_list):
         else:
             logger.warning(f"Image missing hash: {info.get('path')}")
         processed_files += 1
-        Utils.show_progress_bar(processed_files, total_files, "By Hash")
+        utils.show_progress_bar(processed_files, total_files, "Grouping by Hash", logger=logger)
     print() # Newline after progress bar
     logger.info("Finished grouping by hash.")
     return grouped_images
@@ -202,12 +204,12 @@ def generate_grouping_image(image_info_list): # Pass the list directly
             "grouped_by_hash": grouped_by_hash
         }
 
-        # Utils.write_json_atomic already handles its own errors and logs them
-        if Utils.write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE, logger=logger):
-            # Log success here if needed, or rely on Utils function's log
+        # utils.write_json_atomic already handles its own errors and logs them
+        if utils.write_json_atomic(grouping_info, IMAGE_GROUPING_INFO_FILE, logger=logger):
+            # Log success here if needed, or rely on utils function's log
             logger.info(f"Successfully generated and saved grouping info to {IMAGE_GROUPING_INFO_FILE}")
         else:
-            # Log failure here if needed, or rely on Utils function's log
+            # Log failure here if needed, or rely on utils function's log
             logger.error(f"Failed to save grouping info (see previous error from write_json_atomic).")
 
     except Exception as e: # <-- Catch potential errors during grouping

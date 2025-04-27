@@ -13,17 +13,20 @@ import sys
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..', '..'))
+PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-# Add project root to path if not already there (needed for 'import Utils')
+# Add project root to path if not already there (needed for 'import utils')
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-import Utils # Import the Utils module
+from Utils import utils # Import the utils module
 
-# --- Setup Logging using Utils ---
+# --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-logger = Utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME)
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+logger = utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
@@ -48,9 +51,9 @@ class JunkImageReviewer:
         self.show_image()
 
     def save_state(self):
-        # Use Utils.write_json_atomic and pass logger
-        Utils.write_json_atomic(self.image_info_data, IMAGE_INFO_FILE, logger=logger)
-        Utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger)
+        # Use utils.write_json_atomic and pass logger
+        utils.write_json_atomic(self.image_info_data, IMAGE_INFO_FILE, logger=logger)
+        utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger)
         logger.info("📝 Saved current progress.")
 
     def load_image_info(self):
@@ -71,24 +74,41 @@ class JunkImageReviewer:
     def setup_ui(self):
         self.frame = ttk.Frame(self.master, padding="10")
         self.frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        # Make the main frame expandable
+        self.master.columnconfigure(0, weight=1)
+        self.master.rowconfigure(0, weight=1)
+        self.frame.columnconfigure(0, weight=1) # Allow columns in frame to expand if needed
 
-        self.image_frame = tk.Frame(self.frame, bg="black", width=640, height=480)
-        self.image_frame.grid(row=2, column=0, columnspan=3)
+        self.image_label = tk.Label(self.frame, text="No image loaded", bg="black", anchor="center")
+        self.image_label.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
+        # Allow the row containing the image label to expand
+        self.frame.rowconfigure(2, weight=1)
 
-        self.image_label = ttk.Label(self.frame, text="No image loaded")
-        self.image_label.grid(row=3, column=0, columnspan=3)
+        # --- Place path_label below the image ---
+        self.path_label = ttk.Label(self.frame, text="No path loaded", anchor="center") # Use separate path label
+        self.path_label.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E)) # Place below image
+        # ---
 
-        self.counter_label = ttk.Label(self.frame, text="Remaining: 0")
-        self.counter_label.grid(row=4, column=0, columnspan=3)
+        self.counter_label = ttk.Label(self.frame, text="Remaining: 0", anchor="center")
+        self.counter_label.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
 
-        self.delete_button = ttk.Button(self.frame, text="Delete (d)", command=self.delete_image)
-        self.delete_button.grid(row=5, column=0, padx=10)
+        # --- Button Frame for Centering ---
+        button_frame = ttk.Frame(self.frame)
+        button_frame.grid(row=5, column=0, columnspan=3, pady=5)
+        # Center the button frame itself if its column expands
+        self.frame.columnconfigure(0, weight=1) # Ensure column 0 can expand
+        self.frame.columnconfigure(1, weight=1) # Ensure column 1 can expand
+        self.frame.columnconfigure(2, weight=1) # Ensure column 2 can expand
 
-        self.keep_button = ttk.Button(self.frame, text="Keep (x)", command=self.keep_image)
-        self.keep_button.grid(row=5, column=1, padx=10)
+        self.delete_button = ttk.Button(button_frame, text="Delete (d)", command=self.delete_image)
+        self.delete_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
 
-        self.reconstruct_button = ttk.Button(self.frame, text="Reconstruct (b)", command=self.reconstruct_image)
-        self.reconstruct_button.grid(row=5, column=2, padx=10)
+        self.keep_button = ttk.Button(button_frame, text="Keep (x)", command=self.keep_image)
+        self.keep_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
+
+        self.reconstruct_button = ttk.Button(button_frame, text="Reconstruct (b)", command=self.reconstruct_image)
+        self.reconstruct_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
+        # ---
 
     # --- bind_keys remains the same ---
     def bind_keys(self):
@@ -180,27 +200,46 @@ class JunkImageReviewer:
 
     # --- load_and_display_image remains the same ---
     def load_and_display_image(self, image_path, label):
+        # label is self.image_label
+        # path_label is self.path_label (add as argument or access directly)
+        path_label = self.path_label
+
         if not os.path.exists(image_path):
-            label.config(text=f"File not found: {os.path.basename(image_path)}")
+            label.config(image='', text=f"File not found: {os.path.basename(image_path)}") # Clear image
+            label.image = None # Clear reference
+            path_label.config(text=f"File not found: {os.path.basename(image_path)}")
             return
         try:
-            self.master.update_idletasks()
-            # Calculate max dimensions based on current window size (more dynamic)
-            max_width = self.master.winfo_width() * 0.8
-            max_height = self.master.winfo_height() * 0.8
+            # Ensure the UI has had a chance to draw itself to get dimensions
+            label.update_idletasks()
+
+            # Calculate max dimensions based on the label's allocated space
+            max_width = label.winfo_width()
+            max_height = label.winfo_height()
+
+            # Add a fallback if dimensions are still tiny (initial load)
+            if max_width < 50 or max_height < 50:
+                max_width, max_height = 640, 480 # Reasonable default
 
             img = Image.open(image_path)
-            img.thumbnail((max_width, max_height)) # Use calculated max size
+            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS) # Use LANCZOS for better quality
 
             photo = ImageTk.PhotoImage(img)
-            label.config(image=photo, text=os.path.basename(image_path))
+            label.config(image=photo, text="") # Display image, clear text
             label.image = photo # Keep reference
+
+            # Update separate path label
+            path_label.config(text=os.path.basename(image_path))
+
             # Update counter
             remaining = len(self.image_info_data) - self.current_index
             self.counter_label.config(text=f"Remaining: {remaining}")
+
         except Exception as e:
             logger.error(f"Error loading image {image_path}: {e}")
-            label.config(text=f"Failed to load: {os.path.basename(image_path)}")
+            label.config(image='', text=f"Failed to load: {os.path.basename(image_path)}") # Clear image
+            label.image = None # Clear reference
+            path_label.config(text=f"Failed to load: {os.path.basename(image_path)}")
 
     # --- undo_last remains the same ---
     def undo_last(self):
@@ -240,8 +279,15 @@ class JunkImageReviewer:
         self.master.destroy()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Review and delete junk images.")
-    args = parser.parse_args()
+#    parser = argparse.ArgumentParser(description="Review and delete junk images.")
+#    parser.add_argument("directory", help="The directory containing the images to process.")
+#    args = parser.parse_args()
+#    directory = args.directory
+    directory = 'C:\\Users\\sawye\\Downloads\\test\\output'
+    if not os.path.isdir(directory):
+        logger.critical(f"Error: Provided directory does not exist: {directory}")
+        sys.exit(1)
+
 
     root = tk.Tk()
     app = JunkImageReviewer(root)

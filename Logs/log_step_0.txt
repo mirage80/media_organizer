@@ -1,2 +1,0 @@
-Extension: .jpg, Count: 15
-Extension: .mp4, Count: 5

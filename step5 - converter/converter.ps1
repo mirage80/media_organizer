@@ -295,7 +295,11 @@ function Repair-MissedRelatedFiles {
     $allMediaFiles = Get-ChildItem -Path $directory -Recurse -File | Where-Object {
         $videoExtensions -contains $_.Extension.ToLower() -or $photoExtensions -contains $_.Extension.ToLower()
     }
+    $totalItems = $allMediaFiles.Count
+    $currentItem = 1
     foreach ($mediaFile in $allMediaFiles) {
+        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Renaming"
+        $currentItem++
         Rename-AnyFile -originalFile $mediaFile.FullName -newFile $mediaFile.FullName
     }
 }
@@ -315,7 +319,7 @@ $totalItems = $files.Count
 foreach ($file in $files) {
 
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Converting "
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Converting"
 
     $extension = $file.Extension.ToLower()
     $outputFile = ""

@@ -11,8 +11,6 @@ $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyComm
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
-$MediaToolsFile = Join-Path $UtilDirectory "MediaTools.psm1"
-Import-Module $UtilFile -Force
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
@@ -105,70 +103,8 @@ function Log {
     }
 }
 
-# --- Show-ProgressBar Function Definition ---
-function Show-ProgressBar {
-    param(
-        [Parameter(Mandatory = $true)]
-        [int]$Current,
-
-        [Parameter(Mandatory = $true)]
-        [int]$Total,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Message
-    )
-
-    # Check if running in a host that supports progress bars
-    if ($null -eq $Host.UI.RawUI) {
-        # Fallback for non-interactive environments or simplified hosts
-        $percent = 0; 
-        if ($Total -gt 0) { 
-            $percent = [math]::Round(($Current / $Total) * 100) 
-        }
-        Write-Host "$Message Progress: $percent% ($Current/$Total)"
-        return
-    }
-    try {
-        $percent = [math]::Round(($Current / $Total) * 100)
-        $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30
-        $barLength = [math]::Min($screenWidth, 80)
-        $filledLength = [math]::Round(($barLength * $percent) / 100)
-        $emptyLength = $barLength - $filledLength
-        $filledBar = ('=' * $filledLength)
-        $emptyBar = (' ' * $emptyLength)
-        Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
-    } catch {
-        $percent = 0; if ($Total -gt 0) { $percent = [math]::Round(($Current / $Total) * 100) }
-        Write-Host "$Message Progress: $percent% ($Current/$Total)"
-    }
-}
-# --- End Show-ProgressBar Function Definition ---
-function Write-JsonAtomic {
-    param (
-        [Parameter(Mandatory = $true)][object]$Data,
-        [Parameter(Mandatory = $true)][string]$Path
-    )
-
-    try {
-        $tempPath = "$Path.tmp"
-        $json = $Data | ConvertTo-Json -Depth 10
-        $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
-
-        # Validate JSON before replacing
-        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
-
-        Move-Item -Path $tempPath -Destination $Path -Force
-        Log "INFO" "✅ Atomic write succeeded: $Path"
-    } catch {
-        Log "ERROR" "❌ Atomic write failed for $Path : $_"
-        if (Test-Path $tempPath) {
-            Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
 # --- Script Setup ---
-$modulePath = Join-Path $scriptDirectory 'MediaTools.psm1'
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
 try {
     Import-Module $MediaToolsFile -Force
 } catch {
@@ -176,13 +112,23 @@ try {
     exit 1
 }
 
+
 # Define Image extensions in lowercase
 $imageExtensions = $module:imageExtensions
 
 # Define video extensions in lowercase
 $videoExtensions = $module:videoExtensions
 $hashLogPath = Join-Path $scriptDirectory "consolidation_log.json"  # << This line must come BEFORE functions
-$processedLog = Get-ProcessedLog -LogPath $hashLogPath # Use the function from MediaTools.psm1
+
+Log "INFO" "Attempting to load processed log from '$hashLogPath'..." # ADD
+try {
+    $processedLog = Get-ProcessedLog -LogPath $hashLogPath -ErrorAction Stop # Add ErrorAction
+    Log "INFO" "Successfully loaded $($processedLog.Count) initial entries from '$hashLogPath'." # ADD
+} catch {
+    Log "INFO" "Failed to load or parse processed log '$hashLogPath': $_" # ADD
+    # Decide how to proceed - maybe exit or start with empty?
+    $processedLog = @() # Start with empty if loading failed
+}
 
 # Build a fast lookup hash set from the initial log
 $processedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
@@ -289,7 +235,7 @@ foreach ($file in $filesToProcess) {
     # Create PowerShell instance and add arguments
     $ps = [powershell]::Create().AddScript($scriptBlock)
     $ps.AddArgument($filePathCopy) | Out-Null
-    $ps.AddArgument($modulePath) | Out-Null
+    $ps.AddArgument($MediaToolsFile) | Out-Null # <--- Use the correct variable
     $ps.AddArgument($ExifToolPath) | Out-Null # Pass ExifTool path
 
     $ps.RunspacePool = $runspacePool

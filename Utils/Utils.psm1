@@ -11,30 +11,50 @@ function Show-ProgressBar {
         [string]$Message
     )
 
+    # Pad or truncate the message to exactly 10 characters
+    $paddedMessage = $Message.PadRight($env:DEFAULT_PREFIX_LENGTH).Substring(0, $env:DEFAULT_PREFIX_LENGTH)
+
     # Check if running in a host that supports progress bars
     if ($null -eq $Host.UI.RawUI) {
         # Fallback for non-interactive environments or simplified hosts
-        $percent = 0; 
-        if ($Total -gt 0) { 
-            $percent = [math]::Round(($Current / $Total) * 100) 
+        $percent = 0;
+        if ($Total -gt 0) {
+            $percent = [math]::Round(($Current / $Total) * 100)
         }
-        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+        # Use the padded message here
+        Write-Host "$paddedMessage Progress: $percent% ($Current/$Total)"
         return
     }
     try {
-        $percent = [math]::Round(($Current / $Total) * 100)
-        $screenWidth = $Host.UI.RawUI.WindowSize.Width - 30
-        $barLength = [math]::Min($screenWidth, 80)
+        # Explicitly cast the environment variable string to an integer
+        # Ensure PROGRESS_BAR_LENGTH has a default value if the env var is not set or invalid
+        if ($env:PROGRESS_BAR_LENGTH -match '^\d+$') { # Check if it's a valid integer string
+            $barLength = [int]$env:PROGRESS_BAR_LENGTH
+        } else {
+             # Optionally log a warning if the env var is invalid
+             Write-Warning "PROGRESS_BAR_LENGTH environment variable is not set or invalid. Using default length $barLength."
+        }
+
+        $percent = 0;
+        if ($Total -gt 0) {
+             $percent = [math]::Round(($Current / $Total) * 100)
+        }
         $filledLength = [math]::Round(($barLength * $percent) / 100)
+        # Ensure filledLength doesn't exceed barLength due to rounding edge cases
+        $filledLength = [math]::Min($filledLength, $barLength)
         $emptyLength = $barLength - $filledLength
         $filledBar = ('=' * $filledLength)
         $emptyBar = (' ' * $emptyLength)
-        Write-Host -NoNewline "$Message [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
+        # Use the padded message here
+        Write-Host -NoNewline "$paddedMessage [$filledBar$emptyBar] $percent% ($Current/$Total)`r"
     } catch {
+        # Fallback calculation in case of errors during bar generation
         $percent = 0; if ($Total -gt 0) { $percent = [math]::Round(($Current / $Total) * 100) }
-        Write-Host "$Message Progress: $percent% ($Current/$Total)"
+        # Use the padded message here as well
+        Write-Host "$paddedMessage Progress: $percent% ($Current/$Total)"
     }
 }
+
 # --- End Show-ProgressBar Function Definition ---
 function Write-JsonAtomic {
     param (

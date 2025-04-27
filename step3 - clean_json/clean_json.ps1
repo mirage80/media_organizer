@@ -8,6 +8,9 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
+#Outputs Dirctory
+$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
@@ -105,18 +108,18 @@ function Log {
 }
 
 
-$level1_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level1_batch.txt'
-$level2_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level2_batch.txt'
-$level3_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level3_batch.txt'
-$level5_batch_file = Join-Path -Path $scriptDirectory -ChildPath 'level5_batch.txt'
+$level1_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level1_batch.txt'
+$level2_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level2_batch.txt'
+$level3_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level3_batch.txt'
+$level5_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level5_batch.txt'
 
-$level0_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level0_leftover_file.txt'
-$level1_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level1_leftover_file.txt'
-$level2_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level2_leftover_file.txt'
-$level3_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level3_leftover_file.txt'
-$level4_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level4_leftover_file.txt'
-$level5_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level5_leftover_file.txt'
-$level6_leftover_file = Join-Path -Path $scriptDirectory -ChildPath 'level6_leftover_file.txt'
+$level0_leftover_file = Join-Path -Path $logDir -ChildPath 'level0_leftover_file.txt'
+$level1_leftover_file = Join-Path -Path $logDir -ChildPath 'level1_leftover_file.txt'
+$level2_leftover_file = Join-Path -Path $logDir -ChildPath 'level2_leftover_file.txt'
+$level3_leftover_file = Join-Path -Path $logDir -ChildPath 'level3_leftover_file.txt'
+$level4_leftover_file = Join-Path -Path $logDir -ChildPath 'level4_leftover_file.txt'
+$level5_leftover_file = Join-Path -Path $logDir -ChildPath 'level5_leftover_file.txt'
+$level6_leftover_file = Join-Path -Path $logDir -ChildPath 'level6_leftover_file.txt'
 
 # Generate all possible JSON suffixes dynamically
 $suffixes = @("supplemental-metadata", "supplemental-metadat", "supplemental-metada", "supplemental-metad", "supplemental-meta",
@@ -139,7 +142,7 @@ function Sanitize_FileList {
     foreach ($filePath in $FilePaths) {
         # Check if the file path is valid
         $currentItem++
-        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "$(Split-Path -Path $filePath -Leaf)"
+        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 2/13"
         if ([string]::IsNullOrEmpty($filePath)) {
             Log "WARNING" "Invalid or non-existent file path: '$filePath'. Skipping."
             continue
@@ -151,9 +154,16 @@ function Sanitize_FileList {
             continue  # Exit the function without doing anything
         }
 
+        if ($filePath -match "[\\/]$") {
+            # This string likely represents a directory entry from the zip.
+            Log "DEBUG" "Path '$filePath' ends with a separator, treating as directory path."
+            continue  # Exit the function without doing anything
+        }
+
         # Extract the directory and file name
         $directory = Split-Path -Path $filePath -Parent
         $fileName = Split-Path -Path $filePath -Leaf
+        
 
         # Sanitize the directory name
 
@@ -173,6 +183,7 @@ function Sanitize_FileList {
         $sanitizedDirectoryName = $sanitizedDirectoryName -replace '([\\\/])_+$', '$1' #remove trailing underscores.
         $sanitizedDirectoryName = $sanitizedDirectoryName -join '/' #remove trailing underscores.
 
+
         $newFilePath = Join-Path -Path $sanitizedDirectoryName -ChildPath $fileName
         $newFilePath = $newFilePath -replace '\\', '/'
         $temp_FilePaths += $newFilePath
@@ -191,7 +202,7 @@ $totalItems = $zipFiles.count
 # Loop through each zip file.
 foreach ($zipFile in $zipFiles) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 2"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 1/13"
     # Check if the file is a valid zip file
     try {
         [System.IO.Compression.ZipFile]::OpenRead($zipFile.FullName) | Out-Null
@@ -237,7 +248,7 @@ $totalItems = $level0_files.count
 # Loop through each file
 foreach ($file in $level0_files) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 3"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 3/13"
     if (-not $file -match ".json$") {
         $level1_files += ,$file
     } else {
@@ -269,7 +280,7 @@ $totalItems = $level1_files.count
 # Loop through each file
 foreach ($file in $level1_files) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 4"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 4/13"
 
     # Check if the file name contains "-edited" or "-effects"
     if (-not($file -match ".json$") -and ($file -match "-edited" -or $file -match "-effects")) {
@@ -310,7 +321,7 @@ foreach ($file in $level2_files) {
         continue
     }
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 5"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 5/13"
 
     $filename = $file
 
@@ -351,7 +362,7 @@ $totalItems = $level3_pairs.count
 # Iterate over the array with a step of 3
 for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 6"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 6/13"
     $mainFilePath = $level3_pairs[$i]
     $jsonFilePath = $level3_pairs[$i + 1]
     $with_parentheses = $level3_pairs[$i + 2]
@@ -420,7 +431,7 @@ $totalItems = $level3_leftovers.count
 # Populate the hashtable with files grouped by their directory
 foreach ($file in $level3_leftovers) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 7"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 7/13"
     # Remove quotations from the file path
     try {
         $file = $file.Trim('"')
@@ -445,7 +456,7 @@ $totalItems = $directoryFiles.count
 # Filter directories based on the presence of JSON files
 foreach ($directory in $directoryFiles.Keys) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 8"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 8/13"
     $files = $directoryFiles[$directory]
     $containsJson = $false
     $containsNonJson = $false
@@ -481,7 +492,7 @@ $truncNameFiles = @{}
 
 foreach ($file in $level4_leftovers) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 9"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 9/13"
     $fileName = Split-Path -Path $file -Leaf
     $directory = [System.IO.Path]::GetDirectoryName($file)
     $directory = $directory -replace '\\', '/'
@@ -499,7 +510,7 @@ $foundFilePaths = @()
 # Process each base name group
 foreach ($truncName in $truncNameFiles.Keys) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 10"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 10/13"
     $files = $truncNameFiles[$truncName]
     $jsonFiles = $files | Where-Object { $_ -match "\.json$" }
     $nonJsonFiles = $files | Where-Object { $_ -notmatch "\.json$" }
@@ -525,7 +536,7 @@ $totalItems = $level5_pairs.count
 # Iterate over the array with a step of 2
 for ($i = 0; $i -lt $level5_pairs.Length; $i += 2) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 11"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 11/13"
     $mainFilePath = $level5_pairs[$i]
     $jsonFilePath = $level5_pairs[$i + 1]
 
@@ -588,7 +599,7 @@ $totalItems = $level5_leftovers.count
 # Populate the hashtable with files grouped by their directory
 foreach ($file in $level5_leftovers) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 12"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 12/13"
     # Remove quotations from the file path
     $file = $file.Trim('"')
     $directory = Split-Path -Path $file -Parent
@@ -608,7 +619,7 @@ $totalItems = $directoryFiles.count
 # Filter directories based on the presence of JSON files
 foreach ($directory in $directoryFiles.Keys) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Step 3 13"
+    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Cleaning 13/13"
     $files = $directoryFiles[$directory]
     $containsJson = $false
     $containsNonJson = $false
@@ -633,3 +644,63 @@ foreach ($directory in $directoryFiles.Keys) {
 $level6_leftover_files | Out-File -FilePath $level6_leftover_file -Encoding utf8
 Log "INFO" "Wrote updated level 6 file list to '$level6_leftover_file'"
 
+
+# List of rename files to process
+$batchFiles = @(
+    "level1_batch.txt",
+    "level2_batch.txt",
+    "level3_batch.txt",
+    "level5_batch.txt"
+)
+
+$passed = 0
+$failed = 0
+
+# Loop through each rename file
+foreach ($batchFile in $batchFiles) {
+    # Construct the full path to the rename file
+    $filePath = Join-Path -Path $OutputDirectory -ChildPath $batchFile
+
+    # Check if the file exists
+    if (!(Test-Path -Path $filePath -PathType Leaf)) {
+        Log "WARNING" "File '$filePath' not found. Skipping..."
+        continue
+    }
+
+    $contents = Get-Content -Path $filePath
+    $currentItem = 0
+	$totalItems = $contents.Count
+    $step = 1
+    # Read the file line by line and execute the commands
+    Get-Content -Path $filePath | ForEach-Object {
+        $currentItem++
+        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "batching $step"
+
+        $command = $_.Trim() # Remove any leading or trailing whitespace
+		if ($command -match "(ren)\s+'(.*?)'\s+'(.*?)'") 
+		{
+			$src = $Matches[2]
+			$dest = $Matches[3]
+			if (Test-Path -Path $dest) {
+				Remove-Item -Path $src -Force
+				continue
+			}
+		}
+        $command = $command -replace '\"', "'"
+        # Execute the command if it starts with "ren"
+        try {
+            Invoke-Expression $command 2>$null
+            if ($?) { # $? is true if the last command succeeded
+                $passed++
+                Log "DEBUG" "Successfully executed: $command" # Optional: Log success on DEBUG level
+            } else {
+                Log "WARNING" "Failed to execute (suppressed error): $command. LastError: $($Error[0].Exception.Message)"
+            }
+        } catch {
+            Log "WARNING" "Failed to execute: $command. Error: $_"
+            $failed++
+        }
+    }
+    $step++
+}
+write-host ""
