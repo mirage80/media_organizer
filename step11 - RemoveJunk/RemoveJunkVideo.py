@@ -38,9 +38,6 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
 RECONSTRUCT_INFO_FILE = os.path.join(OUTPUT_DIR, "video_reconstruct_info.json")
 
-# --- Removed local logging setup block ---
-# --- Removed local write_json_atomic function ---
-
 class JunkVideoReviewer:
     def __init__(self, master):
         self.master = master

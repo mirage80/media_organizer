@@ -13,42 +13,6 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.widgets import Button
 import time # May be needed for delays if file locking occurs
-import debugpy
-
-# Near the top of your Python script (e.g., RemoveExactVideoDuplicate.py)
-import debugpy
-import os # Make sure os is imported if not already
-import os; print(f"Python CWD: {os.getcwd()}")
-# Define host and port (consider using environment variables for flexibility)
-DEBUG_HOST = "localhost"
-DEBUG_PORT = 5678
-
-ENABLE_DEBUG = os.environ.get("ENABLE_PYTHON_DEBUG") == "1"
-DEBUG_PORT = int(os.environ.get("PYTHON_DEBUG_PORT", 5678))
-
-if ENABLE_DEBUG:
-    try:
-        print(f"--- Python Debugging Enabled ---", file=sys.stderr) # Use stderr for debug messages
-        print(f"Attempting to listen on port {DEBUG_PORT}...", file=sys.stderr)
-        debugpy.listen(("0.0.0.0", DEBUG_PORT))
-
-        # Print the trigger for VS Code to Standard Output
-        print(f"DEBUGPY_READY_ON:{DEBUG_PORT}")
-        sys.stdout.flush() # Ensure it gets sent out
-
-        print(f"--- Waiting for debugger attach on port {DEBUG_PORT}... ---", file=sys.stderr)
-        debugpy.wait_for_client() # PAUSES HERE
-        # **** Execution resumes AFTER debugger attaches ****
-        print("--- wait_for_client() returned. Debugger supposedly attached. ---", file=sys.stderr)
-        time.sleep(0.5) # Add a small delay to ensure debugger is fully settled
-    except Exception as e:
-        print(f"--- ERROR setting up debugpy on port {DEBUG_PORT}: {e} ---", file=sys.stderr)
-        # exit(1) # Or just let the script continue
-
-
-SCRIPT_PATH = os.path.abspath(__file__) # Example first line
-print(f"--- Executed line: SCRIPT_PATH = {SCRIPT_PATH} ---", file=sys.stderr)
-# ... rest of your script ...
 
 # --- Determine Project Root and Add to Path ---
 # Assumes the script is in 'stepX' directory directly under the project root
@@ -213,13 +177,13 @@ def consolidate_metadata(keepers, discarded, callback):
             plt.close(fig)
         callback(timestamp, geotag)
 
-    # Timestamp logic
+    # Timestamp logic (remains the same)
     best_timestamp = timestamps[0] if len(timestamps) == 1 else None
     if not best_timestamp and len(timestamps) > 1:
         # This part triggers the popup if multiple timestamps exist
         best_timestamp = simple_choice_popup("Choose Timestamp", timestamps)
 
-    # Geotag logic
+    # Geotag logic (remains the same)
     if len(geotags) == 1:
         # If only one geotag, use it and finalize
         finalize_consolidation(best_timestamp, geotags[0], callback)
@@ -233,6 +197,7 @@ def consolidate_metadata(keepers, discarded, callback):
     else: # No geotags or only one timestamp and no geotags
         finalize_consolidation(best_timestamp, None, callback)
 
+# --- Keeper Selection Popup (Adapted for videos) ---
 def select_keepers_popup(parent_window, file_list):
     """
     Shows a popup to interactively select which files to keep from a list.
@@ -259,7 +224,6 @@ def select_keepers_popup(parent_window, file_list):
 
     # Keep the meta_map creation for displaying metadata next to each file
     meta_map = {m['path']: m for m in all_meta} # Create a map for easy lookup
-
     keep_vars = {}
 
     # Display each existing file with its metadata
@@ -275,7 +239,7 @@ def select_keepers_popup(parent_window, file_list):
         ts = meta.get("timestamp")
         gps = meta.get("geotag")
 
-        # Display info
+        # Display info (No 'Length' for images)
         ttk.Label(frame, text=f"Path: {os.path.abspath(path)}").pack(anchor=tk.W)
         ttk.Label(frame, text=f"Size: {file_info.get('size', 'N/A')} bytes").pack(anchor=tk.W)
         ttk.Label(frame, text=f"Length: {file_info.get('length', 'N/A')}s").pack(anchor=tk.W)
@@ -289,6 +253,7 @@ def select_keepers_popup(parent_window, file_list):
 
     result = {"keepers": None, "discarded": None}
 
+    # --- on_confirm, on_cancel, button logic remains the same ---
     def on_confirm():
         keepers = [path for path, var in keep_vars.items() if var.get()]
         discarded = [path for path, var in keep_vars.items() if not var.get()]
@@ -312,7 +277,6 @@ def select_keepers_popup(parent_window, file_list):
         displayed_paths = list(keep_vars.keys())
         original_paths = [f['path'] for f in file_list]
         missing_or_failed_paths = [p for p in original_paths if p not in displayed_paths]
-
         result["keepers"] = displayed_paths
         result["discarded"] = missing_or_failed_paths
         logger.info(f"User cancelled selection. Keeping {len(displayed_paths)} displayed files, discarding {len(missing_or_failed_paths)} missing/failed files.")
@@ -343,6 +307,7 @@ def select_keepers_popup(parent_window, file_list):
 
     return result["keepers"], result["discarded"]
 
+# --- Metadata Writing (Video Specific - Exiftool) ---
 def write_metadata_ffmpeg(path, timestamp=None, geotag=None):
     """Atomically write metadata using ffmpeg by creating a temporary file."""
     dir_name = os.path.dirname(path)
@@ -436,20 +401,20 @@ def write_metadata_ffmpeg(path, timestamp=None, geotag=None):
              except OSError as rm_err: logger.error(f"Failed to remove temp file {temp_file} after unexpected error: {rm_err}")
         return False
     
-def remove_duplicate_videos(json_file_path, is_dry_run=False):
+def remove_duplicate_videos(group_json_file_path, is_dry_run=False):
     prefix = "[DRY RUN] " if is_dry_run else ""
     logger.info(f"{prefix}--- Starting Duplicate Video Removal Process ---")
     if is_dry_run:
         logger.warning(f"{prefix}Metadata consolidation popups WILL still appear in dry run mode if conflicts require them.")
 
     try:
-        with open(json_file_path, 'r') as f:
+        with open(group_json_file_path, 'r') as f:
             data = json.load(f)
     except FileNotFoundError:
-        logger.error(f"Error: Grouping file not found at {json_file_path}")
+        logger.error(f"Error: Grouping file not found at {group_json_file_path}")
         return
     except json.JSONDecodeError:
-        logger.error(f"Error: Invalid JSON format in {json_file_path}")
+        logger.error(f"Error: Invalid JSON format in {group_json_file_path}")
         return
 
     root = None # Initialize root to None
@@ -464,7 +429,6 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
         # else:
         #      logger.warning("Proceeding with dry run without GUI. Default metadata choices will be assumed if needed.")
         #      root = None # Ensure root is None if failed
-
     video_info_list_for_sync = []
     if not is_dry_run:
         try:
@@ -537,15 +501,46 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             # --- Define the core action function (write metadata, delete files) ---
             # This function will be called either after user selection or after automatic selection
             def process_group_action(keepers_paths, discarded_paths, chosen_timestamp, chosen_geotag):
+                """
+                Performs the actual metadata writing (if needed) and file deletion.
+
+                Args:
+                    keepers_paths (list): List of absolute paths to files designated as keepers.
+                    discarded_paths (list): List of absolute paths to files designated for deletion.
+                    chosen_timestamp (str | None): The consolidated timestamp string, or None.
+                    chosen_geotag (tuple | None): The consolidated (lat, lon) tuple, or None.
+
+                Returns:
+                    str: A status string indicating the outcome ("success", "failed_write",
+                         "failed_delete", "dry_run_ok", "pending" - though pending shouldn't be returned).
+                """
                 nonlocal overall_files_deleted, overall_metadata_failures # Allow modification of outer scope variables
                 action_status = "pending"
                 metadata_written_ok = True # Assume success for dry run or if no writing needed
 
+                # --- Filter paths for existence right before action ---
+                # This is crucial as files might disappear between selection and action
+                existing_keepers = [p for p in keepers_paths if os.path.exists(p)]
+                existing_discarded = [p for p in discarded_paths if os.path.exists(p)]
+
+                # Log if any expected files are now missing
+                if len(existing_keepers) != len(keepers_paths):
+                    missing_keepers = set(keepers_paths) - set(existing_keepers)
+                    logger.warning(f"    {len(missing_keepers)} keeper file(s) went missing before action: {missing_keepers}")
+                if len(existing_discarded) != len(discarded_paths):
+                    missing_discarded = set(discarded_paths) - set(existing_discarded)
+                    logger.warning(f"    {len(missing_discarded)} discarded file(s) went missing before action: {missing_discarded}")
+
+                # --- Actual Run Logic ---
                 if not is_dry_run:
-                    # --- Write chosen metadata to ALL keepers ---
-                    # ... (metadata writing logic remains the same) ...
+                    # --- 1. Write chosen metadata to ALL existing keepers ---
                     if chosen_timestamp or chosen_geotag:
-                        logger.info(f"    Writing consolidated metadata (TS={chosen_timestamp}, GPS={chosen_geotag}) to {len(keepers_paths)} keepers...")
+                        if not existing_keepers:
+                            logger.warning("    No keeper files exist to write metadata to.")
+                            # If no keepers exist, writing didn't fail, but wasn't attempted.
+                            # Keep metadata_written_ok = True? Or False? Let's say True as no *write* failed.
+                        else:
+                            logger.info(f"    Writing consolidated metadata (TS={chosen_timestamp}, GPS={chosen_geotag}) to {len(existing_keepers)} keepers...")
                         write_attempts = 0
                         write_successes = 0
                         for kp in keepers_paths:
@@ -574,52 +569,60 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                     else:
                         logger.info(f"    No consolidated metadata selected/needed to write.")
 
-
-                    # --- Proceed with deletion ---
-                    # Allow deletion even if *some* metadata writes failed? Let's proceed.
-                    if discarded_paths:
-                        logger.info(f"    Deleting {len(discarded_paths)} discarded files...")
+                    # --- 2. Proceed with deletion of existing discarded files ---
+                    # Allow deletion even if metadata writes failed? Yes, proceed.
+                    if existing_discarded:
+                        logger.info(f"    Deleting {len(existing_discarded)} discarded files...")
                         try:
-                            # Call delete_files and store the result
-                            deleted_result = utils.delete_files(discarded_paths, logger=logger, base_dir=SCRIPT_DIR)
+                            # Call delete_files - it now returns an integer count
+                            deleted_count = utils.delete_files(existing_discarded, logger=logger, base_dir=OUTPUT_DIR)
 
-                            # --- FIX: Check type before adding to counter ---
-                            if isinstance(deleted_result, int):
-                                overall_files_deleted += deleted_result
+                            if isinstance(deleted_count, int):
+                                overall_files_deleted += deleted_count
+                                logger.info(f"    Successfully deleted {deleted_count} files.")
                             else:
                                 # Log a warning if the return value wasn't an integer count
-                                logger.warning(f"    Could not accurately update total deleted count. utils.delete_files returned: {deleted_result}")
-                            # --- END FIX ---
+                                logger.warning(f"    Could not accurately update total deleted count. utils.delete_files returned: {deleted_count}")
+                                action_status = "failed_delete" # Mark deletion as problematic
 
                         except Exception as del_e:
                             # Log the exception if delete_files itself raises one
                             logger.error(f"    Error during file deletion call: {del_e}", exc_info=True) # Add traceback
+                            action_status = "failed_delete" # Mark deletion as failed
                     else:
-                        logger.info(f"    No files selected for deletion.")
+                        logger.info(f"    No existing files selected for deletion.")
 
-                else: # Dry run logging
-                    # ... (dry run logic remains the same) ...
+                # --- Dry Run Logging ---
+                else:
+                    prefix = "[DRY RUN] "
+                    # Log metadata write simulation
                     if chosen_timestamp or chosen_geotag:
-                        logger.info(f"{prefix}    Would write metadata (TS={chosen_timestamp}, GPS={chosen_geotag}) to {len(keepers_paths)} keepers.")
+                        if not existing_keepers:
+                             logger.info(f"{prefix}    Would attempt to write metadata, but no keeper files exist.")
+                        else:
+                             logger.info(f"{prefix}    Would write metadata (TS={chosen_timestamp}, GPS={chosen_geotag}) to {len(existing_keepers)} keepers.")
                     else:
                         logger.info(f"{prefix}    No consolidated metadata selected/needed to write.")
-                    if discarded_paths:
-                        logger.info(f"{prefix}    Would delete {len(discarded_paths)} files.")
+                    # Log deletion simulation
+                    if existing_discarded:
+                        logger.info(f"{prefix}    Would delete {len(existing_discarded)} files.")
                         # Simulate count for summary - Assume success in dry run for count
-                        overall_files_deleted += len(discarded_paths)
+                        overall_files_deleted += len(existing_discarded) # Simulate count
                     else:
-                         logger.info(f"{prefix}    No files selected for deletion.")
-                    action_status = "dry_run_ok"
+                         logger.info(f"{prefix}    No existing files selected for deletion.")
 
+                    action_status = "dry_run_ok" # Set status for dry run
 
-                # Update status if not already failed
-                if action_status == "pending":
-                    action_status = "success" if metadata_written_ok else "failed_write"
+                # --- Determine Final Status ---
+                if action_status == "pending": # If not already set by dry run or deletion failure
+                    if metadata_written_ok:
+                        action_status = "success"
+                    else:
+                        action_status = "failed_write" # Metadata write was the primary issue
 
+                logger.debug(f"    process_group_action completed with status: {action_status}")
                 return action_status # Return status for potential further logic
-
             # --- END: Define core action function ---
-
 
             # --- Main Logic: Automatic vs Manual ---
             current_keepers_paths = []
@@ -637,8 +640,9 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                 else:
                     # --- Manual Path ---
                     logger.info(f"{prefix}    Prompting user to select keepers...")
-                    selected_keepers, selected_discarded = select_keepers_popup(root, existing_file_list)
+                    selected_keepers, selected_discarded = select_keepers_popup(root, existing_file_list) # Use image popup
 
+                    # Handle popup outcomes (same logic as video)
                     if not selected_keepers and not selected_discarded: # Popup closed/skipped
                          logger.warning(f"{prefix}    Keeper selection skipped or failed for hash {h[:8]}. Keeping all {len(existing_file_list)} existing files.")
                          current_keepers_paths = [f['path'] for f in existing_file_list]
@@ -677,7 +681,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                                  logger.warning("    No existing files left for metadata consolidation after selection. Skipping.")
                                  consolidation_callback(None, None) # Proceed with no metadata
                             else:
-                                 consolidate_metadata(existing_keepers_for_consol, existing_discarded_for_consol, consolidation_callback)
+                                 consolidate_metadata(existing_keepers_for_consol, existing_discarded_for_consol, consolidation_callback) # Uses image extraction internally
                         except Exception as e:
                              logger.error(f"    Error during metadata consolidation call: {e}", exc_info=True)
                              action_result_status = "failed_consolidation"
@@ -686,12 +690,9 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             else:
                 # --- Automatic Path ---
                 logger.info(f"{prefix}    No metadata conflicts detected for hash {h[:8]}. Proceeding automatically.")
-                # Keep the first file, discard the rest
                 auto_keeper = existing_file_list[0]
                 current_keepers_paths = [auto_keeper['path']]
                 current_discarded_paths = [f['path'] for f in existing_file_list[1:]]
-
-                # Determine the single consolidated metadata
                 consolidated_ts = list(unique_timestamps)[0] if unique_timestamps else None
                 consolidated_gps = list(unique_geotags)[0] if unique_geotags else None
 
@@ -702,9 +703,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                 # Directly call the action function
                 action_result_status = process_group_action(current_keepers_paths, current_discarded_paths, consolidated_ts, consolidated_gps)
 
-
             # --- Update final list based on keepers determined (either manually or automatically) ---
-            # If any failure occurred during processing, keep all original existing files for this hash group
             if action_result_status not in ["success", "dry_run_ok", "cancelled_selection"]:
                  logger.warning(f"    Action for hash {h[:8]} resulted in status '{action_result_status}'. Keeping all original existing files for this hash group.")
                  final_members_for_group.extend(existing_file_list)
@@ -714,7 +713,6 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                  final_members_for_group.extend(keeper_dicts)
                  if not keeper_dicts and current_keepers_paths:
                       logger.warning(f"    Keeper paths were determined, but corresponding file info dicts not found for hash {h[:8]}.")
-
             # --- END: Main Logic ---
 
 
@@ -731,68 +729,104 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
             groups[group_key] = final_existing_members
             logger.info(f"{prefix}Updating group '{group_key}' with {len(final_existing_members)} keepers.")
 
-
+    # --- End Main Loop ---
     # Print newline after progress bar if not in dry run
     if not is_dry_run:
-        print()
+        print() # Newline after progress bar
 
     logger.info(f"{prefix}--- Phase 1 Complete ---")
-
     # === Phase 2: Clean grouped_by_hash ===
     if "grouped_by_hash" in data: # Check if the key exists
         logger.info(f"{prefix}--- Phase 2: Cleaning grouped_by_hash ---")
         hash_groups = data["grouped_by_hash"] # Get the dictionary
+        single_hash_groups = {}
         original_hash_group_count = len(hash_groups)
         hashes_removed = 0
+        hashes_updated = 0 # Keep track of updates too
         logger.info(f"{prefix}Cleaning {original_hash_group_count} groups in 'grouped_by_hash'...")
 
-        # Iterate through a copy of keys for safe deletion
+        multi_keeper_paths = set()
+        single_keeper_paths = set()
+        all_keeper_paths = set()
+        
+        # Iterate through a copy of keys for safe deletion/modification
         for hash_key in list(hash_groups.keys()):
-            members = hash_groups[hash_key]
+            members = hash_groups.get(hash_key, []) # Use .get for safety
+            if not isinstance(members, list):
+                 logger.warning(f"{prefix}    Skipping malformed hash group '{hash_key[:8]}' (members is not a list).")
+                 # Optionally remove malformed entry
+                 # if hash_key in hash_groups: del hash_groups[hash_key]
+                 # hashes_removed += 1
+                 continue
+
             # Filter members to only include those that still exist on disk
-            valid_members = [m for m in members if os.path.exists(m["path"])]
+            valid_members = [m for m in members if isinstance(m, dict) and os.path.exists(m.get("path", ""))]
+            original_count = len(members)
+            valid_count = len(valid_members)
 
-            # Check if 1 or 0 valid members remain
-            if len(valid_members) <= 1:
-                # If so, remove this hash group entirely
-                if hash_key in hash_groups: del hash_groups[hash_key]
+
+           # Check how many valid members remain
+            if valid_count == 0:
+                # If 0 members remain, remove this hash group entirely
+                if hash_key in hash_groups:
+                    del hash_groups[hash_key]
                 hashes_removed += 1
-            else:
-                # Otherwise, update the group with only the valid members
-                hash_groups[hash_key] = valid_members
+                logger.debug(f"{prefix}    Removing hash group {hash_key[:8]} (0 valid members remain from {original_count}).")
+            elif valid_count == 1:
+                # If exactly 1 member remains, UPDATE the group with only that valid member
+                if hash_key in hash_groups:
+                    del hash_groups[hash_key]
+                hashes_removed += 1 # Count it as an update, not removal
+                # (as requested, keep the group but with only one item)
+                single_keeper_path = valid_members[0]['path'] # Get the path string
+                single_keeper_paths.add(single_keeper_path)
+                all_keeper_paths.add(single_keeper_path)
 
+                logger.debug(f"{prefix}    Removing hash group {hash_key[:8]} to contain only 1 valid member (from {original_count}).")
+                logger.debug(f"{prefix}    Keeping file {valid_members[0]['path']} in file group to contain valid member (from {original_count}).")
+            elif valid_count < original_count:
+                # If > 1 members remain, but fewer than originally, update the group
+                hash_groups[hash_key] = valid_members
+                multi_keeper_paths.add(valid_members)
+                all_keeper_paths.add(valid_members)
+                hashes_updated += 1
+                logger.debug(f"{prefix}    Updating hash group {hash_key[:8]} with {valid_count} valid members (removed {original_count - valid_count} non-existent).")
+            else: 
+                # valid_count == original_count and valid_count > 1
+                keeper_paths_in_group = {m['path'] for m in valid_members} # Get set of paths
+                multi_keeper_paths.update(keeper_paths_in_group)
+                all_keeper_paths.update(keeper_paths_in_group)
+
+                # No change needed if all original members (>1) are still valid
+                logger.debug(f"{prefix}    Hash group {hash_key[:8]} remains unchanged with {valid_count} valid members.")
+
+        logger.info(f"{prefix}Cleaned grouped_by_hash: {hashes_removed} groups removed (became empty). {hashes_updated} groups updated.")
+        logger.info(f"{prefix}Final count in grouped_by_hash: {len(hash_groups)} groups.")
         logger.info(f"{prefix}Cleaned grouped_by_hash: {hashes_removed} groups removed or updated.")
 
-    # === Save updated grouping data
+    # === Save updated grouping data (same logic as video) ===
     if not is_dry_run:
         # Use utils.write_json_atomic
-        if utils.write_json_atomic(data, json_file_path, logger=logger):
-            logger.info(f"Grouping JSON saved: {json_file_path}")
+        if utils.write_json_atomic(data, group_json_file_path, logger=logger):
+            logger.info(f"Grouping JSON saved: {group_json_file_path}")
         else:
-            logger.error(f"Failed to save updated grouping JSON: {json_file_path}")
+            logger.error(f"Failed to save updated grouping JSON: {group_json_file_path}")
     else:
-        logger.info(f"{prefix}Skipped saving changes to {json_file_path}")
+        logger.info(f"{prefix}Skipped saving changes to {group_json_file_path}")
 
-    # === Sync video_info.json
+    # === Sync video_info.json ===
     if not is_dry_run and video_info_list_for_sync is not None:
         logger.info(f"Syncing {VIDEO_INFO_FILE}...")
-        # Create a set of all keeper paths from the final grouping data for efficient lookup
-        all_keeper_paths = set()
-        for group_list in data.get("grouped_by_name_and_size", {}).values():
-            for item in group_list:
-                all_keeper_paths.add(item["path"])
-        for group_list in data.get("grouped_by_hash", {}).values():
-             for item in group_list:
-                 all_keeper_paths.add(item["path"])
 
         # Filter the original video_info list
-        synced_list = [v for v in video_info_list_for_sync if v["path"] in all_keeper_paths and os.path.exists(v["path"])]
-        removed_sync = len(video_info_list_for_sync) - len(synced_list)
+        multi_synced_list = [img for img in video_info_list_for_sync if img["path"] in multi_keeper_paths and os.path.exists(img["path"])]
+        all_synced_list = [v for v in video_info_list_for_sync if v["path"] in all_keeper_paths and os.path.exists(v["path"])]
+        removed_sync = len(video_info_list_for_sync) - len(all_synced_list)
 
         # Additionally, update metadata in synced_list for keepers where it might have changed
         logger.info("Updating metadata in synced info file for keepers...")
         updated_count = 0
-        for item in synced_list:
+        for item in multi_synced_list:
             # Re-extract metadata only if necessary (e.g., if write occurred)
             # For simplicity, re-extract for all keepers shown in groups.
             # This could be optimized if performance is critical.
@@ -807,9 +841,8 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
                 except Exception as meta_err:
                      logger.warning(f"Could not re-extract metadata for syncing {item['path']}: {meta_err}")
 
-
         # Use utils.write_json_atomic
-        if utils.write_json_atomic(synced_list, VIDEO_INFO_FILE, logger=logger):
+        if utils.write_json_atomic(all_synced_list, VIDEO_INFO_FILE, logger=logger):
             logger.info(f"{VIDEO_INFO_FILE} synced. Removed {removed_sync} stale entries. Updated metadata for {updated_count} keepers.")
         else:
             logger.error(f"Failed to sync {VIDEO_INFO_FILE}")
@@ -841,6 +874,7 @@ def remove_duplicate_videos(json_file_path, is_dry_run=False):
         except tk.TclError:
             pass # Ignore if already destroyed
 
+# --- Main Execution Block (Adapted for videos) ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Find and remove exact duplicate video files based on name, size, and hash. Allows interactive selection and metadata consolidation.",
@@ -850,7 +884,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     arg_dry_run = args.dry_run
 
-    # Set Environment Variables for ffmpeg/ffprobe if needed (example)
     logger.info("--- Starting Dry Run Mode ---" if arg_dry_run else "--- Starting Actual Run Mode ---")
 
     # 1. Clean up JSON files first (Remove entries for files that no longer exist)

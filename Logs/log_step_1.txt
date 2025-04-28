@@ -1,3 +1,0 @@
-Extension: .jpg, Count: 3449
-Extension: .json, Count: 24
-Extension: .mp4, Count: 661

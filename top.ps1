@@ -60,6 +60,9 @@ Import-Module $UtilFile -Force
 
 #Outputs Dirctory
 $OutputDirectory = Join-Path $scriptDirectory "\Outputs"
+if (-not (Test-Path $OutputDirectory)) {
+    New-Item -ItemType Directory -Path $OutputDirectory | Out-Null
+}
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "Logs"
@@ -199,80 +202,78 @@ function Invoke-PythonScript {
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 1 - Extract Zip Files
 Log "INFO" "step1 - Extract Zip Files"
-& "$scriptDirectory\step1 - Extract\Extract.ps1" -unzipedDirectory $unzipedDirectory -zipedDirectory $zipDirectory -extractor $7zip
+& "$scriptDirectory\step1 - Extract\Extract.ps1" -unzipedDirectory $unzipedDirectory -zipedDirectory $zipDirectory -extractor $7zip -step $logger.ToString()
 write-host ""
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 2 - Sanetize the names
 Log "INFO" "step2 - Sanetize the names"
-& "$scriptDirectory\step2 - clean_json_names\CleanJsonNames.ps1" -unzipedDirectory $unzipedDirectory
-write-host ""
+& "$scriptDirectory\step2 - clean_json_names\CleanJsonNames.ps1" -unzipedDirectory $unzipedDirectory -step $logger.ToString()
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step3 - clean json names json files
 Log "INFO" "step3 - clean json names json files"
-& "$scriptDirectory\step3 - clean_json\clean_json.ps1"  -unzipedDirectory $unzipedDirectory -zipedDirectory $zipedDirectory -ExifToolPath $ExifToolPath
+& "$scriptDirectory\step3 - clean_json\clean_json.ps1"  -unzipedDirectory $unzipedDirectory -zipedDirectory $zipedDirectory -ExifToolPath $ExifToolPath -step $logger.ToString()
 write-host ""
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 4 - remove orphaned json files
 Log "INFO" "step4 - remove orphaned json files"
-& "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\remove_orphaned_json.ps1" -unzipedDirectory $unzipedDirectory
+& "$scriptDirectory\step4 - ListandRemoveOrphanedJSON\remove_orphaned_json.ps1" -unzipedDirectory $unzipedDirectory -step $logger.ToString()
 write-host ""
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 # step 5 - use converter to change everything to mp4 & jpg
 Log "INFO" "step5 - use converter to change everything to mp4 & jpg"
-& "$scriptDirectory\step5 - converter\converter.ps1" -unzipedDirectory $unzipedDirectory -ffmpeg $ffmpeg -magickPath $magickPath
-write-host ""
+& "$scriptDirectory\step5 - converter\converter.ps1" -unzipedDirectory $unzipedDirectory -ffmpeg $ffmpeg -magickPath $magickPath -step $logger.ToString()
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 6 use step6 - Consolidate_Meta to combine time stamps
 Log "INFO" "step6 use 6 - Consolidate_Meta to combine time stamps"
-& "$scriptDirectory\step6 - Consolidate_Meta\Consolidate_Meta.ps1" -unzipedDirectory "$unzipedDirectory" -ExifToolPath "$ExifToolPath"
+& "$scriptDirectory\step6 - Consolidate_Meta\Consolidate_Meta.ps1" -unzipedDirectory "$unzipedDirectory" -ExifToolPath "$ExifToolPath" -step $logger.ToString()
 write-host ""
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 7 - $RECYCLE.BIN
 Log "INFO" "Step 7 remove RECYCLE.BIN"
-& "$scriptDirectory\step7 - Remove_RecycleBin\RemoveRecycleBin.ps1" -unzipedDirectory $unzipedDirectory
-write-host ""
+& "$scriptDirectory\step7 - Remove_RecycleBin\RemoveRecycleBin.ps1" -unzipedDirectory $unzipedDirectory -step $logger.ToString()
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 8-1 - Hash and Group Possible Video Duplicates
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "Step 8-1 Hash AND Group Possible Video Duplicates to extract groups"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step8 - HashAndGroup\HashANDGroupPossibleVideoDuplicates.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
@@ -284,10 +285,11 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 9-1 Remove Exact Video Duplicate
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 9-1 Remove Exact Video Duplicate"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step9 - RemoveExactDuplicates\RemoveExactVideoDuplicate.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath
@@ -299,10 +301,11 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 10-1 Show AND Remove Duplicate Video
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 10-1 Show AND Remove Duplicate Video"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step10 - ShowANDRemoveDuplicate\ShowANDRemoveDuplicateVideo.py'  
 Invoke-PythonScript -ScriptPath $pythonScriptPath
@@ -314,10 +317,11 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
-<#
+
 #step 11-1 Remove Junk Video
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 11-1 use RemoveJunkVideo.py to remove junk Videos"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'step11 - RemoveJunk\RemoveJunkVideo.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\"
@@ -329,10 +333,11 @@ Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments "$unzipedDirectory\
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 12-1 Reconstruction of corrupt Videos
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos" -ffmpeg $ffmpeg
 $videoReconList = Join-Path $scriptDirectory "Output\video_reconstruct_info.json" # Or wherever it's actually saved
 & "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -ffmpeg $ffmpeg -ffprob $ffprobe -reconstructListPath $videoReconList
@@ -344,16 +349,17 @@ $imageReconList = Join-Path $scriptDirectory "Output\image_reconstruct_info.json
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 13 Categorization 
+$env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 13 use Categorize.ps1 to categorize files based on the availability of meta data"
 & "$scriptDirectory\step13 - Categorization\Categorize.ps1" -unzipedDirectory $unzipedDirectory -ExifToolPath $ExifToolPath
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 
 #step 13 Categorization 
@@ -362,6 +368,6 @@ Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
 
 #count
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
-Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/log_step_$logger.txt", "$unzipedDirectory")
+Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
 #>

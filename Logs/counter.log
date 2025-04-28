@@ -1,6 +1,0 @@
-2025-04-27 14:38:28,273 - INFO - Starting file count traversal in: C:\Users\sawye\Downloads\test\output
-2025-04-27 14:38:28,287 - INFO - Finished traversal. Processed 4098 files. Found 3 unique extension types.
-2025-04-27 14:38:28,288 - INFO - Successfully wrote counts to C:\Users\sawye\Code\media_organizer/Logs/log_step_0.txt
-2025-04-27 14:38:33,108 - INFO - Starting file count traversal in: C:\Users\sawye\Downloads\test\output
-2025-04-27 14:38:33,120 - INFO - Finished traversal. Processed 4134 files. Found 3 unique extension types.
-2025-04-27 14:38:33,122 - INFO - Successfully wrote counts to C:\Users\sawye\Code\media_organizer/Logs/log_step_1.txt
