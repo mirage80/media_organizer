@@ -22,12 +22,13 @@ from Utils import utils
 # (Keep this part as is)
 DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
 DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
-logger = utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
+logger = utils.setup_logging(PROJECT_ROOT, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 # (Keep this part as is)
 ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "Outputs")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
 VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
 SUPPORTED_EXTENSIONS = (".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".m4v", ".3gp", ".3g2", ".mj2")

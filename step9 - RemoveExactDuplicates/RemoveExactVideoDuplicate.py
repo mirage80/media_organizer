@@ -67,12 +67,13 @@ from Utils import utils # Import the utils module
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
 DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'INFO')
 DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'INFO')
-logger = utils.setup_logging(PROJECT_ROOT_DIR, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
+logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
-# Use SCRIPT_DIR for paths relative to the script's location (as originally done)
-ASSET_DIR = os.path.join(SCRIPT_DIR, "..", "assets")
-OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "output")
+# Use PROJECT_ROOT to build paths relative to the project root
+ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")

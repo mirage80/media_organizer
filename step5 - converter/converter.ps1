@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$unzipedDirectory,
     [string]$ffmpeg,
-    [string]$magickPath
+    [string]$magickPath,
+    [string]$step
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -15,7 +16,7 @@ Import-Module $UtilFile -Force
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
+$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
 $logFormat = "{0} - {1}: {2}"
 
 # Create the log directory if it doesn't exist
@@ -384,7 +385,6 @@ foreach ($file in $files) {
         Log "INFO" "$($fileAction): $($file.FullName)"
     }
 }
-Write-Host "" # New line after progress bar
 # After processing all files, rename .json.tmp to .json
 Rename-JsonTmpToJson -directory $unzipedDirectory
 # Fix any missed related files

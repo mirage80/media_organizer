@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$unzipedDirectory,
-    [string]$ExifToolPath
+    [string]$ExifToolPath,
+    [string]$step
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -11,10 +12,11 @@ $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyComm
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+Import-Module $UtilFile -Force
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
+$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
 $logFormat = "{0} - {1}: {2}"
 
 # Create the log directory if it doesn't exist

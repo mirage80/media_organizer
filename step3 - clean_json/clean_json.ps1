@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$unzipedDirectory,
     [string]$zipedDirectory,
-    [string]$ExifToolPath
+    [string]$ExifToolPath,
+    [string]$step
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -18,7 +19,7 @@ Import-Module $UtilFile -Force
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
+$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
 $logFormat = "{0} - {1}: {2}"
 
 # Create the log directory if it doesn't exist
@@ -113,13 +114,13 @@ $level2_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level2_batch.t
 $level3_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level3_batch.txt'
 $level5_batch_file = Join-Path -Path $OutputDirectory -ChildPath 'level5_batch.txt'
 
-$level0_leftover_file = Join-Path -Path $logDir -ChildPath 'level0_leftover_file.txt'
-$level1_leftover_file = Join-Path -Path $logDir -ChildPath 'level1_leftover_file.txt'
-$level2_leftover_file = Join-Path -Path $logDir -ChildPath 'level2_leftover_file.txt'
-$level3_leftover_file = Join-Path -Path $logDir -ChildPath 'level3_leftover_file.txt'
-$level4_leftover_file = Join-Path -Path $logDir -ChildPath 'level4_leftover_file.txt'
-$level5_leftover_file = Join-Path -Path $logDir -ChildPath 'level5_leftover_file.txt'
-$level6_leftover_file = Join-Path -Path $logDir -ChildPath 'level6_leftover_file.txt'
+$level0_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level0_leftover_file.txt'
+$level1_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level1_leftover_file.txt'
+$level2_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level2_leftover_file.txt'
+$level3_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level3_leftover_file.txt'
+$level4_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level4_leftover_file.txt'
+$level5_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level5_leftover_file.txt'
+$level6_leftover_file = Join-Path -Path $logDir -ChildPath 'Step3_level6_leftover_file.txt'
 
 # Generate all possible JSON suffixes dynamically
 $suffixes = @("supplemental-metadata", "supplemental-metadat", "supplemental-metada", "supplemental-metad", "supplemental-meta",
@@ -670,11 +671,11 @@ foreach ($batchFile in $batchFiles) {
     $contents = Get-Content -Path $filePath
     $currentItem = 0
 	$totalItems = $contents.Count
-    $step = 1
+    $steps = 1
     # Read the file line by line and execute the commands
     Get-Content -Path $filePath | ForEach-Object {
         $currentItem++
-        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "batching $step"
+        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "batching $steps"
 
         $command = $_.Trim() # Remove any leading or trailing whitespace
 		if ($command -match "(ren)\s+'(.*?)'\s+'(.*?)'") 
@@ -701,6 +702,5 @@ foreach ($batchFile in $batchFiles) {
             $failed++
         }
     }
-    $step++
+    $steps++
 }
-write-host ""

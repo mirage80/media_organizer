@@ -22,12 +22,13 @@ from Utils import utils # Import the utils module
 # Pass PROJECT_ROOT as base_dir for logs to go into media_organizer/Logs
 DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
 DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
-logger = utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
+logger = utils.setup_logging(PROJECT_ROOT, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 # Use PROJECT_ROOT to build paths relative to the project root
 ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "output")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "Outputs")
 
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
