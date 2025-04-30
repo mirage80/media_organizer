@@ -1,26 +1,19 @@
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$magickPath,
-								
-					 
-    [Parameter(Mandatory=$true)] 
-    [string]$reconstructListPath
+    [Parameter(Mandatory = $true)] [string]$magickPath,
+    [Parameter(Mandatory = $true)] [string]$reconstructListPath
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
 $logFile = Join-Path $logDir "$scriptName.log"
 $logFormat = "{0} - {1}: {2}"
 
-# Create the log directory if it doesn't exist
 if (-not (Test-Path $logDir)) {
     try {
         New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
@@ -46,6 +39,7 @@ if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
         exit 1
     }
 }
+
 if ($null -eq $logLevelMap) {
     # This case should ideally not happen if top.ps1 ran, but handle defensively
     Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
@@ -87,6 +81,7 @@ function Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+												 
     $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
 
@@ -114,60 +109,60 @@ if (-not (Test-Path -Path $magickPath -PathType Leaf)) {
 # --- Helper Function for ImageMagick ---
 function Invoke-Magick {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$InputPath,
-        [Parameter(Mandatory = $true)]
-        [string]$OutputPath
-        # Optional: Add [string[]]$Arguments if more complex operations are needed later
-														
+        [Parameter(Mandatory = $true)] [string]$InputPath,
+        [Parameter(Mandatory = $true)] [string]$OutputPath,
+        [Parameter(Mandatory = $true)] [string]$ImageMagick
     )
 
-    $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processInfo.FileName = $magickPath # Use variable from top.ps1
-    # Basic command: magick input.jpg output.jpg
-    $processInfo.Arguments = @("`"$InputPath`"", "`"$OutputPath`"") -join " " # Add specific arguments here if needed
-    $processInfo.RedirectStandardOutput = $true
-    $processInfo.RedirectStandardError = $true
-    $processInfo.UseShellExecute = $false
-    $processInfo.CreateNoWindow = $true
+    if (-not (Test-Path -Path $ImageMagick -PathType Leaf)) {
+        Log "ERROR" "ImageMagick executable not found: '$vlc'"
+        return @{ Success = $false; Output = "Executable not found"; ExitCode = -1 }
+    }
 
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $processInfo
+    if ($InputPath -eq $OutputPath) {
+        Log "ERROR" "InputPath and OutputPath are the same. Cannot overwrite in-place."
+        return @{ Success = $false; Output = "Input == Output"; ExitCode = -1 }
+    }
 
-    $output = [System.Text.StringBuilder]::new()
-    $process.OutputDataReceived.add({ $output.AppendLine($EventArgs.Data) | Out-Null })
-    $process.ErrorDataReceived.add({ $output.AppendLine($EventArgs.Data) | Out-Null })
-
-    Log "DEBUG" "Executing ImageMagick: $($processInfo.FileName) $($processInfo.Arguments)"
-
+    Log "DEBUG" "Calling ImageMagick:"
+    Log "DEBUG" "  & `"$ImageMagick`" $($FfmpegArgs -join ' ')"
+   
     try {
-        $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-        $process.WaitForExit() # Wait indefinitely
+        $exitCode = & "$ImageMagick" $InputPath $OutputPath 
+        $success = ($null -eq $exitCode)
+        Log "DEBUG" "ffmpeg raw output:`n$output"
 
-        $exitCode = $process.ExitCode
-        $fullOutput = $output.ToString()
+        if ($success -and -not (Test-Path $OutputPath)) {
+            Log "ERROR" "ffmpeg exited with code 0 but did not create output file."
+            $success = $false
+        }
 
-        if ($exitCode -eq 0) {
-            Log "DEBUG" "ImageMagick completed successfully for '$InputPath'."
-            return @{ Success = $true; Output = $fullOutput }
+        if ($success) {
+            Log "INFO" "ffmpeg succeeded for '$InputPath' → '$OutputPath'"
         } else {
             Log "WARNING" "ImageMagick failed for '$InputPath' with exit code $exitCode."
             Log "DEBUG" "ImageMagick Output:`n$fullOutput"
             return @{ Success = $false; Output = $fullOutput }
         }
+
+        return @{
+            Success  = $success
+            ExitCode = $exitCode
+            Output   = $output -join "`n"
+        }
+
     } catch {
-        Log "ERROR" "Exception running ImageMagick for '$InputPath': $_"
-        return @{ Success = $false; Output = $_.Exception.Message }
-    } finally {
-        if ($null -ne $process) {
-            $process.Dispose()
+        $errorMessage = $_.Exception.Message
+        Log "ERROR" "Exception running ffmpeg: $errorMessage"
+        return @{
+            Success  = $false
+            ExitCode = -1
+            Output   = "EXCEPTION: $errorMessage"
         }
     }
 }
 
-# Load the list of images to reconstruct
+# --- Load and Deduplicate List ---
 $imagesToReconstruct = @()
 if (Test-Path -Path $reconstructListPath -PathType Leaf) {
     try {
@@ -183,6 +178,10 @@ if (Test-Path -Path $reconstructListPath -PathType Leaf) {
     exit 0
 }
 
+# --- Deduplication Fix ---
+$imagesToReconstruct = $imagesToReconstruct | Select-Object -Unique
+Log "DEBUG" "Deduplicated input list:`n$($imagesToReconstruct -join "`n")"
+
 if ($imagesToReconstruct.Count -eq 0) {
     Log "INFO" "Reconstruction list is empty. Nothing to do."
     exit 0
@@ -197,11 +196,11 @@ $successfullyReconstructed = [System.Collections.Generic.List[string]]::new()
 # Process each image
 foreach ($imagePath in $imagesToReconstruct) {
     $currentItem++
-    $baseName = Split-Path -Path $imagePath -Leaf
+    $baseName = Split-Path $imagePath -Leaf
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Reconstructing: $baseName"
 
-    if (-not (Test-Path -Path $imagePath -PathType Leaf)) {
-        Log "WARNING" "File not found: '$imagePath'. Skipping."
+    if (-not (Test-Path $imagePath)) {
+        Log "WARNING" "Missing: '$imagePath'. Skipping."
         $failCount++
         continue
     }
@@ -211,8 +210,11 @@ foreach ($imagePath in $imagesToReconstruct) {
 
     # Attempt reconstruction (re-muxing)
 													 
-    $result = Invoke-Magick -InputPath $imagePath -OutputPath $tempOutputPath
-
+    $result = Invoke-Magick -InputPath $imagePath -OutputPath $tempOutputPath -ImageMagick $magickPath
+    if (-not $result.Success) {
+        Log "ERROR" "vlc failed for '$baseName'. Output:"
+        Log "ERROR" $result.Output
+    }
     if ($result.Success) {
         $isValidOutput = $false
         try {
@@ -235,13 +237,12 @@ foreach ($imagePath in $imagesToReconstruct) {
             $backupPath = "$imagePath.bak"
             try {
                 # 1. Rename original to backup
-                Rename-Item -Path $imagePath -NewName $backupPath -Force -ErrorAction Stop
+                Rename-Item $imagePath $backupPath -Force -ErrorAction Stop
                 Log "DEBUG" "Renamed original '$imagePath' to '$backupPath'."
-            
                 # 2. Rename temp file to original name
-                Rename-Item -Path $tempOutputPath -NewName $baseName -Force -ErrorAction Stop
+                Rename-Item $tempOutputPath $imagePath -Force -ErrorAction Stop
                 Log "INFO" "Replaced original with re-muxed version: '$imagePath'"
-            
+
                 # 3. If successful, remove backup
                 Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
                 Log "DEBUG" "Removed backup file '$backupPath'."
@@ -251,9 +252,9 @@ foreach ($imagePath in $imagesToReconstruct) {
             } catch {
                 Log "ERROR" "Failed during replacement process for '$imagePath'. Error: $_"
                 # Attempt rollback if possible
-                if (Test-Path $backupPath -and -not (Test-Path $imagePath)) {
+                if ((Test-Path $backupPath) -and -not (Test-Path $imagePath)) {
                     Log "INFO" "Attempting to restore original from backup '$backupPath'..."
-                    Rename-Item -Path $backupPath -NewName $baseName -Force
+                    Rename-Item $backupPath $imagePath -Force
                 }
                 # Clean up temp file if it still exists
                 if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue }
@@ -279,9 +280,9 @@ Write-Host # Clear progress bar line
 # --- Update JSON List ---
 Log "INFO" "Updating reconstruction list..."
 # Filter out successfully reconstructed images
-$remainingImages = $imagesToReconstruct | Where-Object { $successfullyReconstructed -notcontains $_ }
-
-# Save the updated list (atomically)
-Write-JsonAtomic -Data $remainingImages -Path $reconstructListPath
-Log "INFO" "Reconstruction list updated. $($remainingImages.Count) images remain."
-Log "INFO" "Summary: Success=$successCount, Failed=$failCount, Remaining=$($remainingImages.Count)"
+$remainingImages = @($imagesToReconstruct | Where-Object { $successfullyReconstructed -notcontains $_ })
+if ($null -eq $remainingImages) {
+    $remainingImages = @()  # ensure it's always an array
+}
+Log "INFO" "Updated reconstruction list: $($remainingImages.Count) remaining."
+Log "INFO" "Summary: Success=$successCount, Failed=$failCount"

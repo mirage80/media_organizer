@@ -1,26 +1,21 @@
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$ffmpeg,
-    [Parameter(Mandatory=$true)]
-    [string]$ffprobe,
-    [Parameter(Mandatory=$true)] 
-    [string]$reconstructListPath
+    [Parameter(Mandatory = $true)] [string]$ffmpeg,
+    [Parameter(Mandatory = $true)] [string]$ffprobe,
+    [Parameter(Mandatory = $true)] [string]$vlcpath,
+    [Parameter(Mandatory = $true)] [string]$reconstructListPath
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
 $logFile = Join-Path $logDir "$scriptName.log"
 $logFormat = "{0} - {1}: {2}"
 
-# Create the log directory if it doesn't exist
 if (-not (Test-Path $logDir)) {
     try {
         New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
@@ -46,6 +41,7 @@ if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
         exit 1
     }
 }
+
 if ($null -eq $logLevelMap) {
     # This case should ideally not happen if top.ps1 ran, but handle defensively
     Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
@@ -87,6 +83,7 @@ function Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+												 
     $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
 
@@ -106,72 +103,104 @@ function Log {
     }
 }
 
-if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
-    Log "CRITICAL" "FFmpeg executable not found at specified path: '$ffmpeg'. Aborting."
+if (-not (Test-Path -Path $magickPath -PathType Leaf)) {
+    Log "CRITICAL" "Magick executable not found at specified path: '$magickPath'. Aborting."
     exit 1
 }
 
 # --- Helper Function for FFmpeg ---
-function Invoke-FFmpeg {
+function Invoke-Ffmpeg {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$InputPath,
-        [Parameter(Mandatory = $true)]
-        [string]$OutputPath,
-        [Parameter(Mandatory = $true)]
-        [string[]]$Arguments # e.g., @("-codec", "copy")
+        [Parameter(Mandatory = $true)] [string]$InputPath,
+        [Parameter(Mandatory = $true)] [string]$OutputPath,
+        [Parameter(Mandatory = $true)] [string]$ffmpeg,
+        [Parameter(Mandatory = $true)] [string]$vertical,
+        [Parameter(Mandatory = $true)] [string]$ab
     )
 
-    $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $processInfo.FileName = $ffmpeg # Use variable from top.ps1
-    # Construct arguments: -i input [specific args] -y output
-    $processInfo.Arguments = @("-i", "`"$InputPath`"") + $Arguments + @("-y", "`"$OutputPath`"") -join " "
-    $processInfo.RedirectStandardOutput = $true
-    $processInfo.RedirectStandardError = $true
-    $processInfo.UseShellExecute = $false
-    $processInfo.CreateNoWindow = $true
+    if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
+        Log "ERROR" "Ffmpeg executable not found: '$vlc'"
+        return @{ Success = $false; Output = "Executable not found"; ExitCode = -1 }
+    }
 
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $processInfo
+    if ($InputPath -eq $OutputPath) {
+        Log "ERROR" "InputPath and OutputPath are the same. Cannot overwrite in-place."
+        return @{ Success = $false; Output = "Input == Output"; ExitCode = -1 }
+    }
 
-    $output = [System.Text.StringBuilder]::new()
-    $process.OutputDataReceived.add({ $output.AppendLine($EventArgs.Data) | Out-Null })
-    $process.ErrorDataReceived.add({ $output.AppendLine($EventArgs.Data) | Out-Null })
-
-    Log "DEBUG" "Executing FFmpeg: $($processInfo.FileName) $($processInfo.Arguments)"
-
+    Log "DEBUG" "Calling ffmpeg:"
+    Log "DEBUG" "  & `"$ffmpeg`" $($FfmpegArgs -join ' ')"
+   
     try {
-        $process.Start() | Out-Null
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-        $process.WaitForExit() # Wait indefinitely
+        $exitCode = & "$ffmpeg" -i $InputPath -c:v libx264 -b:v $vertical"k" -c:a aac -b:a $ab"k" -ac 2 -ar 44100 -loglevel error -y $OutputPath 
+        $success = ($null -eq $exitCode)
+        Log "DEBUG" "VLC raw output:`n$output"
 
-        $exitCode = $process.ExitCode
-        $fullOutput = $output.ToString()
+        if ($success -and -not (Test-Path $OutputPath)) {
+            Log "ERROR" "VLC exited with code 0 but did not create output file."
+            $success = $false
+        }
 
-        if ($exitCode -eq 0) {
-            Log "DEBUG" "FFmpeg completed successfully for '$InputPath'."
-            return @{ Success = $true; Output = $fullOutput }
+        if ($success) {
+            Log "INFO" "VLC succeeded for '$InputPath' → '$OutputPath'"
         } else {
-            Log "WARNING" "FFmpeg failed for '$InputPath' with exit code $exitCode."
-            Log "DEBUG" "FFmpeg Output:`n$fullOutput"
+            Log "WARNING" "ffmpeg failed for '$InputPath' with exit code $exitCode."
+            Log "DEBUG" "ffmpeg Output:`n$fullOutput"
             return @{ Success = $false; Output = $fullOutput }
         }
+
+        return @{
+            Success  = $success
+            ExitCode = $exitCode
+            Output   = $output -join "`n"
+        }
+
     } catch {
-        Log "ERROR" "Exception running FFmpeg for '$InputPath': $_"
-        return @{ Success = $false; Output = $_.Exception.Message }
-    } finally {
-        if ($null -ne $process) {
-            $process.Dispose()
+        $errorMessage = $_.Exception.Message
+        Log "ERROR" "Exception running VLC: $errorMessage"
+        return @{
+            Success  = $false
+            ExitCode = -1
+            Output   = "EXCEPTION: $errorMessage"
         }
     }
 }
 
-# Load the list of videos to reconstruct
+function Get-BitrateByResolution {
+    param (
+        [string]$ffprobe,
+        [string]$InputPath
+    )
+
+    $probe = & $ffprobe -v error -select_streams v:0 `
+        -show_entries stream=width,height `
+        -of csv=p=0 "$InputPath" 2>&1
+
+    if (-not $probe -or $LASTEXITCODE -ne 0) {
+        Log "WARN" "Failed to extract resolution from '$InputPath'. Defaulting to 1200/128."
+        return @{ vb = 1200; ab = 128 }
+    }
+
+    $width, $height = $probe -split ','
+    $width = [int]$width
+    $height = [int]$height
+
+    if ($width -le 640 -and $height -le 360) {
+        return @{ vb = 600; ab = 96 }
+    } elseif ($width -le 1280 -and $height -le 720) {
+        return @{ vb = 1200; ab = 128 }
+    } elseif ($width -le 1920 -and $height -le 1080) {
+        return @{ vb = 2000; ab = 160 }
+    } else {
+        return @{ vb = 3000; ab = 192 }
+    }
+}
+
+# --- Load and Deduplicate List ---
 $videosToReconstruct = @()
 if (Test-Path -Path $reconstructListPath -PathType Leaf) {
     try {
-        $videosToReconstruct = Get-Content -Path $reconstructListPath -Raw | ConvertFrom-Json
+        $videosToReconstruct = Get-Content $reconstructListPath -Raw | ConvertFrom-Json
         if ($null -eq $videosToReconstruct) { $videosToReconstruct = @() } # Handle empty JSON file
         Log "INFO" "Loaded $($videosToReconstruct.Count) videos marked for reconstruction from '$reconstructListPath'."
     } catch {
@@ -182,6 +211,10 @@ if (Test-Path -Path $reconstructListPath -PathType Leaf) {
     Log "INFO" "Reconstruction list '$reconstructListPath' not found. No videos to reconstruct."
     exit 0
 }
+
+# --- Deduplication Fix ---
+$videosToReconstruct = $videosToReconstruct | Select-Object -Unique
+Log "DEBUG" "Deduplicated input list:`n$($videosToReconstruct -join "`n")"
 
 if ($videosToReconstruct.Count -eq 0) {
     Log "INFO" "Reconstruction list is empty. Nothing to do."
@@ -197,33 +230,36 @@ $successfullyReconstructed = [System.Collections.Generic.List[string]]::new()
 # Process each video
 foreach ($videoPath in $videosToReconstruct) {
     $currentItem++
-    $baseName = Split-Path -Path $videoPath -Leaf
+    $baseName = Split-Path $videoPath -Leaf
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Reconstructing: $baseName"
 
-    if (-not (Test-Path -Path $videoPath -PathType Leaf)) {
-        Log "WARNING" "File not found: '$videoPath'. Skipping."
+    if (-not (Test-Path $videoPath)) {
+        Log "WARNING" "Missing: '$videoPath'. Skipping."
         $failCount++
         continue
     }
 
     # Define temporary output path
     $tempOutputPath = "$videoPath.repaired.mp4"
-
-    # Attempt reconstruction (re-muxing)
-    $ffmpegArgs = @("-codec", "copy") # Simple re-mux
-    $result = Invoke-FFmpeg -InputPath $videoPath -OutputPath $tempOutputPath -Arguments $ffmpegArgs
-
+    $rates = Get-BitrateByResolution -ffprobe $ffprobe -InputPath $videoPath
+    $vb = $rates.vb
+    $ab = $rates.ab
+    $result = Invoke-Ffmpeg -InputPath $videoPath -OutputPath $tempOutputPath -ffmpeg $ffmpeg -vertical $vb -ab $ab 
+    if (-not $result.Success) {
+        Log "ERROR" "vlc failed for '$baseName'. Output:"
+        Log "ERROR" $result.Output
+    }
     if ($result.Success) {
         $isValidOutput = $false
         try {
             Log "DEBUG" "Verifying re-muxed output: $tempOutputPath"
-            # Example: Check if ffprobe can read streams without error
-            $ffprobeOutput = & $ffprobe -v error -show_streams "$tempOutputPath" 2>&1 # Assuming $ffprobe is available/passed
-            if ($LASTEXITCODE -eq 0 -and $ffprobeOutput) { # Check exit code AND if output is not empty
+            $identifyOutput = & $ffprobe -v error -show_streams "$tempOutputPath" 2>&1
+            if ($LASTEXITCODE -eq 0) {
                 Log "DEBUG" "Verification successful for '$tempOutputPath'."
                 $isValidOutput = $true
             } else {
-                Log "WARNING" "Verification failed for '$tempOutputPath'. FFprobe exit code: $LASTEXITCODE. Output/Error: $ffprobeOutput"
+                Log "WARNING" "FFprobe identify verification failed for '$tempOutputPath'. Exit code: $LASTEXITCODE."
+                Log "DEBUG" "FFprobe identify Output/Error:`n$identifyOutput"
             }
         } catch {
             Log "WARNING" "Error during ffprobe verification for '$tempOutputPath': $_"
@@ -235,13 +271,12 @@ foreach ($videoPath in $videosToReconstruct) {
             $backupPath = "$videoPath.bak"
             try {
                 # 1. Rename original to backup
-                Rename-Item -Path $videoPath -NewName $backupPath -Force -ErrorAction Stop
+                Rename-Item $videoPath $backupPath -Force -ErrorAction Stop
                 Log "DEBUG" "Renamed original '$videoPath' to '$backupPath'."
-            
                 # 2. Rename temp file to original name
-                Rename-Item -Path $tempOutputPath -NewName $baseName -Force -ErrorAction Stop
+                Rename-Item $tempOutputPath $videoPath -Force -ErrorAction Stop
                 Log "INFO" "Replaced original with re-muxed version: '$videoPath'"
-            
+
                 # 3. If successful, remove backup
                 Remove-Item -Path $backupPath -Force -ErrorAction SilentlyContinue
                 Log "DEBUG" "Removed backup file '$backupPath'."
@@ -251,9 +286,9 @@ foreach ($videoPath in $videosToReconstruct) {
             } catch {
                 Log "ERROR" "Failed during replacement process for '$videoPath'. Error: $_"
                 # Attempt rollback if possible
-                if (Test-Path $backupPath -and -not (Test-Path $videoPath)) {
+                if ((Test-Path $backupPath) -and -not (Test-Path $videoPath)) {
                     Log "INFO" "Attempting to restore original from backup '$backupPath'..."
-                    Rename-Item -Path $backupPath -NewName $baseName -Force
+                    Rename-Item $backupPath $videoPath -Force
                 }
                 # Clean up temp file if it still exists
                 if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue }
@@ -279,9 +314,9 @@ Write-Host # Clear progress bar line
 # --- Update JSON List ---
 Log "INFO" "Updating reconstruction list..."
 # Filter out successfully reconstructed videos
-$remainingVideos = $videosToReconstruct | Where-Object { $successfullyReconstructed -notcontains $_ }
-
-# Save the updated list (atomically)
-Write-JsonAtomic -Data $remainingVideos -Path $reconstructListPath
-Log "INFO" "Reconstruction list updated. $($remainingVideos.Count) videos remain."
-Log "INFO" "Summary: Success=$successCount, Failed=$failCount, Remaining=$($remainingVideos.Count)"
+$remainingVideos = @($videosToReconstruct | Where-Object { $successfullyReconstructed -notcontains $_ })
+if ($null -eq $remainingVideos) {
+    $remainingVideos = @()  # ensure it's always an array
+}
+Log "INFO" "Updated reconstruction list: $($remainingVideos.Count) remaining."
+Log "INFO" "Summary: Success=$successCount, Failed=$failCount"

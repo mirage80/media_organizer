@@ -17,6 +17,8 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$ffprobe = 'C:\Program Files\ffmpeg\bin\ffprobe.exe',
     [Parameter(Mandatory=$true)]
+    [string]$vlcpath = "C:\Program Files\VideoLAN\VLC\vlc.exe",
+    [Parameter(Mandatory=$true)]
     [string]$DefaultConsoleLogLevelString = "WARNING",
     [Parameter(Mandatory=$true)]
     [string]$DefaultFileLogLevelString    = "WARNING"      
@@ -32,8 +34,9 @@ $magickPath = 'C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe'
 $pythonExe = 'C:\Program Files\Python313\python.exe'
 $ffmpeg  = 'C:\Program Files\ffmpeg\bin\ffmpeg.exe'
 $ffprobe = 'C:\Program Files\ffmpeg\bin\ffprobe.exe'
+$vlcpath = "C:\Program Files\VideoLAN\VLC\vlc.exe"
 $DefaultConsoleLogLevelString = "ERROR"
-$DefaultFileLogLevelString    = "INFO"  
+$DefaultFileLogLevelString    = "DEBUG"  
 $DefaultPrefixLength  = 15
 
 $default_width = 80 # Default if env var or terminal size fails
@@ -118,7 +121,8 @@ function Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $formatted = "$timestamp - $Level - $Message"
+    $logFormat = "{0} - {1}: {2}"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
 
     if ($null -ne $levelIndex) {
@@ -128,9 +132,18 @@ function Log {
         if ($levelIndex -ge $fileLogLevel) {
             try {
                 Add-Content -Path $logFilePath -Value $formatted -Encoding UTF8 -ErrorAction Stop
-            } catch { Write-Warning "Failed to write to log file '$logFilePath': $_" }
-        }
-    } else { Write-Warning "Invalid log level used in top.ps1: '$Level'. Message: $Message" }
+            } catch {
+                Write-Warning "Failed to write to log file '$logFilePath': $_"
+            }
+        } 
+    } else {
+        Write-Warning "Invalid log level used: $Level"
+    } 
+}
+
+if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
+    Log "CRITICAL" "FFmpeg executable not found at specified path: '$ffmpeg'. Aborting."
+    exit 1
 }
 
 if (-not (Test-Path $7zip)) {
@@ -339,12 +352,12 @@ $logger++
 #step 12-1 Reconstruction of corrupt Videos
 $env:CURRENT_STEP = $logger.ToString()
 Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos" -ffmpeg $ffmpeg
-$videoReconList = Join-Path $scriptDirectory "Output\video_reconstruct_info.json" # Or wherever it's actually saved
-& "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -ffmpeg $ffmpeg -ffprob $ffprobe -reconstructListPath $videoReconList
+$videoReconList = Join-Path $scriptDirectory "Outputs\video_reconstruct_info.json" # Or wherever it's actually saved
+& "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -vlcpath $vlcpath -reconstructListPath $videoReconList -ffmpeg $ffmpeg -ffprobe $ffprobe
 
 #step 12-2 Reconstruction of corrupt Images
 Log "INFO" "step 12-2 use ImageReconstruction.ps1 to Reconstruct of corrupt Images" -magickPath $magickPath
-$imageReconList = Join-Path $scriptDirectory "Output\image_reconstruct_info.json" # Or wherever it's actually saved
+$imageReconList = Join-Path $scriptDirectory "Outputs\image_reconstruct_info.json" # Or wherever it's actually saved
 & "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1" -magickPath $magickPath -reconstructListPath $imageReconList
 
 #count
@@ -370,4 +383,3 @@ Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
 $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
 Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzipedDirectory")
 $logger++
-#>
