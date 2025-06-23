@@ -53,10 +53,6 @@ if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) {
     Write-Error "FATAL: Environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
     exit 1
 }
-if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) {
-    Write-Error "FATAL: Environment variable DEDUPLICATOR_FILE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
-    exit 1
-}
 
 # Read the environment variables directly and trim whitespace (NOW SAFE)
 $EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.Trim()
@@ -103,23 +99,25 @@ function Log {
     }
 }
 
-if (-not (Test-Path -Path $magickPath -PathType Leaf)) {
-    Log "CRITICAL" "Magick executable not found at specified path: '$magickPath'. Aborting."
+if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
+    Log "CRITICAL" "FFmpeg executable not found at specified path: '$ffmpeg'. Aborting."
+    exit 1
+}
+if (-not (Test-Path -Path $ffprobe -PathType Leaf)) {
+    Log "CRITICAL" "FFprobe executable not found at specified path: '$ffprobe'. Aborting."
     exit 1
 }
 
 # --- Helper Function for FFmpeg ---
-function Invoke-Ffmpeg {
+function Invoke-FfmpegSimpleCopy {
     param(
         [Parameter(Mandatory = $true)] [string]$InputPath,
         [Parameter(Mandatory = $true)] [string]$OutputPath,
-        [Parameter(Mandatory = $true)] [string]$ffmpeg,
-        [Parameter(Mandatory = $true)] [string]$vertical,
-        [Parameter(Mandatory = $true)] [string]$ab
-    )
+        [Parameter(Mandatory = $true)] [string]$ffmpeg
+   )
 
     if (-not (Test-Path -Path $ffmpeg -PathType Leaf)) {
-        Log "ERROR" "Ffmpeg executable not found: '$vlc'"
+        Log "ERROR" "Ffmpeg executable not found: '$ffmpeg'"
         return @{ Success = $false; Output = "Executable not found"; ExitCode = -1 }
     }
 
@@ -128,36 +126,35 @@ function Invoke-Ffmpeg {
         return @{ Success = $false; Output = "Input == Output"; ExitCode = -1 }
     }
 
-    Log "DEBUG" "Calling ffmpeg:"
-    Log "DEBUG" "  & `"$ffmpeg`" $($FfmpegArgs -join ' ')"
+    Log "INFO" "Attempt 1: Ffmpeg with simple stream copy for '$InputPath'"
    
     try {
-        $exitCode = & "$ffmpeg" -i $InputPath -c:v libx264 -b:v $vertical"k" -c:a aac -b:a $ab"k" -ac 2 -ar 44100 -loglevel error -y $OutputPath 
-        $success = ($null -eq $exitCode)
-        Log "DEBUG" "VLC raw output:`n$output"
+        # Use -c copy to copy all streams without re-encoding.
+        $output = & "$ffmpeg" -i "$InputPath" -c copy -loglevel error -y "$OutputPath" 2>&1
+        $exitCode = $LASTEXITCODE
+        $success = ($exitCode -eq 0)
+        Log "DEBUG" "ffmpeg (stream copy) raw output:`n$output"
 
         if ($success -and -not (Test-Path $OutputPath)) {
-            Log "ERROR" "VLC exited with code 0 but did not create output file."
+            Log "ERROR" "ffmpeg (stream copy) exited with code 0 but did not create output file."
             $success = $false
         }
 
         if ($success) {
-            Log "INFO" "VLC succeeded for '$InputPath' → '$OutputPath'"
+            Log "INFO" "ffmpeg stream copy succeeded for '$InputPath' → '$OutputPath'"
         } else {
-            Log "WARNING" "ffmpeg failed for '$InputPath' with exit code $exitCode."
-            Log "DEBUG" "ffmpeg Output:`n$fullOutput"
-            return @{ Success = $false; Output = $fullOutput }
+            Log "WARNING" "ffmpeg (stream copy) failed for '$InputPath' with exit code $exitCode."
         }
 
         return @{
             Success  = $success
-            ExitCode = $exitCode
+            ExitCode = $LASTEXITCODE
             Output   = $output -join "`n"
         }
 
     } catch {
         $errorMessage = $_.Exception.Message
-        Log "ERROR" "Exception running VLC: $errorMessage"
+        Log "ERROR" "Exception running ffmpeg (stream copy): $errorMessage"
         return @{
             Success  = $false
             ExitCode = -1
@@ -166,33 +163,34 @@ function Invoke-Ffmpeg {
     }
 }
 
-function Get-BitrateByResolution {
-    param (
-        [string]$ffprobe,
-        [string]$InputPath
+function Invoke-FfmpegWithAudioReencode {
+    param(
+        [Parameter(Mandatory = $true)] [string]$InputPath,
+        [Parameter(Mandatory = $true)] [string]$OutputPath,
+        [Parameter(Mandatory = $true)] [string]$ffmpeg
     )
+    Log "INFO" "Attempt 2: Ffmpeg with audio re-encode for '$InputPath'"
+    try {
+        # Use -c:v copy to copy video, -c:a aac to re-encode audio to AAC
+        $output = & "$ffmpeg" -i "$InputPath" -c:v copy -c:a aac -b:a 128k -loglevel error -y "$OutputPath" 2>&1
+        $exitCode = $LASTEXITCODE
+        $success = ($exitCode -eq 0)
 
-    $probe = & $ffprobe -v error -select_streams v:0 `
-        -show_entries stream=width,height `
-        -of csv=p=0 "$InputPath" 2>&1
-
-    if (-not $probe -or $LASTEXITCODE -ne 0) {
-        Log "WARN" "Failed to extract resolution from '$InputPath'. Defaulting to 1200/128."
-        return @{ vb = 1200; ab = 128 }
-    }
-
-    $width, $height = $probe -split ','
-    $width = [int]$width
-    $height = [int]$height
-
-    if ($width -le 640 -and $height -le 360) {
-        return @{ vb = 600; ab = 96 }
-    } elseif ($width -le 1280 -and $height -le 720) {
-        return @{ vb = 1200; ab = 128 }
-    } elseif ($width -le 1920 -and $height -le 1080) {
-        return @{ vb = 2000; ab = 160 }
-    } else {
-        return @{ vb = 3000; ab = 192 }
+        if ($success) {
+            Log "INFO" "ffmpeg video copy / audio re-encode succeeded for '$InputPath' → '$OutputPath'"
+        } else {
+            Log "WARNING" "ffmpeg with audio re-encode failed for '$InputPath' with exit code $exitCode."
+            Log "DEBUG" "ffmpeg (audio re-encode) Output:`n$output"
+        }
+        return @{ Success = $success; Output = $output }
+    } catch {
+        $errorMessage = $_.Exception.Message
+        Log "ERROR" "Exception running ffmpeg with audio re-encode: $errorMessage"
+        return @{
+            Success  = $false
+            ExitCode = -1
+            Output   = "EXCEPTION: $errorMessage"
+        }
     }
 }
 
@@ -200,7 +198,7 @@ function Get-BitrateByResolution {
 $videosToReconstruct = @()
 if (Test-Path -Path $reconstructListPath -PathType Leaf) {
     try {
-        $videosToReconstruct = Get-Content $reconstructListPath -Raw | ConvertFrom-Json
+        $videosToReconstruct = Get-Content -Path $reconstructListPath -Raw | ConvertFrom-Json
         if ($null -eq $videosToReconstruct) { $videosToReconstruct = @() } # Handle empty JSON file
         Log "INFO" "Loaded $($videosToReconstruct.Count) videos marked for reconstruction from '$reconstructListPath'."
     } catch {
@@ -241,14 +239,16 @@ foreach ($videoPath in $videosToReconstruct) {
 
     # Define temporary output path
     $tempOutputPath = "$videoPath.repaired.mp4"
-    $rates = Get-BitrateByResolution -ffprobe $ffprobe -InputPath $videoPath
-    $vb = $rates.vb
-    $ab = $rates.ab
-    $result = Invoke-Ffmpeg -InputPath $videoPath -OutputPath $tempOutputPath -ffmpeg $ffmpeg -vertical $vb -ab $ab 
+
+    # Attempt 1: Simple stream copy (fastest, fixes container issues)
+    $result = Invoke-FfmpegSimpleCopy -InputPath $videoPath -OutputPath $tempOutputPath -ffmpeg $ffmpeg
+
+    # Attempt 2: If simple copy fails, try re-encoding just the audio. This fixes many audio codec issues.
     if (-not $result.Success) {
-        Log "ERROR" "vlc failed for '$baseName'. Output:"
-        Log "ERROR" $result.Output
+        Log "DEBUG" "Initial failure output: $($result.Output)"
+        $result = Invoke-FfmpegWithAudioReencode -InputPath $videoPath -OutputPath $tempOutputPath -ffmpeg $ffmpeg
     }
+
     if ($result.Success) {
         $isValidOutput = $false
         try {
@@ -267,7 +267,7 @@ foreach ($videoPath in $videosToReconstruct) {
 
         # Verify temp file exists and has size before replacing original
         if ($isValidOutput -and (Test-Path $tempOutputPath) -and ((Get-Item $tempOutputPath).Length -gt 0)) {
-            Log "INFO" "Successfully re-muxed '$baseName'."
+            Log "INFO" "Successfully repaired '$baseName'."
             $backupPath = "$videoPath.bak"
             try {
                 # 1. Rename original to backup
@@ -295,12 +295,13 @@ foreach ($videoPath in $videosToReconstruct) {
                 $failCount++
             }
         } else {
-            Log "ERROR" "Re-muxing seemed successful for '$baseName', but output file '$tempOutputPath' is missing or empty."
+            Log "ERROR" "Repair process seemed successful for '$baseName', but output file '$tempOutputPath' is missing, empty, or invalid."
             if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue } # Clean up invalid temp file
             $failCount++
         }
     } else {
         Log "ERROR" "Failed to reconstruct '$baseName'."
+        Log "DEBUG" "Final ffmpeg error output: $($result.Output)"
         # Clean up failed temp file
         if (Test-Path $tempOutputPath) {
             Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue

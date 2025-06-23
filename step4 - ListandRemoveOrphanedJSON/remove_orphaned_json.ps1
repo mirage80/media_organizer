@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$step
 )
 
@@ -107,8 +107,8 @@ function Log {
 }
 
 # Validate input directory
-if (-not (Test-Path -Path $unzipedDirectory -PathType Container)) {
-    Log "ERROR" "Invalid input directory: $unzipedDirectory"
+if (-not (Test-Path -Path $unzippedDirectory -PathType Container)) {
+    Log "ERROR" "Invalid input directory: $unzippedDirectory"
     exit 1
 }
 
@@ -120,7 +120,7 @@ Log "INFO" "Output will be saved to: $outputFile"
 $orphanedJsonFiles = @()
 
 # Get all .json files in target directory
-$jsonFiles = Get-ChildItem -Path $unzipedDirectory -Recurse -Filter "*.json" -File
+$jsonFiles = Get-ChildItem -Path $unzippedDirectory -Recurse -Filter "*.json" -File
 $totalItems = $jsonFiles.Count
 $currentItem = 0
 

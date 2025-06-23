@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$step
 )
 
@@ -192,4 +192,4 @@ function Use-ValidDirectoriesRecursively {
     Use-ValidDirectoryName -DirectoryPath $RootDirectory
 }
 
-Use-ValidDirectoriesRecursively -RootDirectory $unzipedDirectory
+Use-ValidDirectoriesRecursively -RootDirectory $unzippedDirectory

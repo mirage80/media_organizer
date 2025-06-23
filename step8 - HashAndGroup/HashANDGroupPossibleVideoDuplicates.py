@@ -200,7 +200,6 @@ def process_videos(directory, existing_video_info):
 
     if total_files > 0:
         utils.show_progress_bar(total_files, total_files, "Hashing/Scanning", logger=logger)
-        print()
 
     logger.info(f"Scan complete. Processed {processed_files}/{total_files} potential files.")
     if new_files_processed > 0:
@@ -241,7 +240,6 @@ def group_videos_by_name_and_size(video_info_list):
         utils.show_progress_bar(processed_files, total_files, "Grouping by Name", logger=logger)
     if total_files > 0:
         utils.show_progress_bar(total_files, total_files, "Grouping by Name", logger=logger)
-        print()
     logger.info(f"Finished grouping by name and size. Found {len(grouped_videos)} groups.")
     return grouped_videos
 
@@ -263,7 +261,6 @@ def group_videos_by_hash(video_info_list):
         utils.show_progress_bar(processed_files, total_files, "Grouping by Hash", logger=logger)
     if total_files > 0:
         utils.show_progress_bar(total_files, total_files, "Grouping by Hash", logger=logger)
-        print()
     logger.info(f"Finished grouping by hash. Found {len(grouped_videos)} groups.")
     return grouped_videos
 
@@ -299,14 +296,19 @@ if __name__ == "__main__":
         logger.critical(f"Error: Provided directory does not exist: {directory}")
         sys.exit(1)
 
-    existing_video_info = load_existing_video_info(VIDEO_INFO_FILE)
-    logger.info(f"Starting with {len(existing_video_info)} previously processed videos.")
+    all_video_info = [] # Initialize
+    try:
+        # Load existing info first
+        existing_video_info = load_existing_video_info(VIDEO_INFO_FILE)
+        logger.info(f"Starting with {len(existing_video_info)} previously processed videos.")
 
-    all_video_info = process_videos(directory, existing_video_info)
+        # Process videos (hashes new ones, returns full list)
+        all_video_info = process_videos(directory, existing_video_info)
 
-    if all_video_info:
+        # Generate grouping based on the full list
         generate_grouping_video(all_video_info)
-    else:
-        logger.warning("No valid video information available after processing. Skipping grouping file generation.")
 
-    logger.info(f"✅ Finished. Total valid videos in info file: {len(all_video_info)}")
+        logger.info(f"✅ Finished. Total videos in info file: {len(all_video_info)}")
+    finally:
+        # Ensure the progress bar window is closed
+        utils.stop_graphical_progress_bar(logger=logger)

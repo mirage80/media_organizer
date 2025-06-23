@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [Parameter(Mandatory=$true)]
     [string]$ExifToolPath
 )
@@ -121,8 +121,8 @@ $MediaExtensions = @(".jpg", ".mp4")
 $TimestampTags = @("DateTimeOriginal", "CreateDate", "ModifyDate") # Prioritized list
 
 # Define source directories based on Step 13 output
-$SourceDirWithGeo = Join-Path $unzipedDirectory "with_time_with_geo" 
-$SourceDirNoGeo = Join-Path $unzipedDirectory "with_time_no_geo"     
+$SourceDirWithGeo = Join-Path $unzippedDirectory "with_time_with_geo" 
+$SourceDirNoGeo = Join-Path $unzippedDirectory "with_time_no_geo"     
 
 # Place metadata files in the Output Directory for easier management
 $CacheFilePath = Join-Path $logDir "Cache$scriptName.log"
@@ -786,7 +786,7 @@ if (Test-Path $SourceDirNoGeo -PathType Container) {
 
 
 if ($withGeoAndTime.Count -eq 0) {
-    Log "WARNING" "No reference media files with both timestamp and geotag found in '$unzipedDirectory'. Cannot estimate missing geotags."
+    Log "WARNING" "No reference media files with both timestamp and geotag found in '$unzippedDirectory'. Cannot estimate missing geotags."
     exit # Use exit code other than 0? e.g., exit 2
 }
 

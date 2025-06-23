@@ -1,7 +1,7 @@
 # --- Start of Consolidate_Meta.ps1 ---
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$ExifToolPath,
     [string]$step
 )
@@ -140,13 +140,13 @@ $processedLog | ForEach-Object {
 Log "INFO" "Loaded $($processedSet.Count) paths from initial log '$hashLogPath'."
 
 # --- Get and Filter Files ---
-Log "INFO" "Scanning for media files in '$unzipedDirectory'..."
-if (-not (Test-Path $unzipedDirectory -PathType Container)) {
-    Log "CRITICAL" "The media directory '$unzipedDirectory' is not valid or accessible. Aborting."
+Log "INFO" "Scanning for media files in '$unzippedDirectory'..."
+if (-not (Test-Path $unzippedDirectory -PathType Container)) {
+    Log "CRITICAL" "The media directory '$unzippedDirectory' is not valid or accessible. Aborting."
     exit 1
 }
 # Get media files
-$files = Get-ChildItem -Path $unzipedDirectory -Recurse -File | Where-Object {
+$files = Get-ChildItem -Path $unzippedDirectory -Recurse -File | Where-Object {
     $_.Extension.ToLower() -in $imageExtensions -or $_.Extension.ToLower() -in $videoExtensions
 }
 $filesToProcess = $files | Where-Object { -not $processedSet.Contains($_.FullName) }
@@ -154,10 +154,9 @@ $totalFilesToProcess = $filesToProcess.Count
 Log "INFO" "Found $($files.Count) total media files. $totalFilesToProcess files need processing."
 
 if ($totalFilesToProcess -eq 0) {
-    Log "INFO" "No new files to process. Exiting."
-    exit 0
+    Log "INFO" "No new files to process. Proceeding to final cleanup."
+    # We let the script continue to the cleanup phase to ensure any orphaned JSON files from a prior failed run are removed.
 }
-Log "INFO" "Found $($files.Count) total media files. $($filesToProcess.Count) files need processing." # Log count
 
 # Prepare collections
 # --- Runspace Pool Setup ---
@@ -420,10 +419,10 @@ if ($syncErrors.Count -gt 0) {
 Log "INFO" "Deleting JSON sidecar files..."
 $deletedCount = 0
 $deletionErrors = 0
-# Ensure $unzipedDirectory is valid before proceeding
-if (Test-Path $unzipedDirectory -PathType Container) {
+# Ensure $unzippedDirectory is valid before proceeding
+if (Test-Path $unzippedDirectory -PathType Container) {
     try {
-        Get-ChildItem -Path $unzipedDirectory -Filter *.json -Recurse -File | ForEach-Object {
+        Get-ChildItem -Path $unzippedDirectory -Filter *.json -Recurse -File | ForEach-Object {
             Log "DEBUG" "Attempting to delete $($_.FullName)"
             try {
                 Remove-Item $_.FullName -Force -ErrorAction Stop
@@ -438,10 +437,10 @@ if (Test-Path $unzipedDirectory -PathType Container) {
             Log "WARNING" "Encountered $deletionErrors errors while deleting JSON files."
         }
     } catch {
-         Log "ERROR" "Error enumerating JSON files for deletion in '$unzipedDirectory': $_"
+         Log "ERROR" "Error enumerating JSON files for deletion in '$unzippedDirectory': $_"
     }
 } else {
-     Log "ERROR" "Cannot delete JSON files because directory '$unzipedDirectory' does not exist."
+     Log "ERROR" "Cannot delete JSON files because directory '$unzippedDirectory' does not exist."
 }
 Remove-Item $hashLogPath -Force
 Log "INFO" "Step 6 - Consolidate_Meta finished."

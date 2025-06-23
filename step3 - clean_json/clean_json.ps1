@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
-    [string]$zipedDirectory,
+    [string]$unzippedDirectory,
+    [string]$zippedDirectory,
     [string]$ExifToolPath,
     [string]$step
 )
@@ -257,7 +257,7 @@ foreach ($file in $level0_files) {
         foreach ($suffix in $suffixes) {
             if ($file -match "\.$suffix\.json$") {
                 $newfile = $file -replace "\.$suffix\.json$", ".json"
-                "ren `"$unzipedDirectory`/$file`" `"$unzipedDirectory`/$newfile`" " | Out-File -FilePath $level1_batch_file -Append | Out-Null
+                "ren `"$unzippedDirectory`/$file`" `"$unzippedDirectory`/$newfile`" " | Out-File -FilePath $level1_batch_file -Append | Out-Null
                 $level1_files += $newfile
                 $found = $true
                 break
@@ -292,7 +292,7 @@ foreach ($file in $level1_files) {
             $level2_files += $file
         } else {
             if ($level1_files -contains "$newFileName.json") {
-                "copy  `"$unzipedDirectory`/$file.json`" `"$unzipedDirectory`/$newFileName.json`" " | Out-File -FilePath $level2_batch_file -Append | Out-Null
+                "copy  `"$unzippedDirectory`/$file.json`" `"$unzippedDirectory`/$newFileName.json`" " | Out-File -FilePath $level2_batch_file -Append | Out-Null
                 $level2_files += $file
                 $level2_files += "$file.json"
             }
@@ -390,7 +390,7 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
             }
             $newJsonFileName = "$newJsonbaseName.json"
             $newJsonFilePath = "$JsonDirectory/$newJsonFileName"
-            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
+            "ren `"$unzippedDirectory/$jsonFilePath`" `"$unzippedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
             $jsonFilePath = $newJsonFilePath
         } else {
 			  
@@ -406,8 +406,8 @@ for ($i = 0; $i -lt $level3_pairs.Length; $i += 3) {
         $newJsonFileName = "$mainFileName.json"
         $newJsonFilePath = "$mainFileDirectory/$newJsonFileName"
 
-        if (!(Test-Path -Path $unzipedDirectory/$newJsonFilePath)) {
-            "ren `"$unzipedDirectory/$jsonFilePath`" `"$unzipedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
+        if (!(Test-Path -Path $unzippedDirectory/$newJsonFilePath)) {
+            "ren `"$unzippedDirectory/$jsonFilePath`" `"$unzippedDirectory/$newJsonFilePath`"" | Out-File -FilePath $level3_batch_file -Append | Out-Null
         }
     } else {
         Log "WARNING" "No matching JSON file found for '$mainFilePath'"
@@ -579,7 +579,7 @@ for ($i = 0; $i -lt $level5_pairs.Length; $i += 2) {
         $newJsonFilePath = "$newMainFilePath.json"
 
         # Write the rename command to the rename file
-        "ren `"$unzipedDirectory`/$mainFilePath`" `"$unzipedDirectory`/$newMainFilePath`""  | Out-File -FilePath $level5_batch_file -Append | Out-Null
+        "ren `"$unzippedDirectory`/$mainFilePath`" `"$unzippedDirectory`/$newMainFilePath`""  | Out-File -FilePath $level5_batch_file -Append | Out-Null
     } 
 }
 

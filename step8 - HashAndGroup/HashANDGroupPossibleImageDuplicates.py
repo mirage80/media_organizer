@@ -164,8 +164,6 @@ def group_images_by_name_and_size(image_info_list):
         grouped_images[key].append(info)
         processed_files += 1
         utils.show_progress_bar(processed_files, total_files, "Grouping by Name", logger=logger)
-    print() # Newline after progress bar
-    logger.info("Finished grouping by name and size.")
     return grouped_images
 
 
@@ -186,7 +184,6 @@ def group_images_by_hash(image_info_list):
             logger.warning(f"Image missing hash: {info.get('path')}")
         processed_files += 1
         utils.show_progress_bar(processed_files, total_files, "Grouping by Hash", logger=logger)
-    print() # Newline after progress bar
     logger.info("Finished grouping by hash.")
     return grouped_images
 
@@ -226,14 +223,19 @@ if __name__ == "__main__":
         logger.critical(f"Error: Provided directory does not exist: {directory}")
         sys.exit(1)
 
-    # Load existing info first
-    existing_image_info = load_existing_image_info(IMAGE_INFO_FILE)
-    logger.info(f"Starting with {len(existing_image_info)} previously processed images.")
+    all_image_info = [] # Initialize
+    try:
+        # Load existing info first
+        existing_image_info = load_existing_image_info(IMAGE_INFO_FILE)
+        logger.info(f"Starting with {len(existing_image_info)} previously processed images.")
 
-    # Process images (hashes new ones, returns full list)
-    all_image_info = process_images(directory, existing_image_info)
+        # Process images (hashes new ones, returns full list)
+        all_image_info = process_images(directory, existing_image_info)
 
-    # Generate grouping based on the full list
-    generate_grouping_image(all_image_info)
+        # Generate grouping based on the full list
+        generate_grouping_image(all_image_info)
 
-    logger.info(f"✅ Finished. Total images in info file: {len(all_image_info)}")
+        logger.info(f"✅ Finished. Total images in info file: {len(all_image_info)}")
+    finally:
+        # Ensure the progress bar window is closed
+        utils.stop_graphical_progress_bar(logger=logger)

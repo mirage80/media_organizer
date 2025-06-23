@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$step
 )
 
@@ -8,7 +8,7 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-$RecycleBinPath = Join-Path -Path $unzipedDirectory -ChildPath '$RECYCLE.BIN'
+$RecycleBinPath = Join-Path -Path $unzippedDirectory -ChildPath '$RECYCLE.BIN'
 
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"

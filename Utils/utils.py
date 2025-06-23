@@ -5,6 +5,8 @@ from math import radians, cos, sin, asin, sqrt
 from datetime import datetime # Needed for parse_timestamp
 import shutil # Needed for show_progress_bar
 import tempfile # Needed for write_json_atomic
+import tkinter as tk
+from tkinter import ttk
 
 def write_json_atomic(data, path, logger):
     dir_name = os.path.dirname(path)
@@ -144,7 +146,12 @@ def setup_logging(base_dir, script_name, console_level_env="DEDUPLICATOR_CONSOLE
 	# --- Get your specific logger ---
 	return logging.getLogger(script_name)
     
-# Correct implementation (replace the existing body with this)
+# --- Graphical Progress Bar ---
+_progress_bar_window = None
+_progress_bar_widget = None
+_progress_bar_root = None # Hidden root for Toplevel
+_progress_bar_style = None # To hold the custom style
+
 def show_progress_bar(iteration, total, prefix='', suffix='', decimals=1, fill='=', print_end="\r", logger=None):
     """
     Prints a customizable progress bar.
@@ -159,76 +166,119 @@ def show_progress_bar(iteration, total, prefix='', suffix='', decimals=1, fill='
         fill (str, optional): Character used to fill the bar. Defaults to '='.
         print_end (str, optional): Character to print at the end (e.g., '\r', '\n'). Defaults to "\r".
     """
+    global _progress_bar_window, _progress_bar_widget, _progress_bar_root, _progress_bar_style
+
     try:
-        # 1. Get desired width from environment variable or terminal size
-        term_width = None # Initialize
-        bar_length_str = os.getenv('PROGRESS_BAR_LENGTH')
+        # --- Initialize Tkinter root and window if needed ---
+        if _progress_bar_window is None or not _progress_bar_window.winfo_exists():
+            # Create hidden root if it doesn't exist or was destroyed
+            if _progress_bar_root is None or not _progress_bar_root.winfo_exists():
+                _progress_bar_root = tk.Tk()
+                _progress_bar_root.withdraw() # Hide the root window
 
-        # Check if the environment variable string exists and contains only digits
-        if bar_length_str is not None and bar_length_str.isdigit():
+            _progress_bar_window = tk.Toplevel(_progress_bar_root)
+            _progress_bar_window.title(prefix) # Initial title
+            _progress_bar_window.geometry("430x45") # Match final PS size
+            _progress_bar_window.resizable(False, False)
+            _progress_bar_window.attributes("-topmost", True)
+
+            # Set background color to system default control color
+            # Note: Tkinter doesn't have direct access to *all* system colors like WinForms.
+            # 'SystemButtonFace' is usually the standard dialog background.
             try:
-                term_width = int(bar_length_str)
-                if term_width <= 0: # Ensure it's positive
-                     # Use logger if available, otherwise print warning
-                     if 'logger' in globals(): logger.warning("PROGRESS_BAR_LENGTH must be a positive integer. Using terminal width.")
-                     else: print("Warning: PROGRESS_BAR_LENGTH must be a positive integer. Using terminal width.")
-                     term_width = None # Fallback to terminal width
-            except ValueError: # Should not happen with isdigit, but good practice
-                if 'logger' in globals(): logger.warning("PROGRESS_BAR_LENGTH has invalid integer format. Using terminal width.")
-                else: print("Warning: PROGRESS_BAR_LENGTH has invalid integer format. Using terminal width.")
-                term_width = None # Fallback
-        else:
-            # Log only if it was set but invalid (i.e., not None and not isdigit())
-            if bar_length_str is not None:
-                if 'logger' in globals(): logger.warning("PROGRESS_BAR_LENGTH environment variable is not a valid integer. Using terminal width.")
-                else: print("Warning: PROGRESS_BAR_LENGTH environment variable is not a valid integer. Using terminal width.")
+                 _progress_bar_window.config(bg='SystemButtonFace')
+            except tk.TclError:
+                 logger.warning("Could not set background to 'SystemButtonFace', using default.")
+                 # Fallback to a light gray if system color fails
+                 _progress_bar_window.config(bg='light gray')
 
-        # If term_width is still None (env var not set, invalid, or non-positive), get terminal size
-        if term_width is None:
             try:
-                # Use shutil.get_terminal_size() with a fallback
-                term_width = shutil.get_terminal_size(fallback=(80, 24)).columns
-            except Exception as e: # Catch potential errors from get_terminal_size
-                if 'logger' in globals(): logger.warning(f"Could not get terminal size: {e}. Using default width 80.")
-                else: print(f"Warning: Could not get terminal size: {e}. Using default width 80.")
-                term_width = 80 # Final fallback width
+                _progress_bar_window.attributes("-toolwindow", 1) # Windows specific?
+            except tk.TclError:
+                 logger.debug("Could not set -toolwindow attribute (may not be supported).")
+            _progress_bar_window.protocol("WM_DELETE_WINDOW", lambda: None) # Disable closing via 'X'
 
-        # Calculate percentage
-        if total == 0:
-             percent_str = " N/A" # Avoid division by zero
-        else:
-            percent = 100 * (iteration / float(total))
-            percent_str = ("{0:." + str(decimals) + "f}").format(percent)
+            # Center the window (optional, might be handled by WM)
+            _progress_bar_window.update_idletasks() # Ensure dimensions are calculated
+            width = _progress_bar_window.winfo_width()
+            height = _progress_bar_window.winfo_height()
+            x = (_progress_bar_window.winfo_screenwidth() // 2) - (width // 2)
+            y = (_progress_bar_window.winfo_screenheight() // 2) - (height // 2)
+            _progress_bar_window.geometry(f'{width}x{height}+{x}+{y}')
 
-        # Prepare the iteration/total suffix if default suffix is used
-        if not suffix:
-            effective_suffix = f"({iteration}/{total})"
-        else:
-            effective_suffix = suffix
+            # --- Configure Style for LimeGreen bar ---
+            _progress_bar_style = ttk.Style(_progress_bar_window)
+            _progress_bar_style.configure("lime.Horizontal.TProgressbar",
+                                         background='LimeGreen', troughcolor='SystemButtonFace') # Match window BG
 
-        # 2. Calculate the actual bar length based on other text
-        # Calculate filled length (handle total=0 case)
-        if total == 0:
-            filled_length = 0
-        else:
-            filled_length = int(term_width * iteration // total)
+            _progress_bar_widget = ttk.Progressbar(
+                _progress_bar_window,
+                orient="horizontal",
+                length=392, # Match final PS bar width
+                mode="determinate",
+                style="lime.Horizontal.TProgressbar" # Apply custom style
+            )
+            _progress_bar_widget.place(x=18, y=12) # Match final PS bar position
 
-        # Construct the bar string
-        bar = fill * filled_length + ' ' * (term_width - filled_length)
+        # --- Update window and progress bar ---
+        update_needed = False
 
-        # --- Pad/Truncate Prefix ---
-        prefix_length = int(os.getenv('DEFAULT_PREFIX_LENGTH'))
-        padded_prefix = prefix.ljust(prefix_length)[:prefix_length] 
+        # Update title if changed
+        if _progress_bar_window.title() != prefix:
+            _progress_bar_window.title(prefix)
+            update_needed = True
 
-        # 3. Construct the final output string in the desired format
-        output_str = f'\r{padded_prefix} [{bar}] {percent_str}% {effective_suffix}'
+        # Update progress bar value
+        max_val = max(1, total) # Avoid zero max
+        current_val = min(max(0, iteration), max_val) # Clamp value
 
-        # Print the progress bar
-        print(output_str, end=print_end)
+        if _progress_bar_widget['maximum'] != max_val:
+            _progress_bar_widget.config(maximum=max_val)
+            update_needed = True # Need update if max changes
+
+        if _progress_bar_widget['value'] != current_val:
+            _progress_bar_widget.config(value=current_val)
+            update_needed = True
+
+        # Only update UI if something changed
+        if update_needed:
+            try:
+                _progress_bar_window.update() # Use update() instead of update_idletasks() for more responsiveness
+            except tk.TclError as e: # Catch errors if window closed unexpectedly
+                logger.warning(f"Tkinter error during progress bar update (window likely closed): {e}")
+                _progress_bar_window = None # Reset state
+                _progress_bar_widget = None
 
     except Exception as e:
-        # Fallback print in case of any error during progress bar generation
-        print(f"\rError generating progress bar: {e}", end=print_end)
+        # Log any unexpected error during progress bar handling
+        if logger: logger.error(f"Error in show_progress_bar: {e}", exc_info=True)
+        else: print(f"Error in show_progress_bar: {e}")
+        # Attempt to clean up if error occurred during init
+        if _progress_bar_window and _progress_bar_window.winfo_exists():
+            try: _progress_bar_window.destroy()
+            except: pass
+        _progress_bar_window = None
+        _progress_bar_widget = None
+
+def stop_graphical_progress_bar(logger=None):
+    """Closes the graphical progress bar window."""
+    global _progress_bar_window, _progress_bar_widget, _progress_bar_root
+    try:
+        if _progress_bar_window and _progress_bar_window.winfo_exists():
+            _progress_bar_window.destroy()
+            if logger: logger.debug("Graphical progress bar window destroyed.")
+        # Optionally destroy the hidden root if no other Tkinter windows are expected
+        # if _progress_bar_root and _progress_bar_root.winfo_exists():
+        #     _progress_bar_root.destroy()
+        #     _progress_bar_root = None
+    except Exception as e:
+        if logger: logger.error(f"Error destroying progress bar window: {e}")
+        else: print(f"Error destroying progress bar window: {e}")
+    finally:
+        # Ensure variables are reset even if destroy fails
+        _progress_bar_window = None
+        _progress_bar_widget = None
+        # _progress_bar_root = None # Only reset root if destroying it
 
 def haversine(lat1, lon1, lat2, lon2):
     """Calculate distance between two lat/lon points in meters."""

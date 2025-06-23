@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$ffmpeg,
     [string]$magickPath,
     [string]$step
@@ -106,8 +106,8 @@ function Log {
 }
 
 # Validate the directory
-if (!(Test-Path -Path $unzipedDirectory -PathType Container)) {
-    Log "ERROR" "Invalid directory path: $unzipedDirectory"
+if (!(Test-Path -Path $unzippedDirectory -PathType Container)) {
+    Log "ERROR" "Invalid directory path: $unzippedDirectory"
     exit 1
 }
 
@@ -307,14 +307,14 @@ function Repair-MissedRelatedFiles {
 
 # Remove .MP files before processing
 Log "INFO" "Starting cleanup: removing .MP files..."
-$mpFiles = Get-ChildItem -Path $unzipedDirectory -Recurse -File -Filter "*.mp"
+$mpFiles = Get-ChildItem -Path $unzippedDirectory -Recurse -File -Filter "*.mp"
 foreach ($mpFile in $mpFiles) {
     Remove-Item -Path $mpFile.FullName -Force
     Log "INFO" "Removed .mp file: $($mpFile.FullName)"
 }
 
 # Process the remaining files
-$files = Get-ChildItem -Path $unzipedDirectory -Recurse -File
+$files = Get-ChildItem -Path $unzippedDirectory -Recurse -File
 $currentItem = 0
 $totalItems = $files.Count
 foreach ($file in $files) {
@@ -386,7 +386,7 @@ foreach ($file in $files) {
     }
 }
 # After processing all files, rename .json.tmp to .json
-Rename-JsonTmpToJson -directory $unzipedDirectory
+Rename-JsonTmpToJson -directory $unzippedDirectory
 # Fix any missed related files
-Repair-MissedRelatedFiles -directory $unzipedDirectory
+Repair-MissedRelatedFiles -directory $unzippedDirectory
 Log "INFO" "Conversion and .json.tmp processing completed"

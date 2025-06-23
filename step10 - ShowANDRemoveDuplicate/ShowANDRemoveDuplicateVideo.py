@@ -12,6 +12,8 @@ from matplotlib.widgets import Button
 matplotlib.use('TkAgg')
 import time
 import sys
+import debugpy
+import os; print(f"Python CWD: {os.getcwd()}")
 
 # --- Determine Project Root and Add to Path ---
 # Assumes the script is in 'stepX' directory directly under the project root
@@ -42,11 +44,6 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
 VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
-
-# --- Removed local logging setup block ---
-# --- Removed local delete_files function ---
-# --- Removed local backup_json_files function ---
-# --- Removed local restore_json_files function ---
 
 # --- release_video_handles, release_all_video_captures remain the same ---
 def release_video_handles(path):

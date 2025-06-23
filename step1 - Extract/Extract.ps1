@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
-    [string]$zipedDirectory,
+    [string]$unzippedDirectory,
+    [string]$zippedDirectory,
     [string]$extractor,
     [string]$step
 )
@@ -104,6 +104,13 @@ function Log {
         Write-Warning "Invalid log level used: $Level"
     }
 }
+# --- End Log Function Definition ---
+
+
+# Validate the parameters.
+if (-not $unzippedDirectory) {
+    New-Item -ItemType Directory -Path $unzippedDirectory -Force | Out-Null
+}
 
 # Get all zip files in the directory.
 $zipFiles = Get-ChildItem -Path $zipDirectory -recurse -Filter "*.zip" -File
@@ -115,5 +122,5 @@ foreach ($zipFile in $zipFiles) {
     # Extract the contents of the zip file to the temporary directory.
     $currentItem++
     Show-ProgressBar -Current $currentItem -Total $totalItems -Message "extracting"
-	& "$extractor" x -aos "$zipFile" "-o$unzipedDirectory" | Out-Null
+	& "$extractor" x -aos "$zipFile" "-o$unzippedDirectory" | Out-Null
 } 

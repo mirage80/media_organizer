@@ -2,8 +2,7 @@ import os
 import json
 import tkinter as tk
 from tkinter import ttk, messagebox
-from PIL import Image, ImageTk
-import argparse
+from PIL import Image, ImageTk, ImageDraw, ImageFont
 import gc
 import time
 import sys
@@ -35,261 +34,479 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 
 # Paths
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
-RECONSTRUCT_INFO_FILE = os.path.join(OUTPUT_DIR, "image_reconstruct_info.json")
+RECONSTRUCT_INFO_FILE = os.path.join(OUTPUT_DIR, "image_reconstruct_info.json") # Changed filename
 
 class JunkImageReviewer:
-    def __init__(self, master):
+    def __init__(self, master, media_data): # master is the Tkinter root window
         self.master = master
         master.title("Junk Image Reviewer")
 
-        self.image_info_data = self.load_image_info()
-        self.reconstruct_list = [] # Initialize reconstruct_list
-        self.undo_stack = []
-        self.current_index = 0
+        self.media_info_data = media_data
+        self.reconstruct_list = self.load_reconstruct_info()
+
+        # --- Dynamic Grid Calculation ---
+        self.master.state('zoomed')
+        self.master.update_idletasks() # Ensure window dimensions are current
+
+        # Define base thumbnail size and padding to calculate grid (local to __init__)
+        thumb_w, thumb_h = 200, 200 # Base thumbnail width and height
+        padding_x, padding_y = 15, 55 # Account for cell padding and filename label height
+        controls_h = 80 # Estimated height for bottom control buttons
+
+        screen_w = self.master.winfo_width()
+        screen_h = self.master.winfo_height()
+
+        self.grid_cols = max(1, screen_w // (thumb_w + padding_x))
+        self.grid_rows = max(1, (screen_h - controls_h) // (thumb_h + padding_y))
+
+        # --- Pagination and UI State ---
+        self.items_per_page = self.grid_cols * self.grid_rows
+        self.current_page = 0
+        self.page_item_vars = []
+        self.processed_media = self.load_processed_media() # Load processed media
+        self.hover_popup = None
+        self.hover_job_id = None
+        self.thumb_labels = {}
+        self.resize_jobs = {}
+        self.path_to_var_map = {} # Map to store BooleanVar for each path
+        # Filter out already processed media ONCE at startup
+        if self.processed_media:
+            processed_set = set(self.processed_media)
+            self.media_info_data = [
+                v for v in self.media_info_data if v['path'] not in processed_set
+            ]
+
+        # Verify that all media in the list still exist on disk to handle crash recovery
+        original_count = len(self.media_info_data)
+        self.media_info_data = [
+            v for v in self.media_info_data if os.path.exists(v['path'])
+        ]
+        new_count = len(self.media_info_data)
+
+        if new_count < original_count:
+            removed_count = original_count - new_count
+            logger.warning(f"Removed {removed_count} entries for media that no longer exist on disk (likely from a previous crash).")
+            utils.write_json_atomic(self.media_info_data, IMAGE_INFO_FILE, logger=logger)
 
         self.setup_ui()
-        self.bind_keys()
-        self.show_image()
+        self.show_page()
 
-    def save_state(self):
-        # Use utils.write_json_atomic and pass logger
-        utils.write_json_atomic(self.image_info_data, IMAGE_INFO_FILE, logger=logger)
-        utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger)
-        logger.info("📝 Saved current progress.")
-
-    def load_image_info(self):
-        if os.path.exists(IMAGE_INFO_FILE):
-            try: # Added try block
-                with open(IMAGE_INFO_FILE, "r") as f:
+    def load_reconstruct_info(self):
+        """Loads the list of media that need reconstruction."""
+        if os.path.exists(RECONSTRUCT_INFO_FILE):
+            try:
+                with open(RECONSTRUCT_INFO_FILE, "r") as f:
                     data = json.load(f)
                     if isinstance(data, list):
                         return data
-                    else:
-                        logger.error(f"Expected a list in {IMAGE_INFO_FILE}, found {type(data)}.")
-                        return []
+                    return []
             except Exception as e:
-                logger.error(f"Failed to load image_info.json: {e}")
+                logger.error(f"Failed to load {RECONSTRUCT_INFO_FILE}: {e}")
         return []
 
-    # --- setup_ui remains the same ---
+    def load_processed_media(self): # Loads the list of already processed (kept) media.
+        """Loads the list of already processed (kept) media."""
+        processed_file = os.path.join(OUTPUT_DIR, "junk_images_processed.json") # File name is specific to this module
+        if os.path.exists(processed_file):
+            try:
+                with open(processed_file, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+                    return []
+            except Exception as e:
+                logger.error(f"Error loading processed media: {e}")
+                return []
+        return []
+
+    def save_state(self):
+        # Use utils.write_json_atomic and pass logger
+        utils.write_json_atomic(self.media_info_data, IMAGE_INFO_FILE, logger=logger) # Save the updated media_info_data list
+        utils.write_json_atomic(self.reconstruct_list, RECONSTRUCT_INFO_FILE, logger=logger) # Save the updated reconstruct list
+        logger.info("📝 Saved current progress.")
+
     def setup_ui(self):
-        self.frame = ttk.Frame(self.master, padding="10")
-        self.frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        # Make the main frame expandable
+        # Bind Escape key to close
+        self.master.bind('<Escape>', lambda e: self.master.destroy())
+        # Configure main window grid
         self.master.columnconfigure(0, weight=1)
         self.master.rowconfigure(0, weight=1)
-        self.frame.columnconfigure(0, weight=1) # Allow columns in frame to expand if needed
-
-        self.image_label = tk.Label(self.frame, text="No image loaded", bg="black", anchor="center")
-        self.image_label.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-        # Allow the row containing the image label to expand
-        self.frame.rowconfigure(2, weight=1)
-
-        # --- Place path_label below the image ---
-        self.path_label = ttk.Label(self.frame, text="No path loaded", anchor="center") # Use separate path label
-        self.path_label.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E)) # Place below image
-        # ---
-
-        self.counter_label = ttk.Label(self.frame, text="Remaining: 0", anchor="center")
-        self.counter_label.grid(row=4, column=0, columnspan=3, sticky=(tk.W, tk.E))
-
-        # --- Button Frame for Centering ---
-        button_frame = ttk.Frame(self.frame)
-        button_frame.grid(row=5, column=0, columnspan=3, pady=5)
-        # Center the button frame itself if its column expands
-        self.frame.columnconfigure(0, weight=1) # Ensure column 0 can expand
-        self.frame.columnconfigure(1, weight=1) # Ensure column 1 can expand
-        self.frame.columnconfigure(2, weight=1) # Ensure column 2 can expand
-
-        self.delete_button = ttk.Button(button_frame, text="Delete (d)", command=self.delete_image)
-        self.delete_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
-
-        self.keep_button = ttk.Button(button_frame, text="Keep (x)", command=self.keep_image)
-        self.keep_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
-
-        self.reconstruct_button = ttk.Button(button_frame, text="Reconstruct (b)", command=self.reconstruct_image)
-        self.reconstruct_button.pack(side=tk.LEFT, padx=10) # Use pack within button_frame
-        # ---
-
-    # --- bind_keys remains the same ---
-    def bind_keys(self):
-        self.master.bind("d", lambda event: self.delete_image())
-        self.master.bind("x", lambda event: self.keep_image())
-        self.master.bind("b", lambda event: self.reconstruct_image())
-        self.master.bind("u", lambda event: self.undo_last())
+        # Configure main window grid
+        main_frame = ttk.Frame(self.master)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(1, weight=1)
+        # Header instruction label
+        header_label = ttk.Label(main_frame, text="Select junk media to delete. Click Next to process deletions for the page.", style="Header.TLabel")
+        header_label.grid(row=0, column=0, sticky="ew", pady=(0, 10)) # Header instruction label
+        self.master.style = ttk.Style(self.master)
+        self.master.style.configure("Header.TLabel", font=("Segoe UI", 10, "bold"))
+        # Control frame for buttons and status
+        control_frame = ttk.Frame(main_frame)
+        control_frame.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        control_frame.columnconfigure(1, weight=1) # Make status label expand
+        self.prev_button = ttk.Button(control_frame, text="< Previous", command=self.prev_page)
+        self.prev_button.grid(row=0, column=0, padx=5, sticky="w")
+        self.status_label = ttk.Label(control_frame, text="Status", anchor="center")
+        self.status_label.grid(row=0, column=1, sticky="ew")
+        self.next_button = ttk.Button(control_frame, text="Next > (n)", command=self.process_and_next_page)
+        self.next_button.grid(row=0, column=2, padx=5, sticky="e")
+        self.skip_button = ttk.Button(control_frame, text="Skip Step", command=self.skip_step)
+        self.skip_button.grid(row=0, column=3, padx=5, sticky="e") # Skip step button
+        # Content frame for the video grid
+        self.content_frame = ttk.Frame(main_frame, relief="sunken", borderwidth=1)
+        self.content_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10) # Content frame for the media grid
+        for i in range(self.grid_cols):
+            self.content_frame.columnconfigure(i, weight=1) # Removed minsize
+        for i in range(self.grid_rows):
+            self.content_frame.rowconfigure(i, weight=1) # Removed minsize
+        self.undo_button = ttk.Button(control_frame, text="Undo Last (u)", command=self.undo_last)  # Add Undo button
+        self.undo_button.grid(row=0, column=4, padx=5, sticky="e")
         self.master.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-    # --- show_image remains the same ---
-    def show_image(self):
-        if not self.image_info_data or self.current_index >= len(self.image_info_data):
-            messagebox.showinfo("Done", "All images processed.")
-            self.master.quit()
+    def show_page(self):
+        # Clear previous page's widgets
+        for child in self.content_frame.winfo_children():
+            child.destroy()
+        # Cancel any pending resize jobs from the previous page
+        for job in self.resize_jobs.values():
+            self.master.after_cancel(job)
+        self.resize_jobs.clear()
+        self.page_item_vars = []
+        self.thumb_labels = {} # Reset for the new page
+        self.path_to_var_map = {} # Reset for the new page
+        if not self.media_info_data:
+            self.status_label.config(text="All media have been processed!")
+            self.skip_button.config(text="Finish") # Change button text at the end
+            self.next_button.config(state="disabled")
+            self.prev_button.config(state="disabled")
             return
+        start_index = self.current_page * self.items_per_page
+        end_index = min(start_index + self.items_per_page, len(self.media_info_data))
+        # Update status label
+        total_media = len(self.media_info_data) # Total number of media items
+        self.status_label.config(text=f"Showing Media {start_index + 1}-{end_index} of {total_media}")
+        # Populate grid
+        for i in range(start_index, end_index):
+            item_data = self.media_info_data[i]
+            path = item_data["path"]
+            grid_pos = i - start_index
+            row, col = divmod(grid_pos, self.grid_cols)
+            cell_frame = ttk.Frame(self.content_frame, relief="groove", borderwidth=1)
+            cell_frame.grid(row=row, column=col, padx=5, pady=5, sticky="nsew")
+            cell_frame.rowconfigure(0, weight=1)
+            cell_frame.columnconfigure(0, weight=1)
+            # Create a placeholder image to give the label an initial, uniform size. # This prevents the grid from shifting as thumbnails load at different speeds.
+            placeholder_img = ImageTk.PhotoImage(Image.new('RGB', (200, 200), 'black')) # This prevents the grid from shifting as thumbnails load at different speeds.
+            thumb_label = tk.Label(
+                cell_frame,
+                image=placeholder_img,
+                bg="black",
+                cursor="hand2",
+                width=200,
+                height=200
+            )
+            thumb_label.pack_propagate(False)  # Prevent auto-resizing to content
+            thumb_label.grid(row=0, column=0, sticky="nsew")
+            thumb_label.image = placeholder_img # Keep a reference
+            self.thumb_labels[path] = thumb_label # Store reference to the label
+            check_var = tk.BooleanVar(value=False)
+            self.path_to_var_map[path] = check_var # Populate the map
+            filename_label = ttk.Label(cell_frame, text=os.path.basename(path), anchor='center', wraplength=180, cursor="hand2")
+            filename_label.grid(row=1, column=0, sticky="ew", padx=2, pady=2)
+            self.page_item_vars.append((path, check_var))
+            # --- Bindings ---
+            thumb_label.bind("<Enter>", lambda e, p=path, w=cell_frame: self.on_hover_enter(e, p, w))
+            cell_frame.bind("<Leave>", self.on_hover_leave)
+            thumb_label.bind("<Button-1>", lambda e, p=path: self.toggle_selection(p))
+            filename_label.bind("<Button-1>", lambda e, p=path: self.toggle_selection(p))
 
-        # Check if index is valid before accessing
-        if self.current_index < 0:
-             logger.warning("Current index is negative, resetting to 0.")
-             self.current_index = 0
-             if not self.image_info_data: # Double check if list became empty
-                  messagebox.showinfo("Done", "All images processed.")
-                  self.master.quit()
-                  return
+            # Rotate Left Button (Counter-clockwise)
+            # Using tk.Button for better style control (flat, no border). Parent is cell_frame.
+            rotate_left_button = tk.Button(cell_frame, text="↺",
+                                           relief='flat', borderwidth=0, highlightthickness=0,
+                                           bg='#363636', fg='white', activebackground='#555555',
+                                           font=('Segoe UI', 10), cursor="hand2",
+                                           command=lambda p=path: self.rotate_image(p, 90))
+            rotate_left_button.place(in_=thumb_label, relx=0.0, rely=1.0, x=5, y=-5, anchor='sw')
 
-        path = self.image_info_data[self.current_index]["path"]
-        if not os.path.exists(path):
-            logger.warning(f"Missing file: {path}")
-            # Remove missing file and retry showing image at the *same* index
-            self.image_info_data.pop(self.current_index)
-            # No need to increment index here
-            return self.show_image() # Recursive call to show next available
+            # Rotate Right Button (Clockwise)
+            rotate_right_button = tk.Button(cell_frame, text="↻",
+                                            relief='flat', borderwidth=0, highlightthickness=0,
+                                            bg='#363636', fg='white', activebackground='#555555',
+                                            font=('Segoe UI', 10), cursor="hand2",
+                                            command=lambda p=path: self.rotate_image(p, -90))
+            rotate_right_button.place(in_=thumb_label, relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
 
-        self.load_and_display_image(path, self.image_label)
+        # Update navigation buttons
+        self.prev_button.config(state="normal" if self.current_page > 0 else "disabled") # This line was already correct
+        self.next_button.config(state="normal" if end_index < len(self.media_info_data) else "disabled")
 
-    def delete_image(self):
-        if not self.image_info_data or self.current_index >= len(self.image_info_data):
-            logger.warning("Delete called but no image data or index out of bounds.")
-            return
-        # Push state BEFORE modification
-        self.undo_stack.append({"action": "delete", "data": self.image_info_data[self.current_index], "index": self.current_index})
-        path = self.image_info_data[self.current_index]["path"]
-        logger.info(f"🗑️ Deleting: {path}")
-        self.remove_file(path) # Use local remove_file with retries
-        self.image_info_data.pop(self.current_index)
-        self.save_state()
-        # Index automatically points to the next item after pop
-        self.show_image()
+        # Keyboard shortcuts
+        self.master.bind("n", lambda event: self.process_and_next_page())
+        self.master.bind("u", lambda event: self.undo_last())
 
-    def keep_image(self):
-        if not self.image_info_data or self.current_index >= len(self.image_info_data):
-            logger.warning("Keep called but no image data or index out of bounds.")
-            return
-        # Push state BEFORE modification
-        self.undo_stack.append({"action": "keep", "index": self.current_index})
-        logger.info("Keeping image")
-        self.current_index += 1
-        self.show_image()
+        # Schedule the initial thumbnail load after the UI has had a moment to stabilize.
+        # This prevents the grid from re-rendering multiple times during initial layout.
+        self.master.after(200, self._load_initial_thumbnails)
 
-    def reconstruct_image(self):
-        if not self.image_info_data or self.current_index >= len(self.image_info_data):
-            logger.warning("Reconstruct called but no image data or index out of bounds.")
-            return
-        path = self.image_info_data[self.current_index]["path"]
-        # Push state BEFORE modification
-        self.undo_stack.append({"action": "reconstruct", "path": path, "index": self.current_index})
-        logger.info(f"Marking for reconstruct: {path}")
-        if path not in self.reconstruct_list: # Avoid duplicates
-            self.reconstruct_list.append(path)
-        self.current_index += 1
-        self.save_state()
-        self.show_image()
+    def _load_initial_thumbnails(self):
+        """
+        Loads the media thumbnails for the currently displayed page and then binds the
+        resize event handler for future window resizing.
+        """
+        logger.debug("Starting initial thumbnail load for the page.")
+        for path, label in self.thumb_labels.items():
+            self.update_thumbnail_image(path, label)
+            # NOW, bind the configure event for any subsequent resizes.
+            label.bind("<Configure>", lambda e, p=path, lbl=label: self.on_thumb_resize(e, p, lbl))
 
-    # Keep local remove_file with retry logic
+    def rotate_image(self, image_path, angle):
+        """Rotates the specified media file by the given angle and refreshes its thumbnail."""
+        try:
+            rotation_direction = "Clockwise" if angle < 0 else "Counter-Clockwise"
+            logger.info(f"Rotating image {abs(angle)}° {rotation_direction}: {image_path}")
+            with Image.open(image_path) as img:
+                # Preserve EXIF data if it exists
+                exif = img.info.get('exif')
+                # PIL's rotate is counter-clockwise.
+                rotated_img = img.rotate(angle, expand=True)
+                if exif:
+                    rotated_img.save(image_path, exif=exif)
+                else:
+                    rotated_img.save(image_path)
+
+            # Refresh the thumbnail in the UI and close any active popup for this image
+            if image_path in self.thumb_labels:
+                self.update_thumbnail_image(image_path, self.thumb_labels[image_path])
+            self.on_hover_leave(None) # Close any active media popup to prevent showing a stale image
+        except Exception as e:
+            logger.error(f"Failed to rotate image {image_path}: {e}")
+            messagebox.showerror("Rotation Error", f"Could not rotate image:\n{os.path.basename(image_path)}\n\nError: {e}")
+
+    def toggle_selection(self, path):
+        """Toggles the selection state for a given path and triggers a thumbnail refresh."""
+        if path in self.path_to_var_map:
+            check_var = self.path_to_var_map[path]
+            new_state = not check_var.get()
+            check_var.set(new_state)
+            # Force a redraw of the thumbnail to show/hide watermark
+            if path in self.thumb_labels:
+                # Pass the new selection state directly to ensure the correct image is drawn
+                self.update_thumbnail_image(path, self.thumb_labels[path], is_selected=new_state)
+
+    def prev_page(self):
+        self.current_page -= 1
+        self.show_page()
+
+    def process_and_next_page(self):
+        """Processes deletions/kept items on the current page and then moves to the next page."""
+        paths_to_delete = {path for path, var in self.page_item_vars if var.get()}
+        all_page_paths = {path for path, var in self.page_item_vars}
+        paths_to_keep = all_page_paths - paths_to_delete
+        # --- Deletion Logic ---
+        deleted_count = 0
+        for path in paths_to_delete:
+            if self.remove_file(path):
+                deleted_count += 1
+        if deleted_count > 0:
+            logger.info(f"Processed {len(all_page_paths)} files on page: {deleted_count} deleted, {len(paths_to_keep)} kept.")
+        # Update processed media list with items that were kept on this page
+        if paths_to_keep: # Update processed media list with items that were kept on this page
+            self.processed_media.extend(list(paths_to_keep))
+            self.save_processed_media()
+        # Update the main data list by filtering out ALL items from this page
+        if all_page_paths:
+            self.media_info_data = [item for item in self.media_info_data if item['path'] not in all_page_paths]
+        self.save_state() # Save the updated media_info_data list
+        # The list is now shorter. Calling show_page with the same current_page
+        # will display the next set of unprocessed items.
+        self.show_page()
+
+    def save_processed_media(self): # Saves the list of processed (kept) media to a file.
+        """Saves the list of processed (kept) media to a file."""
+        processed_file = os.path.join(OUTPUT_DIR, "junk_images_processed.json") # File name is specific to this module
+        try:
+            utils.write_json_atomic(self.processed_media, processed_file, logger=logger)
+        except Exception as e:
+            logger.error(f"Error saving processed images list: {e}")
+    def undo_last(self):
+        """Moves back to the previous page without processing deletions."""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.show_page()
+
+    def skip_step(self):
+        """Asks for confirmation and then closes the application, keeping all remaining media."""
+        if messagebox.askyesno("Skip Step", "Are you sure you want to skip reviewing the rest of the media?"): # Asks for confirmation and then closes the application, keeping all remaining media.
+            self.on_closing()
+
     def remove_file(self, file_path):
+        """Attempts to remove a file with retries."""
         if not os.path.exists(file_path):
-            logger.warning(f"File {file_path} does not exist.")
-            return
+            logger.warning(f"File {file_path} does not exist, cannot remove.")
+            return True # Consider it 'removed' if it's not there
+
         for attempt in range(3):
             try:
+                gc.collect() # Force garbage collection
+                time.sleep(0.1 * (attempt + 1)) # Short, increasing delay
                 os.remove(file_path)
                 logger.info(f"Deleted: {file_path}")
-                return
+                return True # Deletion successful
             except (PermissionError, OSError) as e:
-                logger.warning(f"Attempt {attempt+1}: File in use: {file_path} - {e}")
-                gc.collect()
-                time.sleep(0.5)
-        logger.error(f"Failed to delete after retries: {file_path}")
+                logger.warning(f"Attempt {attempt+1}: Failed to delete {file_path} - {e}")
+            except Exception as e: # Catch any other potential errors
+                 logger.error(f"Attempt {attempt+1}: Unexpected error deleting {file_path} - {e}")
+        logger.error(f"Failed to delete after multiple retries: {file_path}")
+        return False # Deletion failed
 
-    # --- load_and_display_image remains the same ---
-    def load_and_display_image(self, image_path, label):
-        # label is self.image_label
-        # path_label is self.path_label (add as argument or access directly)
-        path_label = self.path_label
+    def on_thumb_resize(self, event, media_path, label):
+        """Debounces resize events for a thumbnail label to avoid excessive image loading."""
+        # Cancel any pending job for this specific label
+        job_id = self.resize_jobs.get(label)
+        if job_id:
+            self.master.after_cancel(job_id)
 
-        if not os.path.exists(image_path):
-            label.config(image='', text=f"File not found: {os.path.basename(image_path)}") # Clear image
-            label.image = None # Clear reference
-            path_label.config(text=f"File not found: {os.path.basename(image_path)}")
+        # Schedule the new job
+        new_job_id = self.master.after(150, lambda: self.update_thumbnail_image(media_path, label))
+        self.resize_jobs[label] = new_job_id
+
+    def update_thumbnail_image(self, media_path, label, is_selected=None):
+        """Loads a media thumbnail and applies a watermark if selected."""
+        target_w = label.winfo_width()
+        target_h = label.winfo_height()
+        if target_w < 20 or target_h < 20: # Avoid processing for tiny/collapsed widgets
             return
+
         try:
-            # Ensure the UI has had a chance to draw itself to get dimensions
-            label.update_idletasks()
+            img = Image.open(media_path)
+            # This preserves aspect ratio, fitting within the target dimensions.
+            img.thumbnail((target_w, target_h), Image.Resampling.LANCZOS)
 
-            # Calculate max dimensions based on the label's allocated space
-            max_width = label.winfo_width()
-            max_height = label.winfo_height()
+            # --- Watermark Logic ---
+            # If selection state isn't passed (e.g., from initial resize), look it up.
+            if is_selected is None: # If selection state isn't passed (e.g., from initial resize), look it up.
+                check_var = self.path_to_var_map.get(media_path)
+                is_selected = check_var.get() if check_var else False
 
-            # Add a fallback if dimensions are still tiny (initial load)
-            if max_width < 50 or max_height < 50:
-                max_width, max_height = 640, 480 # Reasonable default
+            if is_selected:
+                logger.debug(f"Applying JUNK watermark to {os.path.basename(media_path)}")
+                img = img.convert("RGBA")
+                # Create a transparent layer for the text, same size as the image
+                text_layer = Image.new("RGBA", img.size, (255, 255, 255, 0))
+                # Select font and size. Font size is proportional to the image diagonal.
+                font_size = int((img.width**2 + img.height**2)**0.5 / 6)
+                try:
+                    font = ImageFont.truetype("arialbd.ttf", font_size)
+                except IOError:
+                    try:
+                        # Fallback to regular Arial if bold is not available
+                        font = ImageFont.truetype("arial.ttf", font_size)
+                        logger.warning("Arial Bold font not found, falling back to regular Arial.")
+                    except IOError:
+                        # Fallback to default if Arial isn't found either
+                        logger.warning("Arial font not found, using default font. Watermark may be small.")
+                        font = ImageFont.load_default()
 
-            img = Image.open(image_path)
-            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS) # Use LANCZOS for better quality
+                draw = ImageDraw.Draw(text_layer)
+                text = "JUNK"
+
+                # Center the text
+                try: # Modern Pillow
+                    bbox = draw.textbbox((0, 0), text, font=font)
+                    text_width = bbox[2] - bbox[0]
+                    text_height = bbox[3] - bbox[1]
+                except AttributeError: # Older Pillow
+                    text_width, text_height = draw.textsize(text, font=font)
+                position = ((img.width - text_width) // 2, (img.height - text_height) // 2)
+                draw.text(position, text, font=font, fill=(255, 0, 0, 180))
+                rotated_text_layer = text_layer.rotate(45, resample=Image.Resampling.BICUBIC, expand=False)
+                img = Image.alpha_composite(img, rotated_text_layer)
 
             photo = ImageTk.PhotoImage(img)
-            label.config(image=photo, text="") # Display image, clear text
-            label.image = photo # Keep reference
-
-            # Update separate path label
-            path_label.config(text=os.path.basename(image_path))
-
-            # Update counter
-            remaining = len(self.image_info_data) - self.current_index
-            self.counter_label.config(text=f"Remaining: {remaining}")
-
+            label.config(image=photo, text="")
+            label.image = photo
         except Exception as e:
-            logger.error(f"Error loading image {image_path}: {e}")
-            label.config(image='', text=f"Failed to load: {os.path.basename(image_path)}") # Clear image
-            label.image = None # Clear reference
-            path_label.config(text=f"Failed to load: {os.path.basename(image_path)}")
+            logger.error(f"Error creating/updating thumbnail for {media_path}: {e}")
+            label.config(image='', text=f"No Thumbnail", bg="black", fg="red")
+            label.image = None
 
-    # --- undo_last remains the same ---
-    def undo_last(self):
-        if not self.undo_stack:
-            logger.info("Nothing to undo.")
+    def on_hover_enter(self, event, media_path, parent_widget):
+        """Schedules a media popup to appear after a short delay."""
+        self.on_hover_leave(event) # Close any existing popup immediately
+        self.hover_job_id = self.master.after(
+            500, lambda: self.show_image_popup(media_path, parent_widget)
+        )
+
+    def on_hover_leave(self, event):
+        """Cancels a scheduled popup or closes an existing one."""
+        if self.hover_job_id:
+            self.master.after_cancel(self.hover_job_id)
+            self.hover_job_id = None
+        if self.hover_popup and self.hover_popup.winfo_exists():
+            self.hover_popup.destroy()
+            self.hover_popup = None
+
+    def show_image_popup(self, media_path, parent_widget): # Creates a frameless popup to show a larger version of the media.
+        """Creates a frameless popup to show a larger version of the image."""
+        self.on_hover_leave(None)  # Clean up any lingering popups/jobs before creating a new one
+
+        try:
+            pil_img = Image.open(media_path)
+            # Define max size for the popup, e.g., 40% of screen dimensions
+            max_w = self.master.winfo_screenwidth() * 0.5
+            max_h = self.master.winfo_screenheight() * 0.5
+            pil_img.thumbnail((max_w, max_h), Image.Resampling.LANCZOS)
+        except Exception as e:
+            logger.error(f"Could not open or process image for popup: {media_path} - {e}")
             return
-        last_action = self.undo_stack.pop()
-        action_type = last_action["action"]
 
-        if action_type == "delete":
-            # Re-insert data at the original index
-            self.image_info_data.insert(last_action["index"], last_action["data"])
-            logger.info(f"Undo delete: {last_action['data']['path']}")
-            # Restore index to the undone item
-            self.current_index = last_action["index"]
-            # Note: File is NOT automatically restored from deletion here
-            messagebox.showwarning("Undo Delete", f"Deletion undone in list.\nFile NOT restored: {last_action['data']['path']}")
-        elif action_type == "keep":
-            # Just go back to the previous index
-            self.current_index = last_action["index"]
-            logger.info(f"Undo keep: index restored to {self.current_index}")
-        elif action_type == "reconstruct":
-            path = last_action["path"]
-            if path in self.reconstruct_list:
-                self.reconstruct_list.remove(path)
-                logger.info(f"Undo reconstruct: {path}")
-            # Go back to the previous index
-            self.current_index = last_action["index"]
+        popup = tk.Toplevel(self.master)
+        self.hover_popup = popup
+        popup.overrideredirect(True)
 
-        self.save_state() # Save changes after undo
-        self.show_image() # Refresh display
+        # Calculate position
+        x = parent_widget.winfo_rootx() + parent_widget.winfo_width()
+        y = parent_widget.winfo_rooty()
 
-    # --- on_closing remains the same ---
+        # Adjust if popup goes off-screen
+        screen_w = self.master.winfo_screenwidth()
+        screen_h = self.master.winfo_screenheight()
+        img_w, img_h = pil_img.size
+
+        if x + img_w > screen_w:
+            x = parent_widget.winfo_rootx() - img_w
+        if y + img_h > screen_h:
+            y = screen_h - img_h
+
+        popup.geometry(f"+{int(x)}+{int(y)}")
+
+        photo = ImageTk.PhotoImage(image=pil_img)
+
+        image_label = tk.Label(popup, image=photo, borderwidth=0)
+        image_label.image = photo # Keep a reference!
+        image_label.pack()
+
     def on_closing(self):
-        logger.info("Saving progress and exiting...")
+        self.on_hover_leave(None) # Ensure any popup is closed
+        logger.info("Closing application...")
+        logger.info("Saving final progress...")
         self.save_state()
+        logger.info("Destroying window.")
         self.master.destroy()
 
 if __name__ == "__main__":
-#    parser = argparse.ArgumentParser(description="Review and delete junk images.")
-#    parser.add_argument("directory", help="The directory containing the images to process.")
-#    args = parser.parse_args()
-#    directory = args.directory
-    directory = 'C:\\Users\\sawye\\Downloads\\test\\output'
-    if not os.path.isdir(directory):
-        logger.critical(f"Error: Provided directory does not exist: {directory}")
+    # Check if necessary input file exists
+    if not os.path.exists(IMAGE_INFO_FILE): # Check if necessary input file exists
+        logger.critical(f"Error: Input file {IMAGE_INFO_FILE} not found in {OUTPUT_DIR}.") # Log error if input file is missing
+        messagebox.showerror("Error", f"Input file not found:\n{IMAGE_INFO_FILE}\n\nPlease run the previous step first.") # Show error message to user
         sys.exit(1)
 
+    with open(IMAGE_INFO_FILE, "r") as f:
+        media_data = json.load(f) # Load the media data from the JSON file
 
     root = tk.Tk()
-    app = JunkImageReviewer(root)
+    app = JunkImageReviewer(root, media_data) # Pass the loaded data to the reviewer class
     root.mainloop()
+    logger.info("Application finished.")

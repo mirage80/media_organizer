@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [string]$unzipedDirectory,
+    [string]$unzippedDirectory,
     [string]$ExifToolPath
 )
 
@@ -154,7 +154,7 @@ function categorize_bulk_media_based_on_metadata_keep_directory_structure {
 #                 Main functions
 #===========================================================
 # Create src and dst subdirectories if they don't exist
-$srcDirectory = New-Item -Path "$unzippeddirectory\src" -ItemType Directory -Force
+$srcDirectory = New-Item -Path "$unzippedDirectory\src" -ItemType Directory -Force
 $dstDirectory = New-Item -Path "$unzippeddirectory\dst" -ItemType Directory -Force
 
 # Move ONLY the target media files into the src directory
