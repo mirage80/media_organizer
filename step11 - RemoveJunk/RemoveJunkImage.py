@@ -31,6 +31,7 @@ logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCR
 # Use PROJECT_ROOT to build paths relative to the project root
 ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
+DELETE_DIR = os.path.join(OUTPUT_DIR, "delete") # New: Define DELETE_DIR
 
 # Paths
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
@@ -41,6 +42,7 @@ class JunkImageReviewer:
         self.master = master
         master.title("Junk Image Reviewer")
 
+        self.original_total_media_count = len(media_data) # New: Store original total count
         self.media_info_data = media_data
         self.reconstruct_list = self.load_reconstruct_info()
 
@@ -67,7 +69,9 @@ class JunkImageReviewer:
         self.hover_popup = None
         self.hover_job_id = None
         self.thumb_labels = {}
+        self.thumb_controls = {} # To store rotation buttons
         self.resize_jobs = {}
+        self.trace_stack = [] # New: For undo functionality
         self.path_to_var_map = {} # Map to store BooleanVar for each path
         # Filter out already processed media ONCE at startup
         if self.processed_media:
@@ -88,6 +92,47 @@ class JunkImageReviewer:
             logger.warning(f"Removed {removed_count} entries for media that no longer exist on disk (likely from a previous crash).")
             utils.write_json_atomic(self.media_info_data, IMAGE_INFO_FILE, logger=logger)
 
+        # New: Helper functions for moving/restoring files
+        def move_file_to_delete_folder(file_path):
+            """Moves a single file to the DELETE_DIR, handling name conflicts.
+            Returns a dict {original_path: new_path} if successful, or None if failed."""
+            os.makedirs(DELETE_DIR, exist_ok=True)
+            if not os.path.exists(file_path):
+                logger.warning(f"Cannot move file, source does not exist: {file_path}")
+                return None
+            try:
+                filename = os.path.basename(file_path)
+                dest_path = os.path.join(DELETE_DIR, filename)
+
+                # Handle potential name conflicts by adding a suffix
+                if os.path.exists(dest_path):
+                    base, ext = os.path.splitext(filename)
+                    i = 1
+                    while os.path.exists(dest_path):
+                        dest_path = os.path.join(DELETE_DIR, f"{base}_{i}{ext}")
+                        i += 1
+
+                os.rename(file_path, dest_path)
+                logger.info(f"Moved to delete folder: {file_path} -> {dest_path}")
+                return {file_path: dest_path}
+            except Exception as e:
+                logger.error(f"Failed to move file {file_path} to delete folder: {e}")
+                return None
+
+        def restore_from_delete_folder(moved_map):
+            """Restores files from the DELETE_DIR back to their original locations."""
+            for original_path, deleted_path in moved_map.items():
+                if not os.path.exists(deleted_path):
+                    logger.warning(f"Cannot restore, deleted file not found: {deleted_path}")
+                    continue
+                try:
+                    os.makedirs(os.path.dirname(original_path), exist_ok=True) # Ensure destination directory exists
+                    os.rename(deleted_path, original_path)
+                    logger.info(f"Restored file: {deleted_path} -> {original_path}")
+                except Exception as e:
+                    logger.error(f"Failed to restore file {deleted_path} to {original_path}: {e}")
+        self.move_file_to_delete_folder = move_file_to_delete_folder # Make available to instance
+        self.restore_from_delete_folder = restore_from_delete_folder # Make available to instance
         self.setup_ui()
         self.show_page()
 
@@ -174,6 +219,7 @@ class JunkImageReviewer:
         self.resize_jobs.clear()
         self.page_item_vars = []
         self.thumb_labels = {} # Reset for the new page
+        self.thumb_controls = {} # Reset for the new page
         self.path_to_var_map = {} # Reset for the new page
         if not self.media_info_data:
             self.status_label.config(text="All media have been processed!")
@@ -184,8 +230,10 @@ class JunkImageReviewer:
         start_index = self.current_page * self.items_per_page
         end_index = min(start_index + self.items_per_page, len(self.media_info_data))
         # Update status label
-        total_media = len(self.media_info_data) # Total number of media items
-        self.status_label.config(text=f"Showing Media {start_index + 1}-{end_index} of {total_media}")
+        total_remaining_media = len(self.media_info_data)
+        processed_count = self.original_total_media_count - total_remaining_media
+        self.status_label.config(text=f"Showing Media {start_index + 1}-{end_index} of {total_remaining_media} remaining. (Processed: {processed_count})")
+
         # Populate grid
         for i in range(start_index, end_index):
             item_data = self.media_info_data[i]
@@ -236,10 +284,17 @@ class JunkImageReviewer:
                                             bg='#363636', fg='white', activebackground='#555555',
                                             font=('Segoe UI', 10), cursor="hand2",
                                             command=lambda p=path: self.rotate_image(p, -90))
+            self.thumb_controls[path] = (rotate_left_button, rotate_right_button)
             rotate_right_button.place(in_=thumb_label, relx=1.0, rely=1.0, x=-5, y=-5, anchor='se')
 
         # Update navigation buttons
-        self.prev_button.config(state="normal" if self.current_page > 0 else "disabled") # This line was already correct
+        self.prev_button.config(state="normal" if self.current_page > 0 else "disabled")
+
+        # New: Change Next button text if on the last page of items
+        if end_index == len(self.media_info_data):
+            self.next_button.config(text="Done (n)")
+        else:
+            self.next_button.config(text="Next > (n)")
         self.next_button.config(state="normal" if end_index < len(self.media_info_data) else "disabled")
 
         # Keyboard shortcuts
@@ -304,24 +359,63 @@ class JunkImageReviewer:
         paths_to_delete = {path for path, var in self.page_item_vars if var.get()}
         all_page_paths = {path for path, var in self.page_item_vars}
         paths_to_keep = all_page_paths - paths_to_delete
-        # --- Deletion Logic ---
+
+        # New: Store state for undo
+        previous_media_info_data = [item.copy() for item in self.media_info_data] # Deep copy
+        previous_processed_media = self.processed_media[:] # Shallow copy is fine for list of strings
+
+        current_page_moved_map = {} # To store all moves for this page
+
+        # --- Deletion Logic (move to delete folder) ---
         deleted_count = 0
         for path in paths_to_delete:
-            if self.remove_file(path):
+            moved_info = self.move_file_to_delete_folder(path) # Call the new helper
+            if moved_info:
+                current_page_moved_map.update(moved_info)
                 deleted_count += 1
+            else:
+                logger.error(f"Failed to move {path} to delete folder. It will remain in the list.")
+
         if deleted_count > 0:
-            logger.info(f"Processed {len(all_page_paths)} files on page: {deleted_count} deleted, {len(paths_to_keep)} kept.")
+            logger.info(f"Processed {len(all_page_paths)} files on page: {deleted_count} moved to delete folder, {len(paths_to_keep)} kept.")
+
         # Update processed media list with items that were kept on this page
-        if paths_to_keep: # Update processed media list with items that were kept on this page
+        if paths_to_keep:
             self.processed_media.extend(list(paths_to_keep))
             self.save_processed_media()
+
         # Update the main data list by filtering out ALL items from this page
         if all_page_paths:
             self.media_info_data = [item for item in self.media_info_data if item['path'] not in all_page_paths]
         self.save_state() # Save the updated media_info_data list
+
+        # New: Push current state to trace_stack for undo
+        self.trace_stack.append({
+            "previous_media_info_data": previous_media_info_data,
+            "previous_processed_media": previous_processed_media,
+            "current_page_moved_map": current_page_moved_map,
+            "current_page_index": self.current_page # Store the page index that was processed
+        })
         # The list is now shorter. Calling show_page with the same current_page
         # will display the next set of unprocessed items.
         self.show_page()
+
+    def mark_for_reconstruction(self, media_path):
+        """Adds a file to the reconstruction list, removes it from the main data list, and refreshes the UI."""
+        if media_path not in self.reconstruct_list:
+            self.reconstruct_list.append(media_path)
+            logger.info(f"Marked for reconstruction: {media_path}")
+
+            # Remove the item from the main data list so it no longer appears in the grid
+            self.media_info_data = [item for item in self.media_info_data if item['path'] != media_path]
+
+            # Save state immediately to persist the change
+            self.save_state()
+
+            # Refresh the current page to show the item has been removed
+            self.show_page()
+        else:
+            logger.info(f"{media_path} is already in the reconstruction list.")
 
     def save_processed_media(self): # Saves the list of processed (kept) media to a file.
         """Saves the list of processed (kept) media to a file."""
@@ -331,35 +425,35 @@ class JunkImageReviewer:
         except Exception as e:
             logger.error(f"Error saving processed images list: {e}")
     def undo_last(self):
-        """Moves back to the previous page without processing deletions."""
-        if self.current_page > 0:
-            self.current_page -= 1
-            self.show_page()
+        """New: Undoes the last page processing action."""
+        if not self.trace_stack:
+            messagebox.showinfo("Undo", "Nothing to undo.")
+            return
+
+        state_to_restore = self.trace_stack.pop()
+
+        # Restore files from delete folder
+        moved_map = state_to_restore.get("current_page_moved_map", {})
+        if moved_map:
+            self.restore_from_delete_folder(moved_map)
+
+        # Restore media_info_data and processed_media
+        self.media_info_data = state_to_restore["previous_media_info_data"]
+        self.processed_media = state_to_restore["previous_processed_media"]
+        self.current_page = state_to_restore["current_page_index"] # Go back to the page that was processed
+
+        # Save the restored state
+        self.save_state()
+        self.save_processed_media()
+
+        # Refresh UI
+        self.show_page()
+        messagebox.showinfo("Undo", "Last action undone.")
 
     def skip_step(self):
         """Asks for confirmation and then closes the application, keeping all remaining media."""
         if messagebox.askyesno("Skip Step", "Are you sure you want to skip reviewing the rest of the media?"): # Asks for confirmation and then closes the application, keeping all remaining media.
             self.on_closing()
-
-    def remove_file(self, file_path):
-        """Attempts to remove a file with retries."""
-        if not os.path.exists(file_path):
-            logger.warning(f"File {file_path} does not exist, cannot remove.")
-            return True # Consider it 'removed' if it's not there
-
-        for attempt in range(3):
-            try:
-                gc.collect() # Force garbage collection
-                time.sleep(0.1 * (attempt + 1)) # Short, increasing delay
-                os.remove(file_path)
-                logger.info(f"Deleted: {file_path}")
-                return True # Deletion successful
-            except (PermissionError, OSError) as e:
-                logger.warning(f"Attempt {attempt+1}: Failed to delete {file_path} - {e}")
-            except Exception as e: # Catch any other potential errors
-                 logger.error(f"Attempt {attempt+1}: Unexpected error deleting {file_path} - {e}")
-        logger.error(f"Failed to delete after multiple retries: {file_path}")
-        return False # Deletion failed
 
     def on_thumb_resize(self, event, media_path, label):
         """Debounces resize events for a thumbnail label to avoid excessive image loading."""
@@ -427,10 +521,38 @@ class JunkImageReviewer:
             photo = ImageTk.PhotoImage(img)
             label.config(image=photo, text="")
             label.image = photo
-        except Exception as e:
-            logger.error(f"Error creating/updating thumbnail for {media_path}: {e}")
-            label.config(image='', text=f"No Thumbnail", bg="black", fg="red")
-            label.image = None
+        except (IOError, SyntaxError, Exception) as e: # Catch common PIL errors for corrupt files
+            logger.warning(f"Could not generate thumbnail for {os.path.basename(media_path)}. Offering repair option. Error: {e}")
+
+            cell_frame = label.master
+
+            # Remove existing rotate buttons as they are not applicable.
+            if media_path in self.thumb_controls:
+                try:
+                    left_btn, right_btn = self.thumb_controls.pop(media_path)
+                    left_btn.destroy()
+                    right_btn.destroy()
+                except (tk.TclError, KeyError):
+                    pass
+
+            # Check if a repair button already exists to avoid duplicates
+            repair_button_exists = any(isinstance(w, tk.Button) and "Repair" in w.cget('text') for w in cell_frame.winfo_children())
+
+            if not repair_button_exists:
+                # Create a dedicated "Repair" button
+                repair_button = tk.Button(cell_frame, text="Mark for Repair",
+                                          relief='raised', borderwidth=1,
+                                          bg='#8B0000', fg='white', activebackground='#A52A2A',
+                                          font=('Segoe UI', 9, 'bold'), cursor="hand2",
+                                          command=lambda p=media_path: self.mark_for_reconstruction(p))
+                repair_button.place(in_=label, relx=0.5, rely=0.5, anchor='center')
+
+            # Update the label to indicate an error state
+            label.config(image='', text="", bg="black") # Keep it black, button is the focus
+            label.image = None # Clear image reference
+
+            # Unbind hover/click from the label itself to avoid conflicts with the button
+            label.unbind("<Enter>"); label.unbind("<Button-1>"); label.config(cursor="")
 
     def on_hover_enter(self, event, media_path, parent_widget):
         """Schedules a media popup to appear after a short delay."""
@@ -498,6 +620,7 @@ class JunkImageReviewer:
 
 if __name__ == "__main__":
     # Check if necessary input file exists
+    os.makedirs(DELETE_DIR, exist_ok=True) # Ensure delete directory exists
     if not os.path.exists(IMAGE_INFO_FILE): # Check if necessary input file exists
         logger.critical(f"Error: Input file {IMAGE_INFO_FILE} not found in {OUTPUT_DIR}.") # Log error if input file is missing
         messagebox.showerror("Error", f"Input file not found:\n{IMAGE_INFO_FILE}\n\nPlease run the previous step first.") # Show error message to user

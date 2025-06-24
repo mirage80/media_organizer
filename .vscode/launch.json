@@ -1,50 +1,13 @@
-// c:\Users\sawye\Code\media_organizer\.vscode\launch.json
 {
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "PowerShell: Launch Current File and Auto-Attach Python", // Renamed for clarity
             "type": "PowerShell",
             "request": "launch",
-            "script": "${file}", // Runs the currently open PowerShell file (e.g., top.ps1)
-            "cwd": "${fileDirname}",
-            "createTemporaryIntegratedConsole": false, // Keep console open after script finishes (optional)
-            "env": {
-                // --- Add this environment variable ---
-                "ENABLE_PYTHON_DEBUG": "1", // Tells the Python script to start debugpy
-                // Optional: Explicitly set the image port if needed, otherwise Python script default (5679) is used
-                // "PYTHON_IMAGE_DEBUG_PORT": "5679"
-            },
-            // --- Add this whole block ---
-            "serverReadyAction": {
-                "pattern": "DEBUGPY_READY_ON:(\\d+)", // Regex to find our unique message and capture the port number
-                "uriFormat": "tcp://localhost:%s", // Tells VS Code how to connect using the captured port
-                "action": "startDebugging", // Action to take when pattern is found
-                "name": "Python: Attach to Running Script" // Name of the debug config to start
-            }
-            // --- End added block ---
-        },
-        {
-            // This configuration is now triggered by the PowerShell one above.
-            "name": "Python: Attach to Running Script",
-            "type": "debugpy",
-            "request": "attach",
-            "console": "integratedTerminal", // Can be useful to see debugpy output
-            "connect": {
-                "host": "localhost", // Must match DEBUG_HOST in Python
-                "port": 5678 // This port is IGNORED when serverReadyAction succeeds, but good practice to keep it (or match default)
-            },
-            "pathMappings": [
-                {
-                    "localRoot": "${workspaceFolder}",
-                    // --- THIS IS THE FIX ---
-                    "remoteRoot": "${workspaceFolder}"
-                    // Using "." here often fails if the CWD of the Python script
-                    // isn't exactly the workspaceFolder when debugpy starts.
-                    // Using ${workspaceFolder} for both is usually correct for local debugging.
-                }
-            ]
+            "name": "top.ps1",
+            "script": "${workspaceFolder}/top.ps1",
+            "args": [],
+            "cwd": "${workspaceFolder}"
         }
-        // Compound configuration is not needed with serverReadyAction
     ]
 }

@@ -123,5 +123,33 @@ function Write-JsonAtomic {
     }
 }
 
-Export-ModuleMember -Function *  # Export ALL functions
+# --- Log Function Definition ---
+function Log {
+    param (
+        [string]$Level,
+        [string]$Message
+    )
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
+    $levelIndex = $logLevelMap[$Level.ToUpper()]
 
+    if ($null -ne $levelIndex) {
+        if ($levelIndex -ge $consoleLogLevel) {
+            Write-Host $formatted
+        }
+        if ($levelIndex -ge $fileLogLevel) {
+            try {
+                Add-Content -Path $logFile -Value $formatted -Encoding UTF8 -ErrorAction Stop
+            } catch {
+                Write-Warning "Failed to write to log file '$logFile': $_"
+            }
+        }
+    } else {
+        Write-Warning "Invalid log level used: $Level"
+    }
+}
+
+
+Export-ModuleMember -Function *  # Export ALL functions
+Export-ModuleMember -Function Log
+Export-ModuleMember -Function Categorize_Media_Based_On_Metadata

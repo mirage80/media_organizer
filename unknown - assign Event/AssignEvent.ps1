@@ -5,6 +5,11 @@ $logFile = "C:\path\to\logfile.txt"
 Add-Type -Path "C:\Users\sawye\.nuget\packages\opencvsharp4\4.10.0.20241108\lib\netstandard2.0\OpenCvSharp.dll"
 Add-Type -AssemblyName PresentationFramework, System.Windows.Forms, System.Drawing
 
+#Utils Dirctory
+$UtilDirectory = Join-Path $scriptDirectory "..\Utils"
+$UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+Import-Module $UtilFile -Force
+
 # Define file extensions
 $imageExtensions = @(".jpg")
 $videoExtensions = @(".mp4")

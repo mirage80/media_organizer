@@ -442,6 +442,9 @@ if (Test-Path $unzippedDirectory -PathType Container) {
 } else {
      Log "ERROR" "Cannot delete JSON files because directory '$unzippedDirectory' does not exist."
 }
-Remove-Item $hashLogPath -Force
+# Only attempt to remove the log file if it actually exists
+if (Test-Path $hashLogPath -PathType Leaf) {
+    Remove-Item $hashLogPath -Force
+}
 Log "INFO" "Step 6 - Consolidate_Meta finished."
 # --- End of Consolidate_Meta.ps1 ---

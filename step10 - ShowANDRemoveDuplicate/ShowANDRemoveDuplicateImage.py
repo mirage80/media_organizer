@@ -35,9 +35,51 @@ logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCR
 # Use PROJECT_ROOT to build paths relative to the project root
 ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
+DELETE_DIR = os.path.join(OUTPUT_DIR, "delete")
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
+
+def move_to_delete_folder(paths_to_move):
+    """Moves files to the DELETE_DIR, handling name conflicts."""
+    os.makedirs(DELETE_DIR, exist_ok=True)
+    moved_map = {} # original_path -> new_path
+    for src_path in paths_to_move:
+        if not os.path.exists(src_path):
+            logger.warning(f"Cannot move file, source does not exist: {src_path}")
+            continue
+        try:
+            filename = os.path.basename(src_path)
+            dest_path = os.path.join(DELETE_DIR, filename)
+
+            # Handle potential name conflicts by adding a suffix
+            if os.path.exists(dest_path):
+                base, ext = os.path.splitext(filename)
+                i = 1
+                while os.path.exists(dest_path):
+                    dest_path = os.path.join(DELETE_DIR, f"{base}_{i}{ext}")
+                    i += 1
+
+            os.rename(src_path, dest_path)
+            logger.info(f"Moved to delete folder: {src_path} -> {dest_path}")
+            moved_map[src_path] = dest_path
+        except Exception as e:
+            logger.error(f"Failed to move file {src_path} to delete folder: {e}")
+    return moved_map
+
+def restore_from_delete_folder(moved_map):
+    """Restores files from the DELETE_DIR back to their original locations."""
+    for original_path, deleted_path in moved_map.items():
+        if not os.path.exists(deleted_path):
+            logger.warning(f"Cannot restore, deleted file not found: {deleted_path}")
+            continue
+        try:
+            # Ensure destination directory exists
+            os.makedirs(os.path.dirname(original_path), exist_ok=True)
+            os.rename(deleted_path, original_path)
+            logger.info(f"Restored file: {deleted_path} -> {original_path}")
+        except Exception as e:
+            logger.error(f"Failed to restore file {deleted_path} to {original_path}: {e}")
 
 def read_current_image_info():
     try:
@@ -582,8 +624,10 @@ class ImageDeduplicationGUI:
 
             if metadata_success:
                 logger.info("Metadata write successful. Proceeding with deletion and JSON update.")
-                # Use utils.delete_files
-                _ = utils.delete_files(self.discarded, logger=logger, base_dir=SCRIPT_DIR)
+                # Move discarded files to the delete folder
+                moved_files_map = move_to_delete_folder(self.discarded)
+                # Store the map of moved files for potential undo
+                self.trace_stack[-1]['moved_map'] = moved_files_map
                 _ = update_json(keepers=self.keepers, discarded=self.discarded)
             else:
                 logger.error("Metadata write failed for one or more keepers. Skipping file deletion and JSON update for this group.")
@@ -664,8 +708,10 @@ class ImageDeduplicationGUI:
 
         state = self.trace_stack.pop()  # ✅ b-2
 
-        # Use utils.restore_deleted_files
-        utils.restore_deleted_files(state.get("discarded", []), logger=logger, base_dir=SCRIPT_DIR)
+        # Restore files that were moved to the delete folder
+        moved_map = state.get("moved_map", {})
+        if moved_map:
+            restore_from_delete_folder(moved_map)
 
         # Use utils.restore_json_files
         utils.restore_json_files(
@@ -865,6 +911,7 @@ class ImageDeduplicationGUI:
 
 if __name__ == "__main__":
     root = tk.Tk()
+    os.makedirs(DELETE_DIR, exist_ok=True)
 
     try:
         with open(IMAGE_GROUPING_INFO_FILE, 'r') as f:

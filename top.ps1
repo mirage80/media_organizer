@@ -187,12 +187,10 @@ function Invoke-PythonScript {
         if ($null -eq $Arguments -or $Arguments.Count -eq 0) {
             Log "DEBUG" "Executing: $pythonExe ""$ScriptPath"""
             # --- MODIFICATION: Redirect stderr (2>) to $null ---
-            & $pythonExe "$ScriptPath" # Removed 2>$null
+            & $pythonExe "$ScriptPath" 
         } else {
             # Use argument splatting (@Arguments) to pass array elements as separate arguments
             $argStringForLog = $Arguments | ForEach-Object { """$_""" } | Join-String -Separator ' ' # Quote args for logging
-            Log "DEBUG" "Executing: $pythonExe ""$ScriptPath"" $argStringForLog"
-            # --- MODIFICATION: Redirect stderr (2>) to $null ---
             & $pythonExe "$ScriptPath" @Arguments # Removed 2>$null
         }
 
@@ -212,7 +210,7 @@ function Invoke-PythonScript {
 }
 
 try {
-
+<#
     $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
     Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzippedDirectory")
     $logger++
@@ -352,28 +350,28 @@ try {
     $env:CURRENT_STEP = $logger.ToString()
     Log "INFO" "step 12-1 use VideoReconstruction.ps1 to Reconstruct of corrupt Videos" -ffmpeg $ffmpeg
     $videoReconList = Join-Path $scriptDirectory "Outputs\video_reconstruct_info.json"
-    & "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -vlcpath $vlcpath -reconstructListPath $videoReconList -ffmpeg $ffmpeg -ffprobe $ffprobe
+    & "$scriptDirectory\step12 - Reconstruction\VideoReconstruction.ps1" -vlcpath $vlcpath -reconstructListPath $videoReconList -ffmpeg $ffmpeg -ffprobe $ffprobe -step $logger.ToString()
 
     #step 12-2 Reconstruction of corrupt Images
     Log "INFO" "step 12-2 use ImageReconstruction.ps1 to Reconstruct of corrupt Images" -magickPath $magickPath
     $imageReconList = Join-Path $scriptDirectory "Outputs\image_reconstruct_info.json" # Or wherever it's actually saved
-    & "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1" -magickPath $magickPath -reconstructListPath $imageReconList
+    & "$scriptDirectory\step12 - Reconstruction\ImageReconstruction.ps1" -magickPath $magickPath -reconstructListPath $imageReconList -step $logger.ToString()
 
     #count
     $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
     Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzippedDirectory")
     $logger++
-
+#>
     #step 13 Categorization
     $env:CURRENT_STEP = $logger.ToString()
     Log "INFO" "step 13 use Categorize.ps1 to categorize files based on the availability of meta data"
-    & "$scriptDirectory\step13 - Categorization\Categorize.ps1" -unzippedDirectory $unzippedDirectory -ExifToolPath $ExifToolPath
+    & "$scriptDirectory\step13 - Categorization\Categorize.ps1" -unzippedDirectory $unzippedDirectory -ExifToolPath $ExifToolPath -step $logger.ToString()
 
     #count
     $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
     Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzippedDirectory")
     $logger++
-
+<#
     #step 14 Estimate By Time
     Log "INFO" "step 14 use EstimateByTime.ps1 to Estimate Location of Files"
     & "$scriptDirectory\step14  - Estimate By Time\EstimateByTime.ps1" -unzippedDirectory $unzippedDirectory -ExifToolPath $ExifToolPath
@@ -382,7 +380,7 @@ try {
     $pythonScriptPath = Join-Path -Path $scriptDirectory -ChildPath 'Step0 - Tools\counter\counter.py'
     Invoke-PythonScript -ScriptPath $pythonScriptPath -Arguments @("$scriptDirectory/Logs/FileReport_$logger.txt", "$unzippedDirectory")
     $logger++
-
+#>
 }
 finally {
     # Ensure the progress bar is closed when the script finishes or errors out

@@ -1,19 +1,23 @@
 param(
     [Parameter(Mandatory = $true)] [string]$magickPath,
-    [Parameter(Mandatory = $true)] [string]$reconstructListPath
+    [Parameter(Mandatory = $true)] [string]$reconstructListPath,
+    [Parameter(Mandatory = $true)] [string]$step
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
+#Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
+# --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
+$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
 $logFormat = "{0} - {1}: {2}"
 
+# Create the log directory if it doesn't exist
 if (-not (Test-Path $logDir)) {
     try {
         New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
@@ -81,7 +85,6 @@ function Log {
         [string]$Message
     )
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-												 
     $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
     $levelIndex = $logLevelMap[$Level.ToUpper()]
 
@@ -101,10 +104,34 @@ function Log {
     }
 }
 
-if (-not (Test-Path -Path $magickPath -PathType Leaf)) {
-    Log "CRITICAL" "Magick executable not found at specified path: '$magickPath'. Aborting."
+# --- Script Setup ---
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
+try {
+    Import-Module $MediaToolsFile -Force
+} catch {
+    Log "CRITICAL" "Failed to import MediaTools module from '$MediaToolsFile'. Error: $_. Aborting."
     exit 1
 }
+
+$hashLogPath = Join-Path $scriptDirectory "consolidation_log.json"  # << This line must come BEFORE functions
+
+Log "INFO" "Attempting to load processed log from '$hashLogPath'..." # ADD
+try {
+    $processedLog = Get-ProcessedLog -LogPath $hashLogPath -ErrorAction Stop # Add ErrorAction
+    Log "INFO" "Successfully loaded $($processedLog.Count) initial entries from '$hashLogPath'." # ADD
+} catch {
+    Log "INFO" "Failed to load or parse processed log '$hashLogPath': $_" # ADD
+    # Decide how to proceed - maybe exit or start with empty?
+    $processedLog = @() # Start with empty if loading failed
+}
+
+# Build a fast lookup hash set from the initial log
+$processedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$processedLog | ForEach-Object {
+    if ($_.path) { [void]$processedSet.Add($_.path) }
+}
+Log "INFO" "Loaded $($processedSet.Count) paths from initial log '$hashLogPath'."
+
 
 # --- Helper Function for ImageMagick ---
 function Invoke-Magick {

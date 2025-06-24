@@ -1,7 +1,8 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$unzippedDirectory,
-    [string]$ExifToolPath
+    [string]$ExifToolPath,
+    [Parameter(Mandatory = $true)] [string]$step
 )
 
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
@@ -10,13 +11,24 @@ $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyComm
 #Utils Dirctory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
-$MediaToolsFile = Join-Path $UtilDirectory "MediaTools.psm1"
 Import-Module $UtilFile -Force
 
 # --- Logging Setup ---
 $logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir "$scriptName.log"
+$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
 $logFormat = "{0} - {1}: {2}"
+
+function Get-ProcessedLog {
+    param (
+        [Parameter(Mandatory = $true)]
+        [string]$LogPath
+    )
+    if (Test-Path $LogPath) {
+        return Get-Content $LogPath -Raw | ConvertFrom-Json
+    } else {
+        return @()
+    }
+}
 
 # Create the log directory if it doesn't exist
 if (-not (Test-Path $logDir)) {
@@ -36,7 +48,7 @@ if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
     try {
         # --- FIX IS HERE ---
         # Use -AsHashtable to ensure the correct object type
-        $logLevelMap = $logLevelMap | ConvertFrom-Json -AsHashtable -ErrorAction Stop
+        $logLevelMap = $logLevelMap | ConvertFrom-Json -AsHashtable
         # --- END FIX ---
     } catch {
         # Log a fatal error and exit immediately if deserialization fails
@@ -44,6 +56,7 @@ if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
         exit 1
     }
 }
+
 if ($null -eq $logLevelMap) {
     # This case should ideally not happen if top.ps1 ran, but handle defensively
     Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
@@ -104,91 +117,169 @@ function Log {
     }
 }
 
-Import-Module $MediaToolsFile -Force
-
-#===========================================================
-#                 Categorization functions
-#===========================================================
-function Categorize_Media_Based_On_Metadata {
-    param (
-        [System.IO.FileInfo]$SrcFile
-    )
-    $timestamp = IsValid_TimeStamp -timestamp_in $(Get_Exif_Timestamp -File $SrcFile)
-    $geotag = IsValid_GeoTag -GeoTag $(Get_Exif_Geotag -File $SrcFile)
-
-    if ($timestamp -and $geotag) {
-        return "with_time_with_geo"
-    } elseif ($timestamp -and -not $geotag) {
-        return "with_time_no_geo"
-    } elseif (-not $timestamp -and $geotag) {
-        return "no_time_with_geo"
-    } else {
-        return "no_time_no_geo"
-    }
+# --- Script Setup ---
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
+try {
+    Import-Module $MediaToolsFile -Force
+} catch {
+    Log "CRITICAL" "Failed to import MediaTools module from '$MediaToolsFile'. Error: $_. Aborting."
+    exit 1
 }
 
-function categorize_bulk_media_based_on_metadata_keep_directory_structure {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$filePath,
+# Define Image and Video extensions (these are from MediaTools.psm1 and are available after import)
+$imageExtensions = $imageExtensions
+$videoExtensions = $videoExtensions
 
-        [Parameter(Mandatory = $true)]
-        [System.IO.DirectoryInfo]$rootDir,
+$hashLogPath = Join-Path $scriptDirectory "consolidation_log.json"  # << This line must come BEFORE functions
 
-        [Parameter(Mandatory = $true)]
-        [System.IO.DirectoryInfo]$targetPath
-    )
-    $category = Categorize_Media_Based_On_Metadata -SrcFile $filePath
-    $newroot = Join-Path -Path $targetPath -ChildPath $category
-
-    $relativePath = $filePath -replace [regex]::Escape($rootDir), ""
-    $destination = Join-Path -Path $newRoot -ChildPath $relativePath
-    $desiredPath = Split-Path -Path $destination
-    New-Item -Path $desiredPath -ItemType Directory -Force | Out-Null
-
-    Move-Item -Path $filePath.FullName -Destination $destination
-    Verbose -message "Moved $($filePath.FullName) to $category" -type "information"
+Log "INFO" "Attempting to load processed log from '$hashLogPath'..." # ADD
+try {
+    $processedLog = Get-ProcessedLog -LogPath $hashLogPath -ErrorAction Stop # Add ErrorAction
+    Log "INFO" "Successfully loaded $($processedLog.Count) initial entries from '$hashLogPath'." # ADD
+} catch {
+    Log "INFO" "Failed to load or parse processed log '$hashLogPath': $_" # ADD
+    # Decide how to proceed - maybe exit or start with empty?
+    $processedLog = @() # Start with empty if loading failed
 }
+
+# Build a fast lookup hash set from the initial log
+$processedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$processedLog | ForEach-Object {
+    if ($_.path) { [void]$processedSet.Add($_.path) }
+}
+Log "INFO" "Loaded $($processedSet.Count) paths from initial log '$hashLogPath'."
+
+
+
 
 #===========================================================
 #                 Main functions
 #===========================================================
-# Create src and dst subdirectories if they don't exist
-$srcDirectory = New-Item -Path "$unzippedDirectory\src" -ItemType Directory -Force
-$dstDirectory = New-Item -Path "$unzippeddirectory\dst" -ItemType Directory -Force
+# Create a destination directory for categorized files
+$dstDirectory = New-Item -Path "$unzippedDirectory\dst" -ItemType Directory -Force
 
-# Move ONLY the target media files into the src directory
-Log "INFO" "Moving target media files (.jpg, .mp4) to $($srcDirectory.FullName)..."
-Get-ChildItem -Path $unzippeddirectory -File | Where-Object { $module:imageExtensions -contains $_.Extension -or $module:videoExtensions -contains $_.Extension } | Move-Item -Destination $srcDirectory.FullName -Force
-Log "INFO" "Finished moving target media files."
+Log "INFO" "Scanning for media files in '$unzippedDirectory'..."
+# Get all media files recursively and make the extension check case-insensitive.
+$files = Get-ChildItem -Path $unzippedDirectory -Recurse -File | Where-Object {
+    $ext = $_.Extension.ToLower()
+    $imageExtensions -contains $ext -or $videoExtensions -contains $ext
+}
 
-$files = Get-ChildItem -Path $srcDirectory.FullName -Recurse -File
+if (-not $files) {
+    Log "WARNING" "No media files found to categorize in '$unzippedDirectory'."
+    # Clean up the empty dst directory and exit gracefully
+    Remove-Item -Path $dstDirectory.FullName -Force -ErrorAction SilentlyContinue
+    exit 0
+}
+
 $currentItem = 0
 $totalItems = $files.count
+Log "INFO" "Found $totalItems media files to categorize."
+$runspaces = @()
 
-# Process files in the src directory
+$totalItems = $files.Count
+$runspacePool = [RunspaceFactory]::CreateRunspacePool(1, 20)
+$runspacePool.Open()
+$UtilDirectory = Join-Path $scriptDirectory "..\Utils"
+$progressFile = Join-Path $env:TEMP "categorize_progress_$PID.txt"
+if (Test-Path $progressFile) { Remove-Item $progressFile }
+
 foreach ($file in $files) {
-    if ((is_photo -file $file) -or (is_video -file $file)) {
-        $currentItem++
-        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "$zipFile"
+    $ps = [PowerShell]::Create()
+    $ps.AddScript({
+        param(
+            $filePathStr, $rootDirStr, $targetPathStr, $progressFile, $utilDir,
+            $logFile, $logFormat, $logLevelMap, $consoleLogLevel, $fileLogLevel,
+            $ExifToolPath
+        )
 
-        categorize_bulk_media_based_on_metadata_keep_directory_structure `
-            -filePath $file `
-            -rootDir $srcDirectory `
-            -targetPath $dstDirectory
+
+            $script:logFile = $logFile
+            $script:logFormat = $logFormat
+            $script:logLevelMap = $logLevelMap
+            $script:consoleLogLevel = $consoleLogLevel
+            $script:fileLogLevel = $fileLogLevel
+            $script:ExifToolPath = $ExifToolPath
+
+        try {
+
+            $utilsPath = Join-Path $utilDir 'Utils.psm1'
+            $mediaPath = Join-Path $utilDir 'MediaTools.psm1'
+            Import-Module $utilsPath -Force
+            Import-Module $mediaPath -Force
+
+
+            # Log start of categorization
+            Log "INFO" "THREAD START $filePathStr"
+
+            $filePath = Get-Item $filePathStr
+            $rootDir = Get-Item $rootDirStr
+            $targetPath = Get-Item $targetPathStr
+
+            Log "INFO" "Categorizing $filePathStr"
+
+            categorize_bulk_media_based_on_metadata_keep_directory_structure `
+                -filePath $filePath `
+                -rootDir $rootDir `
+                -targetPath $targetPath
+
+            # Log success
+            Log "INFO" "Moved $($filePath.FullName) to $category"
+        } catch {
+            Log "ERROR" "Thread failed for $filePathStr : $_"
+        } finally {
+            Log "DEBUG"  "THREAD END $filePathStr" 
+            Add-Content -Path $progressFile -Value $filePathStr
+        }
+    }) | Out-Null
+    $ps.AddArgument($file.FullName) | Out-Null
+    $ps.AddArgument($unzippedDirectory) | Out-Null
+    $ps.AddArgument($dstDirectory) | Out-Null
+    $ps.AddArgument($progressFile) | Out-Null
+    $ps.AddArgument($UtilDirectory) | Out-Null
+    $ps.AddArgument($logFile) | Out-Null
+    $ps.AddArgument($logFormat) | Out-Null
+    $ps.AddArgument($logLevelMap) | Out-Null
+    $ps.AddArgument($consoleLogLevel) | Out-Null
+    $ps.AddArgument($fileLogLevel) | Out-Null
+    $ps.AddArgument($ExifToolPath) | Out-Null
+    $ps.RunspacePool = $runspacePool
+    $runspaces += [PSCustomObject]@{ Pipe = $ps; Handle = $ps.BeginInvoke() }
+}
+
+
+$currentItem = 0
+$lastProgress = -1
+$waitCounter = 0
+
+while ($currentItem -lt $totalItems) {
+    Start-Sleep -Milliseconds 100
+while ((Get-Content $progressFile -ErrorAction SilentlyContinue).Count -gt $currentItem) {
+        $currentItem++
+        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Categorizing $currentItem of $totalItems"
+        $waitCounter = 0
+    }
+
+    if ($lastProgress -eq $currentItem) {
+        $waitCounter++
+    } else {
+        $lastProgress = $currentItem
+        $waitCounter = 0
+    }
+
+    if ($waitCounter -gt 100) {
+        Write-Warning "No progress in 10 seconds. Thread(s) might be stalled."
+        break
     }
 }
 
-# Check if the src directory is empty
-$remainingItems = Get-ChildItem -Path $srcDirectory.FullName -Recurse
-if ($remainingItems) {
-    Log "WARNING" "Source directory '$($srcDirectory.FullName)' was NOT empty after processing. This might indicate non-media files were present or an error occurred."
-    $remainingItems | ForEach-Object { Log "WARNING" "- Remaining item: $($_.FullName)" }
-} else {
-    Log "INFO" "Source directory '$($srcDirectory.FullName)' is empty as expected."
-    # Remove the now-empty src directory itself
-    Remove-Item -Path $srcDirectory.FullName -Force -ErrorAction SilentlyContinue
+# Clean up runspaces
+foreach ($rs in $runspaces) {
+    $rs.Pipe.EndInvoke($rs.Handle)
+    $rs.Pipe.Dispose()
 }
+$runspacePool.Close()
+$runspacePool.Dispose()
 
 # --- Move categorized content from dst back to the root ---
 Log "INFO" "Moving categorized folders from '$($dstDirectory.FullName)' back to '$unzippedDirectory'..."
