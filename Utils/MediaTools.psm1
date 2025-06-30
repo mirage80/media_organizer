@@ -619,22 +619,16 @@ function Find_and_Write_Valid_Timestamp {
         Log "WARNING" "Failed to retrieve timestamp from Exif metadata for file: $($File.Name). Error: $($_.Exception.Message)"
     }
 
-    # Compare the timestamps and determine the earliest valid timestamp
-    $earliestTimestamp = Compare_TimeStamp -timestamp1 $filenameTimestamp -timestamp2 $jsonTimestamp
-    $earliestTimestamp = Compare_TimeStamp -timestamp1 $earliestTimestamp -timestamp2 $exifTimestamp
+    # Collect all valid timestamps into a list
+    $validTimestamps = @()
+    if ($filenameTimestamp) { try { if(IsValid_TimeStamp -timestamp_in $filenameTimestamp) { $validTimestamps += $filenameTimestamp } } catch {} }
+    if ($jsonTimestamp) { try { if(IsValid_TimeStamp -timestamp_in $jsonTimestamp) { $validTimestamps += $jsonTimestamp } } catch {} }
+    if ($exifTimestamp) { try { if(IsValid_TimeStamp -timestamp_in $exifTimestamp) { $validTimestamps += $exifTimestamp } } catch {} }
 
-    # Check if the earliest timestamp is valid
-    $isValid = $false
-    if ($earliestTimestamp) {
-        try {
-            $isValid = IsValid_TimeStamp -timestamp_in $earliestTimestamp
-        } catch {
-            # IsValid_TimeStamp already logs, just mark as invalid
-            $isValid = $false
-        }
-    }
+    if ($validTimestamps.Count -gt 0) {
+        # Sort the list to find the earliest (smallest) timestamp
+        $earliestTimestamp = $validTimestamps | Sort-Object | Select-Object -First 1
 
-    if ($isValid) {
         # Write the timestamp to the file
         try {
             Write_TimeStamp -File $File -TimeStamp $earliestTimestamp
@@ -1417,6 +1411,7 @@ function categorize_bulk_media_based_on_metadata_keep_directory_structure {
 
     Move-Item -Path $filePath.FullName -Destination $destination
     Log "INFO" "Moved $($filePath.FullName) to $category"
+    return $category
 }
 
 #===========================================================

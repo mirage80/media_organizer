@@ -13,108 +13,13 @@ $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Logging Setup ---
-$logDir = Join-Path $scriptDirectory "..\Logs"
-$logFile = Join-Path $logDir $("Step_$step" + "_" + "$scriptName.log")
-$logFormat = "{0} - {1}: {2}"
-
-function Get-ProcessedLog {
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$LogPath
-    )
-    if (Test-Path $LogPath) {
-        return Get-Content $LogPath -Raw | ConvertFrom-Json
-    } else {
-        return @()
-    }
-}
-
-# Create the log directory if it doesn't exist
-if (-not (Test-Path $logDir)) {
-    try {
-        New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
-    } catch {
-        Write-Error "FATAL: Failed to create log directory '$logDir'. Aborting. Error: $_"
-        exit 1
-    }
-}
-
-# Deserialize the JSON back into a hashtable
-$logLevelMap = $null
-$logLevelMap = $env:LOG_LEVEL_MAP_JSON
-
-if (-not [string]::IsNullOrWhiteSpace($logLevelMap)) {
-    try {
-        # --- FIX IS HERE ---
-        # Use -AsHashtable to ensure the correct object type
-        $logLevelMap = $logLevelMap | ConvertFrom-Json -AsHashtable
-        # --- END FIX ---
-    } catch {
-        # Log a fatal error and exit immediately if deserialization fails
-        Write-Error "FATAL: Failed to deserialize LOG_LEVEL_MAP_JSON environment variable. Check the variable's content is valid JSON. Aborting. Error: $_"
-        exit 1
-    }
-}
-
-if ($null -eq $logLevelMap) {
-    # This case should ideally not happen if top.ps1 ran, but handle defensively
-    Write-Error "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid. Aborting."
+# --- Centralized Logging Setup ---
+try {
+    $logFile = Join-Path $scriptDirectory "..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+    Initialize-ChildScriptLogger -ChildLogFilePath $logFile
+} catch {
+    Write-Error "FATAL: Failed to initialize logger. Error: $_"
     exit 1
-}
-
-# Check if required environment variables are set (by top.ps1 or externally)
-if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) {
-    Write-Error "FATAL: Environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
-    exit 1
-}
-if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) {
-    Write-Error "FATAL: Environment variable DEDUPLICATOR_FILE_LOG_LEVEL is not set. Run via top.ps1 or set externally. Aborting."
-    exit 1
-}
-
-# Read the environment variables directly and trim whitespace (NOW SAFE)
-$EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.Trim()
-$EffectiveFileLogLevelString    = $env:DEDUPLICATOR_FILE_LOG_LEVEL.Trim()
-
-# Look up the numeric level using the effective string and the map
-$consoleLogLevel = $logLevelMap[$EffectiveConsoleLogLevelString.ToUpper()]
-$fileLogLevel    = $logLevelMap[$EffectiveFileLogLevelString.ToUpper()]
-
-# --- Validation for THIS script's levels ---
-if ($null -eq $consoleLogLevel) {
-    Write-Error "FATAL: Invalid Console Log Level specified ('$EffectiveConsoleLogLevelString'). Check environment variable or script default. Aborting."
-    exit 1
-}
-if ($null -eq $fileLogLevel) {
-    Write-Error "FATAL: Invalid File Log Level specified ('$EffectiveFileLogLevelString'). Check environment variable or script default. Aborting."
-    exit 1
-}
-
-# --- Log Function Definition ---
-function Log {
-    param (
-        [string]$Level,
-        [string]$Message
-    )
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $formatted = $logFormat -f $timestamp, $Level.ToUpper(), $Message
-    $levelIndex = $logLevelMap[$Level.ToUpper()]
-
-    if ($null -ne $levelIndex) {
-        if ($levelIndex -ge $consoleLogLevel) {
-            Write-Host $formatted
-        }
-        if ($levelIndex -ge $fileLogLevel) {
-            try {
-                Add-Content -Path $logFile -Value $formatted -Encoding UTF8 -ErrorAction Stop
-            } catch {
-                Write-Warning "Failed to write to log file '$logFile': $_"
-            }
-        }
-    } else {
-        Write-Warning "Invalid log level used: $Level"
-    }
 }
 
 # --- Script Setup ---
@@ -129,27 +34,6 @@ try {
 # Define Image and Video extensions (these are from MediaTools.psm1 and are available after import)
 $imageExtensions = $imageExtensions
 $videoExtensions = $videoExtensions
-
-$hashLogPath = Join-Path $scriptDirectory "consolidation_log.json"  # << This line must come BEFORE functions
-
-Log "INFO" "Attempting to load processed log from '$hashLogPath'..." # ADD
-try {
-    $processedLog = Get-ProcessedLog -LogPath $hashLogPath -ErrorAction Stop # Add ErrorAction
-    Log "INFO" "Successfully loaded $($processedLog.Count) initial entries from '$hashLogPath'." # ADD
-} catch {
-    Log "INFO" "Failed to load or parse processed log '$hashLogPath': $_" # ADD
-    # Decide how to proceed - maybe exit or start with empty?
-    $processedLog = @() # Start with empty if loading failed
-}
-
-# Build a fast lookup hash set from the initial log
-$processedSet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-$processedLog | ForEach-Object {
-    if ($_.path) { [void]$processedSet.Add($_.path) }
-}
-Log "INFO" "Loaded $($processedSet.Count) paths from initial log '$hashLogPath'."
-
-
 
 
 #===========================================================
@@ -189,25 +73,24 @@ foreach ($file in $files) {
     $ps.AddScript({
         param(
             $filePathStr, $rootDirStr, $targetPathStr, $progressFile, $utilDir,
-            $logFile, $logFormat, $logLevelMap, $consoleLogLevel, $fileLogLevel,
+            $logFile, # Only need this for the logger init
             $ExifToolPath
         )
 
-
-            $script:logFile = $logFile
-            $script:logFormat = $logFormat
-            $script:logLevelMap = $logLevelMap
-            $script:consoleLogLevel = $consoleLogLevel
-            $script:fileLogLevel = $fileLogLevel
-            $script:ExifToolPath = $ExifToolPath
-
         try {
-
+            # Import the utils module first, which contains the logger
             $utilsPath = Join-Path $utilDir 'Utils.psm1'
-            $mediaPath = Join-Path $utilDir 'MediaTools.psm1'
             Import-Module $utilsPath -Force
+
+            # Initialize the logger for this thread. It will read config from env vars.
+            Initialize-ChildScriptLogger -ChildLogFilePath $logFile
+
+            # Now import the media tools module
+            $mediaPath = Join-Path $utilDir 'MediaTools.psm1'
             Import-Module $mediaPath -Force
 
+            # Set the ExifToolPath in the script scope so MediaTools can find it
+            $script:ExifToolPath = $ExifToolPath
 
             # Log start of categorization
             Log "INFO" "THREAD START $filePathStr"
@@ -218,13 +101,14 @@ foreach ($file in $files) {
 
             Log "INFO" "Categorizing $filePathStr"
 
-            categorize_bulk_media_based_on_metadata_keep_directory_structure `
+            $category = categorize_bulk_media_based_on_metadata_keep_directory_structure `
                 -filePath $filePath `
                 -rootDir $rootDir `
                 -targetPath $targetPath
 
             # Log success
-            Log "INFO" "Moved $($filePath.FullName) to $category"
+            # The function already logs the move, this is just for thread completion confirmation.
+            Log "INFO" "THREAD SUCCESS: Categorized $($filePath.FullName) into '$category'."
         } catch {
             Log "ERROR" "Thread failed for $filePathStr : $_"
         } finally {
@@ -238,10 +122,6 @@ foreach ($file in $files) {
     $ps.AddArgument($progressFile) | Out-Null
     $ps.AddArgument($UtilDirectory) | Out-Null
     $ps.AddArgument($logFile) | Out-Null
-    $ps.AddArgument($logFormat) | Out-Null
-    $ps.AddArgument($logLevelMap) | Out-Null
-    $ps.AddArgument($consoleLogLevel) | Out-Null
-    $ps.AddArgument($fileLogLevel) | Out-Null
     $ps.AddArgument($ExifToolPath) | Out-Null
     $ps.RunspacePool = $runspacePool
     $runspaces += [PSCustomObject]@{ Pipe = $ps; Handle = $ps.BeginInvoke() }
