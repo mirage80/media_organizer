@@ -28,7 +28,6 @@ if PROJECT_ROOT_DIR not in sys.path:
 
 from Utils import utils # Import the utils module
 
-
 # --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
 DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
@@ -40,7 +39,7 @@ logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCR
 # Use PROJECT_ROOT to build paths relative to the project root
 ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
-DELETE_DIR = os.path.join(OUTPUT_DIR, "delete")
+DELETE_DIR = os.path.join(OUTPUT_DIR, ".deleted")
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
 VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")

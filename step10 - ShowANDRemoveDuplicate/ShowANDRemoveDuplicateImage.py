@@ -35,7 +35,7 @@ logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCR
 # Use PROJECT_ROOT to build paths relative to the project root
 ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
-DELETE_DIR = os.path.join(OUTPUT_DIR, "delete")
+DELETE_DIR = os.path.join(OUTPUT_DIR, ".deleted")
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
 IMAGE_INFO_FILE = os.path.join(OUTPUT_DIR, "image_info.json")
 IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
