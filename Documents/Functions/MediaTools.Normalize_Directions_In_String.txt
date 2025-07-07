@@ -1,0 +1,29 @@
+Function:
+MediaTools.Normalize_Directions_In_String
+
+Description:
+Replaces full cardinal directions ("North", "South", "East", "West") in a string with their standardized abbreviations ("N", "S", "E", "W").
+
+Input Type:
+1. inputString [string]
+
+Output Type:
+✅ [string] — same string with normalized cardinal directions
+❌ Returns original string if no matches are found
+
+Algorithm:
+1. If input is null or empty
+   1.1 Return input as-is
+2. Replace cardinal direction words (case-insensitive)
+   2.1 Replace "North" → "N"
+   2.2 Replace "South" → "S"
+   2.3 Replace "East" → "E"
+   2.4 Replace "West" → "W"
+3. Return the modified string
+
+Possible Issues:
+✅ Covered: Replaces all four cardinal directions
+✅ Covered: Case-insensitive match using -replace operator
+❌ Not Covered: Does not handle malformed strings (e.g. "northbound", "eastern")
+❌ Not Covered: No trimming of extra whitespace or punctuation
+❌ Not Covered: Does not verify if replacements result in a valid geotag format

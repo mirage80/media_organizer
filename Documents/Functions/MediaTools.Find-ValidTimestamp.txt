@@ -1,0 +1,39 @@
+🕓 MediaTools.Find-ValidTimestamp Function Documentation
+
+Function:
+Find-ValidTimestamp
+
+Description:
+Attempts to extract the most reliable timestamp from a given metadata hashtable, following a prioritized list of known timestamp fields.
+
+Input Type:
+1. $metadata [hashtable] — A hashtable containing timestamp-related metadata from various sources (EXIF, ffprobe, Google JSON, etc.)
+
+Output Type:
+✅ [string] — Standardized timestamp string (format: yyyy:MM:dd HH:mm:ss+00:00)
+❌ [null] — If no valid timestamp is found or input is invalid
+
+Algorithm (Pseudo-code):
+1. If $metadata is null or empty
+   → Return null
+
+2. Define list of known timestamp fields in priority order:
+   → e.g., "DateTimeOriginal", "CreateDate", "FileModifyDate", "QuickTime:CreateDate"
+
+3. For each field in priority list:
+   3.1 If field exists in $metadata and is not null:
+       a. Call Standardize_TimeStamp($metadata[$field])
+       b. If result is not null → return it
+
+4. If none of the fields yield a valid result:
+   → Return null
+
+Function Calls:
+🔹 MediaTools.Standardize_TimeStamp — Converts raw or varied timestamp formats into the pipeline-standard form
+
+Possible Issues:
+✅ Covered: Missing or null metadata entries
+✅ Covered: Multiple common timestamp field names are checked
+❌ Not Covered: Contradictory timestamps (e.g., conflicting values across sources)
+❌ Not Covered: Non-string or malformed timestamp values
+❌ Not Covered: Nested timestamp structures or array-based metadata

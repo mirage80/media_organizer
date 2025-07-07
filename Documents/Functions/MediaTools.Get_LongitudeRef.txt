@@ -1,0 +1,26 @@
+Function:
+MediaTools.Get_LongitudeRef
+
+Description:
+Returns the compass hemisphere reference "E" or "W" based on the numeric longitude value. Used to encode directional metadata during GPS writing.
+
+Input Type:
+1. longitude [nullable[double]]
+
+Output Type:
+✅ [string] — "E" if longitude is non-negative, "W" if negative
+❌ Returns "" (empty string) if input is null
+
+Algorithm:
+1. Check if longitude is null
+   1.1 If true → return ""
+2. Evaluate sign of value
+   2.1 If longitude ≥ 0 → return "E"
+   2.2 Else → return "W"
+
+Possible Issues:
+✅ Covered: Null input → returns ""
+✅ Covered: Longitude exactly 0 → returns "E"
+✅ Covered: Positive or negative double values → mapped correctly
+❌ Not Covered: Inputs outside valid GPS longitude range (e.g., ±181+)
+❌ Not Covered: Non-numeric or corrupted input — assumed sanitized upstream

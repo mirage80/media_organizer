@@ -1,0 +1,40 @@
+Function:
+MediaTools.Get_Ffprobe_Geotag
+
+Description:
+Extracts GPS coordinates from a video's ffprobe metadata and converts them into a standard latitude/longitude string.
+
+Input Type:
+
+1. ffprobeData [Hashtable] — Parsed metadata output from ffprobe (e.g., JSON converted to hashtable)
+
+Output Type:
+
+✅ [string] — GPS in "lat,lon" format (e.g., "37.421998,-122.084000")
+❌ Returns $null if GPS data is not available or cannot be parsed
+
+Algorithm:
+
+1. Validate presence of ffprobeData.streams[0].tags.location
+   1.1 If not found → return $null
+
+2. Extract location string from tags
+   2.1 Expected format is: "location=+37.421998-122.084000/"
+
+3. Parse the latitude and longitude
+   3.1 Remove prefix "location="
+   3.2 Identify latitude as characters after + or - up to next sign
+   3.3 Extract longitude accordingly
+
+4. Call 🔹 MediaTools.ParseToDecimal
+   — Purpose: Convert extracted strings into decimal representations (if necessary)
+
+5. Format and return as "lat,lon" string
+
+Possible Issues:
+
+* ✅ Covered: Missing or empty location tag
+* ✅ Covered: Positive/negative sign parsing
+* ❌ Not Covered: Invalid location string format (e.g., missing delimiters)
+* ❌ Not Covered: Unexpected structure in ffprobeData
+* ❌ Not Covered: Non-numeric coordinates

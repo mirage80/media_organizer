@@ -1,0 +1,45 @@
+Function:
+MediaTools.ParseToDecimal
+
+Description:
+Parses a GPS coordinate string into a decimal degree format. Supports multiple formats including degrees-minutes-seconds, degrees with symbols, and raw decimal values.
+
+Input Type:
+1. input [string]
+
+Output Type:
+✅ [nullable[double]] — decimal degrees as a float value
+❌ Returns $null if parsing fails or input is not recognized
+
+Algorithm:
+1. If input is null or empty
+   1.1 Return $null
+2. Attempt to match degrees-minutes-seconds format with regular expression
+   2.1 Example patterns:
+       - 123° 45' 56"
+       - 123°45'56.78"
+   2.2 If matched:
+       - Parse degrees, minutes, and seconds as floats
+       - Calculate decimal value: deg + (min / 60) + (sec / 3600)
+       - Return result
+3. Attempt to match degrees with symbols format
+   3.1 Example: 123°45.67'
+   3.2 If matched:
+       - Parse degrees and minutes
+       - Calculate: deg + (min / 60)
+       - Return result
+4. Attempt to match raw decimal format
+   4.1 Example: 123.45678
+   4.2 If matched and can parse:
+       - Return parsed decimal
+5. If no formats match or parse fails → Return $null
+
+Possible Issues:
+✅ Covered: Handles empty/null input
+✅ Covered: Matches DMS (deg° min' sec") format
+✅ Covered: Matches degrees-minutes format
+✅ Covered: Matches pure decimal values
+❌ Not Covered: No negative direction interpretation (sign handled separately)
+❌ Not Covered: No explicit validation for out-of-bounds (e.g. > 180)
+❌ Not Covered: No error logging for failed formats
+❌ Not Covered: Ambiguous inputs like 123 45.6 are not interpreted

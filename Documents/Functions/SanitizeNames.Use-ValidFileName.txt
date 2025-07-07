@@ -1,0 +1,42 @@
+Function:
+SanitizeNames.Use-ValidFileName
+
+Description:
+Validates whether a file name is syntactically safe and permitted by the operating system by checking for length, illegal characters, and formatting.
+
+Input Type:
+1. name [string] — The file name to validate (not including path)
+
+Output Type:
+✅ [bool] — true if the file name is valid
+❌ Returns false if the file name is invalid
+
+Algorithm (Pseudo-code):
+
+1. Check for Null or Empty
+   1.1 If name is $null or empty → return false
+
+2. Check Length
+   2.1 If name.length is less than 1 → return false
+
+3. Check Illegal Characters
+   3.1 Define disallowed characters: \ / : * ? " < > |
+   3.2 If name contains any → return false
+
+4. Check Leading or Trailing Whitespace
+   4.1 If name starts or ends with whitespace → return false
+
+5. Otherwise
+   5.1 Return true
+
+Function Calls:
+None
+
+Possible Issues:
+
+✅ Covered: Null or empty name
+✅ Covered: Illegal characters
+✅ Covered: Leading/trailing whitespace
+❌ Not Covered: Reserved system names (CON, NUL, PRN, etc.)
+❌ Not Covered: Unicode confusables or homoglyphs
+❌ Not Covered: Max filename length limits (e.g. 255 characters)

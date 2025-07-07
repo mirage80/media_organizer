@@ -1,0 +1,58 @@
+MediaTools.Write_Geotag Function Documentation
+
+Function:
+Write_Geotag
+
+Description:
+Writes GPS latitude and longitude metadata into the provided media file using ExifTool. Can perform a dry-run simulation or execute the command.
+
+Input Type:
+
+1. file [string] — Path to the media file to write geotag into
+2. latitude [nullable[double]] — Latitude in decimal degrees
+3. longitude [nullable[double]] — Longitude in decimal degrees
+4. ExifToolPath [string] — Path to the ExifTool binary
+5. dry_run [bool] — Whether to simulate the command without executing
+6. log_only [bool] — If true, logs the action without writing metadata
+
+Output Type:
+
+✅ [void] — Metadata is written or simulated as a log entry
+❌ Throws error if ExifTool path is invalid or file does not exist
+
+Algorithm (Pseudo-code):
+
+1. Validate Inputs
+   1.1 If file is missing or doesn't exist → throw error
+   1.2 If ExifToolPath doesn't exist → throw error
+   1.3 If latitude or longitude is null → log warning, exit
+
+2. Construct GPS string
+   2.1 Call utils.convert_gps(latitude, longitude)
+        → returns string like +38.123456-122.987654/
+
+3. Build ExifTool command
+   3.1 Construct command using -GPSLatitude, -GPSLongitude, and -overwrite_original
+
+4. Log action
+   4.1 Call $MediaToolsLogger.Write-Log at DEBUG and INFO level
+
+5. Execute or Simulate
+   5.1 If dry_run or log_only → log only, skip execution
+   5.2 Otherwise → run command using Start-Process
+
+Function Calls:
+
+- utils.convert_gps — Converts decimal lat/lon to ISO6709 format
+- $MediaToolsLogger.Write-Log — Logs debug/info/warning messages
+
+Possible Issues:
+
+✅ Missing or invalid file path
+✅ Missing or invalid ExifToolPath
+✅ Missing GPS values (null)
+✅ Dry-run and log-only modes respected
+✅ Logging for all major steps
+❌ No catch for ExifTool execution failure (e.g., permission denied)
+❌ No retry logic if metadata write fails
+✅ Command string constructed safely using input

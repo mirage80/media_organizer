@@ -1,0 +1,31 @@
+Function Name:
+MediaTools.Remove_FilesWithOriginalExtension
+
+Description:
+Removes media files that still retain their original extension (e.g., .mov, .heic) after conversion.
+
+Input Fields:
+1. file_list [list] — List of file paths to examine
+2. original_exts [list] — List of original extensions to remove (e.g., [".mov", ".heic"])
+3. logger [Logger] — Logger object to record deletions
+
+Output Type:
+✅ [int] — Number of files successfully removed
+❌ Returns 0 if none are removed
+
+Algorithm:
+1. Initialize counter to 0
+2. For each file in file_list:
+  2.1 Check if file extension matches any in original_exts
+  2.2 If match:
+    2.2.1 Attempt to delete file
+    2.2.2 Log success or failure
+    2.2.3 Increment counter on success
+3. Return total deletions
+
+Possible Issues:
+* ✅ Handles case-insensitive extensions
+* ✅ Logs each deletion event
+* ❌ No retry mechanism on deletion failure
+* ❌ Silent skip if permission denied or file in use
+* ❌ No check for sidecar files (.json, .xmp)

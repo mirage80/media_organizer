@@ -1,0 +1,32 @@
+Function:
+MediaTools.Standardize_GeoTag_value
+
+Description:
+Converts a raw GPS coordinate string and its directional reference (N, S, E, W) into a standardized decimal degree value, applying sign based on hemisphere.
+
+Input Type:
+1. raw_value [string]
+2. ref [string] — expected to be one of: N, S, E, W
+
+Output Type:
+✅ [nullable[double]] — Decimal degrees, positive or negative depending on reference
+❌ Returns $null on parse failure
+
+Algorithm:
+1. Validate input
+   1.1 If raw_value is null or empty → Return $null
+2. Call ParseToDecimal(raw_value) to extract numeric value
+   2.1 If result is $null → Return $null
+3. Check ref
+   3.1 If ref is "S" or "W" → Negate decimal value
+   3.2 Return result
+4. Otherwise → Return result as-is
+
+Possible Issues:
+✅ Covered: Handles null or empty raw_value
+✅ Covered: Uses ParseToDecimal() to parse valid formats
+✅ Covered: Handles negation for "S" and "W" references
+❌ Not Covered: Invalid ref values like null, lowercase, or malformed (e.g. "X")
+❌ Not Covered: Extra whitespace or case-insensitive issues in ref
+❌ Not Covered: No error logging on failure
+❌ Not Covered: Does not validate final value range (e.g. > 180)

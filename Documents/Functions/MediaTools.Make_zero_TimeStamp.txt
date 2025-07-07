@@ -1,0 +1,19 @@
+Function Name:
+MediaTools.Make_zero_TimeStamp
+
+Description:
+Generates a default zeroed timestamp string used when valid timestamp data is unavailable.
+
+Input Fields:
+None
+
+Output Type:
+✅ [string] — "0000:00:00 00:00:00+00:00"
+❌ Not applicable (no exception expected)
+
+Algorithm:
+1. Return the string: "0000:00:00 00:00:00+00:00"
+
+Possible Issues:
+* ✅ Recognized universally as invalid/zero timestamp
+* ❌ No dynamic formatting or time zone flexibility

@@ -1,0 +1,31 @@
+Function Name:
+MediaTools.Invoke-ExifToolProcess
+
+Description:
+Runs the ExifTool command on a file and captures the resulting output as JSON.
+
+Input Fields:
+1. file_path [string] — Path to the media file
+2. exiftool_path [string] — Path to the ExifTool binary
+3. options [list[string]] — List of ExifTool command-line options
+
+Output Type:
+✅ [dict] — Parsed JSON result from ExifTool
+❌ Returns None if execution fails or output is invalid
+
+Algorithm:
+1. Build command
+  1.1 Combine exiftool_path with file_path and options into a subprocess command list
+2. Execute command
+  2.1 Run subprocess with the built command
+  2.2 Capture stdout and stderr
+3. Parse result
+  3.1 If stdout is valid JSON, parse and return
+  3.2 Else return None
+
+Possible Issues:
+* ✅ Handles empty ExifTool output
+* ✅ Flexible with option formats
+* ❌ No timeout protection on subprocess
+* ❌ Fails silently if ExifTool path is incorrect
+* ❌ No retry mechanism on transient failures

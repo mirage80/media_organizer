@@ -1,0 +1,52 @@
+📁 MediaTools.categorize_bulk_media_based_on_metadata_keep_directory_structure Function Documentation
+
+Function:
+categorize_bulk_media_based_on_metadata_keep_directory_structure
+
+Description:
+Categorizes media files by timestamp and geolocation metadata, preserving the original directory structure under the destination. Moves files accordingly.
+
+Input Type:
+1. $files [string[]] — List of media file paths to process
+2. $metadataJson [hashtable] — Metadata lookup per file, including timestamp/geotag
+3. $destination [string] — Root directory for categorized output
+4. $logFunc [scriptblock] — Logger callback for tracking actions
+5. $keepOriginal [bool] — Whether to preserve original files (default: $false)
+
+Output Type:
+✅ [void] — Files are moved into categorized folders
+❌ Logs warnings or errors for skipped or failed moves
+
+Algorithm (Pseudo-code):
+1. For each $file in $files:
+   a. If $metadataJson does not contain $file → log and skip
+   b. Extract timestamp and geotag from $metadataJson[$file]
+
+2. Determine Target Directory
+   a. If timestamp is valid → format as yyyy\yyyy-MM\yyyy-MM-dd
+   b. If geotag is valid → append GPS_Lat_Lon directory
+   c. Else → fallback to “Uncategorized”
+
+3. Construct Full Destination Path
+   a. Combine $destination with derived structure
+   b. Ensure subdirectory exists
+
+4. Move or Copy File
+   a. If $keepOriginal is $true → copy file
+   b. Else → move file
+   c. Log success or failure
+
+Function Calls:
+🔹 MediaTools.IsValid_TimeStamp — Validates timestamp
+🔹 MediaTools.IsValid_GeoTag — Validates geolocation
+🔹 MediaTools.Move-FileToDestination — Performs actual file move
+🔹 MediaTools.Format-Timestamp — Formats timestamp into folder structure
+🔹 MediaTools.Standardize_GeoTag — Standardizes and formats GPS string
+
+Possible Issues:
+✅ Covered: Skips files with no metadata
+✅ Covered: Preserves directory structure under categorized root
+✅ Covered: Can choose between copy and move
+❌ Not Covered: Collisions if files share the same timestamp/geotag
+❌ Not Covered: Invalid metadata structure in $metadataJson
+❌ Not Covered: No deduplication or conflict resolution in destination

@@ -1,0 +1,33 @@
+Function:
+MediaTools.Get_Json_TimeStamp
+
+Description:
+Extracts the creation timestamp from Google Photos `.json` metadata and formats it to "yyyy:MM:dd HH:mm:ss+00:00".
+
+Input Type:
+
+1. jsonMetadata [Hashtable] — Parsed `.json` sidecar file from Google Photos
+
+Output Type:
+✅ [string] — Timestamp in format "yyyy:MM:dd HH:mm:ss+00:00"
+❌ Returns $null if creation time is missing or invalid
+
+Algorithm:
+
+1. Check for photoTakenTime.timestamp field
+   1.1 If missing → return $null
+
+2. Convert timestamp from Unix epoch to [DateTimeOffset] in UTC
+   2.1 Use [DateTimeOffset]::FromUnixTimeSeconds(timestamp).ToUniversalTime()
+
+3. Format to string: "yyyy:MM:dd HH:mm:ss+00:00"
+
+4. Return formatted timestamp
+
+Possible Issues:
+
+* ✅ Covered: Missing timestamp field
+* ✅ Covered: Unix timestamp conversion to UTC
+* ✅ Covered: Consistent formatting to required output
+* ❌ Not Covered: Invalid or non-numeric timestamp values (e.g., "unknown")
+* ❌ Not Covered: Overflow from extremely large or negative timestamps

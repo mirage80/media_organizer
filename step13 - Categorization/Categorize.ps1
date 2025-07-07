@@ -13,197 +13,123 @@ $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Centralized Logging Setup ---
-try {
-    $logFile = Join-Path $scriptDirectory "..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
-    Initialize-ChildScriptLogger -ChildLogFilePath $logFile
-} catch {
-    Write-Error "FATAL: Failed to initialize logger. Error: $_"
-    exit 1
-}
-
-# --- Script Setup ---
+# --- Import Modules ---
 $MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
-try {
-    Import-Module $MediaToolsFile -Force
-} catch {
-    Log "CRITICAL" "Failed to import MediaTools module from '$MediaToolsFile'. Error: $_. Aborting."
+Import-Module $MediaToolsFile -Force
+
+# --- Logging Setup ---
+$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+$Log = {
+    param([string]$Level, [string]$Message)
+    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
+}
+
+& $Log "INFO" "--- Script Started: $scriptName ---"
+
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
+& $Log "INFO" "Starting media categorization based on consolidated metadata."
+
+# --- Load the consolidated metadata file which is our source of truth ---
+$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+$metaPath = Join-Path $OutputDirectory "Consolidate_Meta_Results.json"
+if (-not (Test-Path $metaPath)) {
+    & $Log "CRITICAL" "Consolidated metadata file not found at '$metaPath'. This script must run after 'Consolidate_Meta'."
     exit 1
 }
 
-# Define Image and Video extensions (these are from MediaTools.psm1 and are available after import)
-$imageExtensions = $imageExtensions
-$videoExtensions = $videoExtensions
-
-
-#===========================================================
-#                 Main functions
-#===========================================================
-# Create a destination directory for categorized files
-$dstDirectory = New-Item -Path "$unzippedDirectory\dst" -ItemType Directory -Force
-
-Log "INFO" "Scanning for media files in '$unzippedDirectory'..."
-# Get all media files recursively and make the extension check case-insensitive.
-$files = Get-ChildItem -Path $unzippedDirectory -Recurse -File | Where-Object {
-    $ext = $_.Extension.ToLower()
-    $imageExtensions -contains $ext -or $videoExtensions -contains $ext
+try {
+    $metadata = Get-Content $metaPath -Raw | ConvertFrom-Json
+} catch {
+    & $Log "CRITICAL" "Failed to parse JSON at '$metaPath': $($_.Exception.Message)"
+    exit 1
 }
 
-if (-not $files) {
-    Log "WARNING" "No media files found to categorize in '$unzippedDirectory'."
-    # Clean up the empty dst directory and exit gracefully
-    Remove-Item -Path $dstDirectory.FullName -Force -ErrorAction SilentlyContinue
+$allPaths = $metadata.PSObject.Properties.Name
+$totalItems = $allPaths.Count
+
+if ($totalItems -eq 0) {
+    & $Log "INFO" "No files found in metadata file to categorize."
     exit 0
 }
 
-$currentItem = 0
-$totalItems = $files.count
-Log "INFO" "Found $totalItems media files to categorize."
-$runspaces = @()
+& $Log "INFO" "Found $totalItems files to process."
 
-$totalItems = $files.Count
-$runspacePool = [RunspaceFactory]::CreateRunspacePool(1, 20)
+# --- Setup Destination and Parallel Processing ---
+$dstRoot = Join-Path -Path $OutputDirectory -ChildPath "Categorized_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+New-Item -Path $dstRoot -ItemType Directory -Force | Out-Null
+& $Log "INFO" "Created destination root directory: $dstRoot"
+
+$runspacePool = [runspacefactory]::CreateRunspacePool(1, [System.Environment]::ProcessorCount)
 $runspacePool.Open()
-$UtilDirectory = Join-Path $scriptDirectory "..\Utils"
-$progressFile = Join-Path $env:TEMP "categorize_progress_$PID.txt"
-if (Test-Path $progressFile) { Remove-Item $progressFile }
+$jobs = @()
 
-foreach ($file in $files) {
-    $ps = [PowerShell]::Create()
-    $ps.AddScript({
-        param(
-            $filePathStr, $rootDirStr, $targetPathStr, $progressFile, $utilDir,
-            $logFile, # Only need this for the logger init
-            $ExifToolPath
-        )
+# --- Main Loop ---
+foreach ($filePath in $allPaths) {
+    $fileData = $metadata.$filePath
+
+    $job = [powershell]::Create().AddScript({
+        param($currentFilePath, $currentFileData, $destinationRoot, $originalRoot, $logScriptBlock)
+
+        # Inject the logger into this thread
+        $Log = $logScriptBlock
+
+        if (-not (Test-Path $currentFilePath)) {
+            & $Log "WARNING" "File from metadata not found on disk, cannot categorize: $currentFilePath"
+            return
+        }
+
+        # Determine category from the pre-consolidated data
+        $hasTime = $null -ne $currentFileData.ConsolidatedTimestamp
+        $hasGeo = $null -ne $currentFileData.ConsolidatedGeotag
+
+        $category = "no_time_no_geo" # Default
+        if ($hasTime -and $hasGeo) { $category = "with_time_with_geo" }
+        elseif ($hasTime) { $category = "with_time_no_geo" }
+        elseif ($hasGeo) { $category = "no_time_with_geo" }
+
+        # Construct destination path, preserving relative structure
+        $relativePath = $currentFilePath -replace [regex]::Escape($originalRoot), ""
+        $relativePath = $relativePath.TrimStart("\/")
+        
+        $finalDir = Join-Path -Path $destinationRoot -ChildPath $category
+        $destinationPath = Join-Path -Path $finalDir -ChildPath $relativePath
 
         try {
-            # Import the utils module first, which contains the logger
-            $utilsPath = Join-Path $utilDir 'Utils.psm1'
-            Import-Module $utilsPath -Force
-
-            # Initialize the logger for this thread. It will read config from env vars.
-            Initialize-ChildScriptLogger -ChildLogFilePath $logFile
-
-            # Now import the media tools module
-            $mediaPath = Join-Path $utilDir 'MediaTools.psm1'
-            Import-Module $mediaPath -Force
-
-            # Set the ExifToolPath in the script scope so MediaTools can find it
-            $script:ExifToolPath = $ExifToolPath
-
-            # Log start of categorization
-            Log "INFO" "THREAD START $filePathStr"
-
-            $filePath = Get-Item $filePathStr
-            $rootDir = Get-Item $rootDirStr
-            $targetPath = Get-Item $targetPathStr
-
-            Log "INFO" "Categorizing $filePathStr"
-
-            $category = categorize_bulk_media_based_on_metadata_keep_directory_structure `
-                -filePath $filePath `
-                -rootDir $rootDir `
-                -targetPath $targetPath
-
-            # Log success
-            # The function already logs the move, this is just for thread completion confirmation.
-            Log "INFO" "THREAD SUCCESS: Categorized $($filePath.FullName) into '$category'."
+            # Ensure destination directory exists. -Force makes this thread-safe enough.
+            New-Item -Path (Split-Path -Path $destinationPath -Parent) -ItemType Directory -Force -ErrorAction Stop | Out-Null
+            
+            # Move the file
+            Move-Item -Path $currentFilePath -Destination $destinationPath -Force -ErrorAction Stop
         } catch {
-            Log "ERROR" "Thread failed for $filePathStr : $_"
-        } finally {
-            Log "DEBUG"  "THREAD END $filePathStr" 
-            Add-Content -Path $progressFile -Value $filePathStr
+            & $Log "ERROR" "Failed to move '$currentFilePath' to '$destinationPath'. Error: $($_.Exception.Message)"
         }
-    }) | Out-Null
-    $ps.AddArgument($file.FullName) | Out-Null
-    $ps.AddArgument($unzippedDirectory) | Out-Null
-    $ps.AddArgument($dstDirectory) | Out-Null
-    $ps.AddArgument($progressFile) | Out-Null
-    $ps.AddArgument($UtilDirectory) | Out-Null
-    $ps.AddArgument($logFile) | Out-Null
-    $ps.AddArgument($ExifToolPath) | Out-Null
-    $ps.RunspacePool = $runspacePool
-    $runspaces += [PSCustomObject]@{ Pipe = $ps; Handle = $ps.BeginInvoke() }
+    }).AddParameters(@{
+        currentFilePath = $filePath
+        currentFileData = $fileData
+        destinationRoot = $dstRoot
+        originalRoot = $unzippedDirectory
+        logScriptBlock = $Log
+    })
+    $job.RunspacePool = $runspacePool
+    $jobs += $job.BeginInvoke()
 }
 
-
-$currentItem = 0
-$lastProgress = -1
-$waitCounter = 0
-
-while ($currentItem -lt $totalItems) {
-    Start-Sleep -Milliseconds 100
-while ((Get-Content $progressFile -ErrorAction SilentlyContinue).Count -gt $currentItem) {
-        $currentItem++
-        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Categorizing $currentItem of $totalItems"
-        $waitCounter = 0
-    }
-
-    if ($lastProgress -eq $currentItem) {
-        $waitCounter++
-    } else {
-        $lastProgress = $currentItem
-        $waitCounter = 0
-    }
-
-    if ($waitCounter -gt 100) {
-        Write-Warning "No progress in 10 seconds. Thread(s) might be stalled."
-        break
-    }
+# --- Wait for jobs and show progress ---
+while ($jobs.IsCompleted -contains $false) {
+    $completedCount = ($jobs | Where-Object { $_.IsCompleted }).Count
+    Show-ProgressBar -Current $completedCount -Total $totalItems -Message "Categorizing Files"
+    Start-Sleep -Milliseconds 200
 }
 
-# Clean up runspaces
-foreach ($rs in $runspaces) {
-    $rs.Pipe.EndInvoke($rs.Handle)
-    $rs.Pipe.Dispose()
-}
+# --- Finalize and Clean up ---
+Show-ProgressBar -Current $totalItems -Total $totalItems -Message "Categorizing Files"
+$jobs | ForEach-Object { $_.EndInvoke() } # Collect any exceptions
 $runspacePool.Close()
 $runspacePool.Dispose()
 
-# --- Move categorized content from dst back to the root ---
-Log "INFO" "Moving categorized folders from '$($dstDirectory.FullName)' back to '$unzippedDirectory'..."
-
-# Get the category folders inside 'dst'
-$categoryFolders = Get-ChildItem -Path $dstDirectory.FullName -Directory -ErrorAction SilentlyContinue
-
-if ($categoryFolders) {
-    foreach ($folder in $categoryFolders) {
-        $destinationPath = Join-Path -Path $unzippedDirectory -ChildPath $folder.Name
-        Log "INFO" "Moving '$($folder.FullName)' to '$unzippedDirectory' (will become '$destinationPath')..."
-        try {
-            # Move the category folder itself up one level
-            Move-Item -Path $folder.FullName -Destination $unzippedDirectory -Force
-        } catch {
-            Log "ERROR" "Failed to move '$($folder.FullName)': $_"
-        }
-    }
-
-    # --- Clean up the now empty dst directory ---
-    Log "INFO" "Cleaning up the empty destination directory: $($dstDirectory.FullName)"
-    try {
-        # Optional: Verify it's truly empty before removing
-        if (-not (Get-ChildItem -Path $dstDirectory.FullName -ErrorAction SilentlyContinue)) {
-            Remove-Item -Path $dstDirectory.FullName -Force
-            Log "INFO" "Successfully removed empty destination directory."
-        } else {
-             Log "WARNING" "Destination directory '$($dstDirectory.FullName)' was not empty after moving category folders. Manual cleanup might be required."
-        }
-    } catch {
-        Log "ERROR" "Failed to remove destination directory '$($dstDirectory.FullName)': $_"
-    }
-} else {
-    Log "WARNING" "No category folders found in '$($dstDirectory.FullName)' to move. The 'dst' directory might be empty or categorization failed."
-    # Optionally remove the empty dst directory even if no category folders were found
-    try {
-        if (Test-Path $dstDirectory.FullName -PathType Container) {
-             Remove-Item -Path $dstDirectory.FullName -Force -ErrorAction SilentlyContinue
-             Log "INFO" "Removed potentially empty destination directory."
-        }
-    } catch {
-         Log "ERROR" "Failed to remove destination directory '$($dstDirectory.FullName)' even though no category folders were found: $_"
-    }
-}
-
-# Correct the final log message
-Log "INFO" "Categorization and final move complete."
+& $Log "INFO" "Categorization complete."

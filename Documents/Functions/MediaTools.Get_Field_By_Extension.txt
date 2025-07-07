@@ -1,0 +1,33 @@
+Function:
+MediaTools.Get_Field_By_Extension
+
+Description:
+Retrieves the list of metadata fields associated with a given file extension by looking up a predefined mapping.
+
+Input Type:
+1. extension [string] — The file extension (e.g., .jpg, .mp4) to look up.
+2. mapping_table [hashtable] — A dictionary mapping extensions to lists of metadata fields.
+
+Output Type:
+✅ [string[]] — An array of metadata field names for the extension (may be empty).
+❌ Returns @() (empty array) if the extension is not found or input is invalid.
+
+Algorithm:
+1. Normalize extension input
+   1.1. Convert extension to lowercase
+   1.2. If it does not start with ".", prepend a dot
+2. Look up in mapping
+   2.1. Check if normalized extension exists in mapping_table
+   2.2. If found → return associated list of fields
+   2.3. Else → return empty array @()
+
+Function Calls:
+* No sub-functions are explicitly called within this function.
+
+Possible Issues:
+* ✅ Covered: Handles missing . in extensions
+* ✅ Covered: Returns empty array if mapping does not contain the extension
+* ❌ Not Covered: No validation for malformed mapping_table
+												  
+* ❌ Not Covered: No validation for null or empty extension
+* ✅ Covered: Case-insensitive matching via .ToLower()

@@ -1,0 +1,28 @@
+Function Name:
+MediaTools.Run_ExifToolCommand
+
+Description:
+Executes an ExifTool command on the specified file with optional arguments.
+
+Input Fields:
+1. file_path [string] — Full path to the media file
+2. args [list] — Additional arguments to pass to ExifTool (e.g., ["-datetimeoriginal=..."])
+3. logger [Logger] — Logger object for recording command execution
+
+Output Type:
+✅ [bool] — True if command executed successfully
+❌ False if execution failed
+
+Algorithm:
+1. Validate file_path exists
+2. Construct command as: ["exiftool"] + args + [file_path]
+3. Execute the command using subprocess
+4. Capture stdout and stderr
+5. Log output and any errors
+6. Return True if return code is 0, else False
+
+Possible Issues:
+* ✅ Logs both success and error output
+* ❌ Assumes ExifTool is in system PATH
+* ❌ No timeout or retry on failure
+* ❌ No validation of args structure or safety

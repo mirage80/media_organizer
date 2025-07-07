@@ -12,9 +12,12 @@ top.ps1
 
 Utility Modules
 Utils\Utils.psm1
-[x] A.I. 1: Centralize all logging logic into this module.
-[x] A.I. 2: Create Initialize-Logger and Initialize-ChildScriptLogger helper functions.
+[x] A.I. 1: Centralize all logging logic into this module. (Superseded by A.I. 5)
+[x] A.I. 2: Create Initialize-Logger and Initialize-ChildScriptLogger helper functions. (Superseded by A.I. 5)
 [x] A.I. 3: Improve graphical progress bar handling.
+[x]  A.I. 4: Modify Initialize-ChildScriptLogger to write an initial "Script Started" message to guarantee log file creation. (Superseded by A.I. 5)
+[x]  A.I. 5: Refactor the logging system to be stateless by creating logger "factory" functions (New-Logger, New-ChildLogger) that auto-generate paths and return a pre-configured script block for logging.
+[P2] [ ] A.I. 6: Apply the new stateless logging pattern to all remaining PowerShell child scripts.
 Utils\MediaTools.psm1
 [x] A.I. 1: Fix return value in categorize_bulk_media_based_on_metadata_keep_directory_structure.
 [x] A.I. 2: Refactor Find_and_Write_Valid_Timestamp to be more robust.
@@ -24,6 +27,7 @@ Utils\MediaTools.psm1
 PowerShell Pipeline Scripts
 step1 - Extract\Extract.ps1
 [x] A.I. 1: Refactor to use the centralized logging system.
+[x]  A.I. 2: Add error handling and logging to the 7-Zip extraction command.
 step2 - clean_json_names\CleanJsonNames.ps1
 [x] A.I. 1: Refactor to use the centralized logging system.
 step3 - clean_json\clean_json.ps1

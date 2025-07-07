@@ -461,22 +461,3 @@ def parse_timestamp(ts_str, logger):
             logger.warning(f"Could not parse timestamp string: {ts_str}")
             return None
         
-
-#from removeShow and remove images        
-#def parse_timestamp(ts):
-#    try:
-#        return datetime.strptime(ts, "%Y:%m:%d %H:%M:%S")
-#    except:
-#        try:
-#            return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-#        except:
-#            return None
-        
-
-#from removeShow and remove video        
-#from dateutil.parser import parse as parse_date
-#def parse_timestamp(ts):
-#    try:
-#        return parse_date(ts)
-#    except Exception:
-#        return None

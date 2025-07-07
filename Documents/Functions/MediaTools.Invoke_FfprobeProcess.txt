@@ -1,0 +1,32 @@
+Function Name:
+MediaTools.Invoke-FfprobeProcess
+
+Description:
+Runs the ffprobe command on a video file and captures its output as JSON.
+
+Input Fields:
+1. file_path [string] — Path to the video file
+2. ffprobe_path [string] — Path to the ffprobe binary
+
+Output Type:
+✅ [dict] — Parsed ffprobe metadata as dictionary
+❌ Returns None if execution fails or output is malformed
+
+Algorithm:
+1. Build command
+  1.1 Create a subprocess command with ffprobe_path and file_path
+  1.2 Set format to JSON and suppress unnecessary output
+2. Execute command
+  2.1 Run subprocess and capture stdout and stderr
+3. Parse result
+  3.1 Decode stdout as UTF-8
+  3.2 Parse JSON output
+  3.3 Return parsed dictionary
+  3.4 On failure, return None
+
+Possible Issues:
+* ✅ Handles common ffprobe output
+* ✅ Minimal and efficient JSON parsing
+* ❌ No timeout enforcement
+* ❌ ffprobe path or permissions may cause silent failure
+* ❌ Assumes ffprobe is available and functional

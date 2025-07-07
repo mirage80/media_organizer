@@ -14,14 +14,21 @@ $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Centralized Logging Setup ---
-try {
-    $logFile = Join-Path $scriptDirectory "..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
-    Initialize-ChildScriptLogger -ChildLogFilePath $logFile
-} catch {
-    Write-Error "FATAL: Failed to initialize logger. Error: $_"
-    exit 1
+# --- Logging Setup for this script ---
+$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+$Log = {
+    param([string]$Level, [string]$Message)
+    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
 }
+
+& $Log "INFO" "--- Script Started: $scriptName ---"
+
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
 
 # --- Helper Function for FFmpeg ---
 function Invoke-FfmpegSimpleCopy {

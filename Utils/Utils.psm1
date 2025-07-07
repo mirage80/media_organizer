@@ -1,68 +1,60 @@
-# --- Logger Configuration (Script Scope) ---
-# These variables are private to this module and are set by Initialize-Logger.
-$script:S_LogFile = $null
-$script:S_ConsoleLogLevel = 3 # Default to ERROR
-$script:S_FileLogLevel = 1     # Default to INFO
-$script:S_LogLevelMap = @{
-    "DEBUG"    = 0
-    "INFO"     = 1
-    "WARNING"  = 2
-    "ERROR"    = 3
-    "CRITICAL" = 4
+# --- Module-level Logger ---
+# This variable will hold the logger script block passed in from a calling script.
+$script:UtilsLogger = $null
+
+# --- Thread-safe logging lock ---
+$script:LogFileLock = [System.Object]::new()
+
+function Set-UtilsLogger {
+    param(
+        [Parameter(Mandatory=$true)]$Logger
+    )
+    $script:UtilsLogger = $Logger
 }
 
-# --- Logger Initialization Function ---
-function Initialize-Logger {
+# --- Standalone, Stateless Logging Function ---
+# It is completely stateless and requires all configuration on every call.
+function Write-Log {
     param(
+        [Parameter(Mandatory=$true)][string]$Level,
+        [Parameter(Mandatory=$true)][string]$Message,
         [Parameter(Mandatory=$true)][string]$LogFilePath,
         [Parameter(Mandatory=$true)][int]$ConsoleLogLevel,
         [Parameter(Mandatory=$true)][int]$FileLogLevel,
-        [hashtable]$LogLevelMap
-    )
-    $script:S_LogFile = $LogFilePath
-    $script:S_ConsoleLogLevel = $ConsoleLogLevel
-    $script:S_FileLogLevel = $FileLogLevel
-    $script:S_LogLevelMap = $LogLevelMap # Overwrite the default map with the one from top.ps1
-}
-
-# --- Child Script Logger Initialization ---
-function Initialize-ChildScriptLogger {
-    param(
-        [Parameter(Mandatory=$true)][string]$ChildLogFilePath
+        [Parameter(Mandatory=$true)][hashtable]$LogLevelMap
     )
 
-    # This function encapsulates the boilerplate for initializing logging in a child script
-    # It relies on environment variables set by the main 'top.ps1' script.
-    $logDir = Split-Path -Path $ChildLogFilePath -Parent
+    # Ensure log directory exists. This check is fast and safe to run on every call.
+    $logDir = Split-Path -Path $LogFilePath -Parent
     if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
-    }
-
-    # Deserialize the JSON back into a hashtable
-    $logLevelMap = $null
-    if (-not [string]::IsNullOrWhiteSpace($env:LOG_LEVEL_MAP_JSON)) {
         try {
-            $logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
+            New-Item -ItemType Directory -Path $logDir -Force -ErrorAction Stop | Out-Null
         } catch {
-            throw "FATAL: Failed to deserialize LOG_LEVEL_MAP_JSON. Error: $_"
+            Write-Warning "FATAL: Could not create log directory '$logDir'. Error: $_"
+            return # Stop further processing if directory can't be made
         }
     }
 
-    if ($null -eq $logLevelMap) { throw "FATAL: LOG_LEVEL_MAP_JSON environment variable not found or invalid." }
-    if ($null -eq $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL) { throw "FATAL: Environment variable DEDUPLICATOR_CONSOLE_LOG_LEVEL is not set." }
-    if ($null -eq $env:DEDUPLICATOR_FILE_LOG_LEVEL) { throw "FATAL: Environment variable DEDUPLICATOR_FILE_LOG_LEVEL is not set." }
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $formatted = "$timestamp - $($Level.ToUpper()): $Message"
+    $levelIndex = $LogLevelMap[$Level.ToUpper()]
 
-    $EffectiveConsoleLogLevelString = $env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.Trim()
-    $EffectiveFileLogLevelString    = $env:DEDUPLICATOR_FILE_LOG_LEVEL.Trim()
-
-    $consoleLogLevel = $logLevelMap[$EffectiveConsoleLogLevelString.ToUpper()]
-    $fileLogLevel    = $logLevelMap[$EffectiveFileLogLevelString.ToUpper()]
-
-    if ($null -eq $consoleLogLevel) { throw "FATAL: Invalid Console Log Level specified ('$EffectiveConsoleLogLevelString')." }
-    if ($null -eq $fileLogLevel) { throw "FATAL: Invalid File Log Level specified ('$EffectiveFileLogLevelString')." }
-
-    # Call the main initializer with the derived settings
-    Initialize-Logger -LogFilePath $ChildLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
+    if ($null -ne $levelIndex) {
+        if ($levelIndex -ge $ConsoleLogLevel) { Write-Host $formatted }
+        if ($levelIndex -ge $FileLogLevel) {
+            $lockTaken = $false
+            try {
+                [System.Threading.Monitor]::Enter($script:LogFileLock, [ref]$lockTaken)
+                if ($lockTaken) {
+                    Add-Content -Path $LogFilePath -Value $formatted -Encoding UTF8 -ErrorAction Stop
+                }
+            }
+            catch { Write-Warning "Failed to write to log file '$LogFilePath': $_" }
+            finally {
+                if ($lockTaken) { [System.Threading.Monitor]::Exit($script:LogFileLock) }
+            }
+        }
+    } else { Write-Warning "Invalid log level used: $Level" }
 }
 
 # --- Graphical Show-ProgressBar Function Definition ---
@@ -178,49 +170,17 @@ function Write-JsonAtomic {
         $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
 
         # Validate JSON before replacing
-        $null = Get-Content $tempPath -Raw | ConvertFrom-Json
+        Get-Content $tempPath -Raw | ConvertFrom-Json | Out-Null
 
         Move-Item -Path $tempPath -Destination $Path -Force
-        Log "INFO" "✅ Atomic write succeeded: $Path"
+        & $script:UtilsLogger "INFO" "✅ Atomic write succeeded: $Path"
     } catch {
-        Log "ERROR" "❌ Atomic write failed for $Path : $_"
+        & $script:UtilsLogger "ERROR" "❌ Atomic write failed for $Path : $_"
         if (Test-Path $tempPath) {
             Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
         }
     }
 }
 
-# --- Log Function Definition ---
-function Log {
-    param (
-        [string]$Level,
-        [string]$Message
-    )
-    # This function now uses the script-scoped variables set by Initialize-Logger
-    if ($null -eq $script:S_LogFile) {
-        Write-Warning "Logger has not been initialized. Call Initialize-Logger first. Message: [$Level] $Message"
-        return
-    }
-
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $formatted = "$timestamp - $($Level.ToUpper()): $Message"
-    $levelIndex = $script:S_LogLevelMap[$Level.ToUpper()]
-
-    if ($null -ne $levelIndex) {
-        if ($levelIndex -ge $script:S_ConsoleLogLevel) {
-            Write-Host $formatted
-        }
-        if ($levelIndex -ge $script:S_FileLogLevel) {
-            try {
-                Add-Content -Path $script:S_LogFile -Value $formatted -Encoding UTF8 -ErrorAction Stop
-            } catch {
-                Write-Warning "Failed to write to log file '$($script:S_LogFile)': $_"
-            }
-        }
-    } else {
-        Write-Warning "Invalid log level used: $Level"
-    }
-}
- 
 # Export all public functions from this module.
-Export-ModuleMember -Function Initialize-Logger, Initialize-ChildScriptLogger, Log, Show-ProgressBar, Stop-GraphicalProgressBar, Write-JsonAtomic
+Export-ModuleMember -Function Write-Log, Show-ProgressBar, Stop-GraphicalProgressBar, Write-JsonAtomic, Set-UtilsLogger

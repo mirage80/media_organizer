@@ -1,0 +1,44 @@
+Function:
+SanitizeNames.Use-ValidDirectoryName
+
+Description:
+Checks if a directory name meets specific validity criteria based on naming rules (e.g. not empty, not containing certain illegal characters).
+
+Input Type:
+
+1. name [string] — The name of the directory (not the full path)
+
+Output Type:
+✅ [bool] — true if the directory name is valid
+❌ Returns false if name is invalid
+
+Algorithm (Pseudo-code):
+
+1. Check for Null or Empty
+  1.1 If name is $null or empty → return false
+
+2. Check Length
+  2.1 If name.length is less than 1 → return false
+
+3. Check Illegal Characters
+  3.1 Define list of disallowed characters: \ / : * ? " < > |
+  3.2 If name contains any → return false
+
+4. Check for trailing/leading whitespace
+  4.1 If name starts or ends with whitespace → return false
+
+5. Otherwise
+  5.1 Return true
+
+Function Calls:
+
+None
+
+Possible Issues:
+
+✅ Covered: Empty or null input
+✅ Covered: Illegal file system characters
+✅ Covered: Leading or trailing whitespace
+❌ Not Covered: Unicode normalization (e.g. homoglyph attacks)
+❌ Not Covered: Reserved Windows names (CON, PRN, etc.)
+❌ Not Covered: Max path length limit

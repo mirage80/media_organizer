@@ -1,0 +1,33 @@
+Function:
+MediaTools.Get_Ffprobe_Timestamp
+
+Description:
+Extracts the creation time from ffprobe metadata for a video and returns it as a standardized ISO 8601 timestamp.
+
+Input Type:
+
+1. ffprobeData [Hashtable] — Parsed metadata output from ffprobe (e.g., JSON converted to hashtable)
+
+Output Type:
+✅ [string] — Timestamp in "yyyy:MM:dd HH:mm:ss+00:00" format
+❌ Returns $null if timestamp cannot be extracted or parsed
+
+Algorithm:
+
+1. Check for ffprobeData.format.tags.creation_time
+   1.1 If found → store as rawTimestamp
+   1.2 Else → return $null
+
+2. Call 🔹 EstimateByTime.Format-Timestamp
+   2.1 Purpose: Normalize rawTimestamp to "yyyy:MM:dd HH:mm:ss+00:00" format
+   2.2 Handles timezone normalization and formatting internally
+
+3. Return formatted timestamp
+
+Possible Issues:
+
+* ✅ Covered: Missing creation_time field
+* ✅ Covered: Improperly formatted timestamp handled by Format-Timestamp
+* ❌ Not Covered: Unexpected data type in ffprobeData
+* ❌ Not Covered: Invalid timezone information in raw timestamp
+* ❌ Not Covered: Parsing failure within Format-Timestamp due to exotic format

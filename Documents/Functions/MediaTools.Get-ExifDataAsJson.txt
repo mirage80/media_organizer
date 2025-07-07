@@ -1,0 +1,46 @@
+MediaTools.Get-ExifDataAsJson Function Documentation
+
+Function:
+Get-ExifDataAsJson
+
+Description:
+Extracts raw metadata from a media file using ExifTool and parses it into a structured JSON object. Used as a foundation for all Exif-based metadata extractions.
+
+Input Type:
+
+1. FilePath [string] — Full path to the target media file
+2. ExifToolPath [string] — Full path to the exiftool.exe binary
+
+Output Type:
+
+✅ [PSCustomObject] — Parsed JSON metadata dictionary as PowerShell object
+❌ Returns $null and logs error if ExifTool fails or output is invalid
+
+Algorithm (Pseudo-code):
+
+1. Prepare the ExifTool command
+   1.1 Use -j to request JSON output
+   1.2 Wrap the FilePath in quotes
+
+2. Call MediaTools.Invoke-ExifToolProcess to execute the command
+   → Purpose: Launch ExifTool with arguments and capture output
+
+3. Parse the output string to JSON
+   3.1 Use ConvertFrom-Json
+   3.2 If parsing fails → return $null
+
+4. Return the first item of parsed metadata array
+   4.1 Assume only one file was queried per call
+
+Function Calls:
+
+- MediaTools.Invoke-ExifToolProcess — Launches ExifTool and returns standard output string
+
+Possible Issues:
+
+✅ Input file path does not exist (error is logged)
+✅ ExifTool not found or cannot be run (error is logged)
+✅ Output not in expected JSON format (returns $null)
+✅ JSON parsing error (returns $null)
+❌ Non-UTF8 ExifTool output encoding
+❌ Multiple files passed into a single command

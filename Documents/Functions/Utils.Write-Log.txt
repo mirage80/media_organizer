@@ -1,0 +1,44 @@
+📝 Utils.Write-Log Function Documentation
+
+Function:
+Utils.Write-Log
+
+Description:
+Writes a formatted log message to both console and log file with a timestamp and log level prefix.
+
+Input Type:
+1. Message [string] — The log message content
+2. Level [string] — Log severity: "DEBUG", "INFO", "WARNING", or "ERROR"
+
+Output Type:
+✅ [void] — Message is written to output streams
+❌ If logging fails (e.g., file write error), the failure is silently ignored
+
+Algorithm (Pseudo-code):
+1. Validate Inputs
+   1.1 If Message is null or empty → return early
+   1.2 If Level not in known set → default to "INFO"
+
+2. Create Timestamped Message
+   2.1 Format: "YYYY-MM-DD HH:MM:SS - LEVEL: Message"
+
+3. Write to Console
+   3.1 If Level is "ERROR" or "WARNING" → write to standard error stream
+   3.2 Else → write to standard output
+
+4. Write to Log File
+   4.1 If $Global:LogFilePath is set
+       4.1.1 Append formatted message to file
+       4.1.2 If file write fails, do nothing
+
+Function Calls:
+None
+
+Possible Issues:
+✅ Covered: Null or empty message
+✅ Covered: Invalid log level fallback
+✅ Covered: Distinct handling for stdout vs stderr
+✅ Covered: No log file path fallback
+❌ Not Covered: File permission/locking issues during write
+❌ Not Covered: Extremely large messages
+❌ Not Covered: Simultaneous writes from other processes

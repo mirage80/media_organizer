@@ -1,4 +1,3 @@
-# ****** START: Modified select_keepers_popup in RemoveExactVideoDuplicate.py ******
 import json
 import os
 from math import radians, cos, sin, asin, sqrt
@@ -40,8 +39,15 @@ ASSET_DIR = os.path.join(PROJECT_ROOT_DIR, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 
 MAP_FILE = os.path.join(ASSET_DIR, "world_map.png")
-VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
+VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "Consolidate_Meta_Results.json")
 VIDEO_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "video_grouping_info.json")
+
+def report_progress(current, total, status):
+    """Reports progress to PowerShell in the expected format."""
+    if total > 0:
+        # Ensure percent doesn't exceed 100
+        percent = min(int((current / total) * 100), 100)
+        print(f"PROGRESS:{percent}|{status}", flush=True)
 
 # --- Popup Utilities remain the same ---
 def simple_choice_popup(title, options):
@@ -457,11 +463,9 @@ def remove_duplicate_videos(group_json_file_path, is_dry_run=False):
         for group_key in list(groups.keys()): # Use list() for safe iteration
             group_members = groups[group_key]
             processed_group += 1
-            if is_dry_run:
-                logger.info(f"{prefix}Group {processed_group}/{total_groups}: {group_key} ({len(group_members)} files)")
-            else:
-                utils.show_progress_bar(processed_group, total_groups, "Removing Duplicates", logger=logger)
-
+            status = f"Processing group {processed_group}/{total_groups}"
+            report_progress(processed_group, total_groups, status)
+            logger.info(f"{prefix}Group {processed_group}/{total_groups}: {group_key} ({len(group_members)} files)")
             if not group_members:
                 logger.warning(f"{prefix}Group {group_key} is empty. Removing.")
                 if group_key in groups: del groups[group_key]
@@ -731,9 +735,7 @@ def remove_duplicate_videos(group_json_file_path, is_dry_run=False):
 
     finally: # Add finally block for progress bar cleanup
         # Ensure the progress bar is stopped even if errors occur
-        if not is_dry_run:
-            utils.stop_graphical_progress_bar(logger=logger)
-            # Remove the redundant print() that was here
+        pass # PowerShell now handles progress bar closure
 
     logger.info(f"{prefix}--- Phase 1 Complete ---")
     # === Phase 2: Clean grouped_by_hash ===
@@ -907,5 +909,3 @@ if __name__ == "__main__":
         logger.info("Step 2 Complete.")
 
     logger.info("--- Script Finished ---")
-
-# ****** END: Modified select_keepers_popup in RemoveExactVideoDuplicate.py ******

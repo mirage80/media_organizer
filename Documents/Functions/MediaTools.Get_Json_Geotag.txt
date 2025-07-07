@@ -1,0 +1,35 @@
+Function:
+MediaTools.Get_Json_Geotag
+
+Description:
+Extracts latitude and longitude values from Google JSON metadata, if present, and returns them in a standardized EXIF GPS string format.
+
+Input Type:
+1. jsonMetadata [Hashtable] — Parsed `.json` sidecar file from Google Photos
+
+Output Type:
+✅ [string[]] — Two-element array: [latitudeRef + latitude, longitudeRef + longitude], e.g., ["N37.4219983", "W122.084"]
+❌ Returns $null if location data is missing or invalid
+
+Algorithm:
+1. Check for existence of geoData field in jsonMetadata
+   1.1 If not present → return $null
+2. Extract latitude and longitude from geoData
+   2.1 If either is missing → return $null
+3. Call MediaTools.Get_LatitudeRef(latitude)
+   — Purpose: Return 'N' or 'S' depending on latitude sign
+4. Call MediaTools.Get_LongitudeRef(longitude)
+   — Purpose: Return 'E' or 'W' depending on longitude sign
+5. Call MediaTools.ParseToDecimal(latitude)
+   — Purpose: Convert latitude to decimal string with `.`
+6. Call MediaTools.ParseToDecimal(longitude)
+   — Purpose: Convert longitude to decimal string with `.`
+7. Concatenate ref and value → return as array [refLat + lat, refLon + lon]
+
+Possible Issues:
+* ✅ Covered: Missing geoData field
+* ✅ Covered: Null or invalid latitude/longitude
+* ✅ Covered: Sign normalization for direction references
+* ✅ Covered: Parsing float from scientific or localized format
+* ❌ Not Covered: Non-numeric geo values (e.g., strings like "unknown")
+* ❌ Not Covered: Extreme or out-of-bounds lat/lon values

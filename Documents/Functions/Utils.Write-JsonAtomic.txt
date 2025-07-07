@@ -1,0 +1,46 @@
+📄 Function: 
+Utils.Write-JsonAtomic
+
+📝 Description:
+Safely writes a PowerShell object to a JSON file using atomic replacement. Prevents partial writes by writing to a temporary file and renaming it into place after success.
+
+🔢 Input Type:
+1. `object` [object] — PowerShell object to serialize to JSON
+2. `path` [string] — Target file path for final JSON file
+
+📤 Output Type:
+✅ [void] — Writes JSON to the target file safely
+❌ Logs an error if writing or renaming fails; original file remains untouched
+
+🧮 Algorithm (Pseudo-code):
+1. Validate Input
+ 1.1 If `object` is `$null` → log warning, return
+ 1.2 If `path` is `$null` or empty → log error, return
+
+2. Serialize JSON
+ 2.1 Call `ConvertTo-Json` on `object` with indentation
+
+3. Write to Temporary File
+ 3.1 Generate a temp path using the same directory and `.tmp` extension
+ 3.2 Try to write the serialized JSON to temp file using `Set-Content`
+
+4. Atomic Replace
+ 4.1 If temp file written successfully
+   4.1.1 Use `Move-Item -Force` to rename temp file over original
+   4.1.2 Log success
+ 4.2 Else
+   4.2.1 Log error and skip rename
+
+📞 Function Calls:
+🔹 Utils.Write-Log — Log errors, warnings, and success messages
+
+⚠️ Not yet documented; recheck later
+
+❗ Possible Issues:
+✅ Covered: Null input object
+✅ Covered: Empty or invalid file path
+✅ Covered: Temporary file creation failure
+✅ Covered: Atomic rename logic
+❌ Not Covered: File permission errors (e.g., write-protected directory)
+❌ Not Covered: JSON serialization edge cases (e.g., circular references)
+❌ Not Covered: Race conditions with simultaneous writers
