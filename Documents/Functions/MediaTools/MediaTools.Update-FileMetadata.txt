@@ -1,0 +1,27 @@
+🔄 MediaTools.Update_FileMetadata Function Documentation
+
+Description:
+A high-level workflow function that finds the best available timestamp and geotag for a file and writes them back to the file's metadata.
+
+Input Type:
+1. File [System.IO.FileInfo] (Mandatory) — The media file to update.
+2. TimeoutSeconds [int] (Optional, Default: 60) — The timeout to pass down to all underlying find and write functions.
+
+Output Type:
+✅ [void] — This function does not return a value. It logs its progress and any non-critical errors.
+
+Algorithm (Pseudo-code):
+1. Call `Merge_FileMetadata` to efficiently find the best available timestamp and geotag in a single pass.
+2. If a consolidated timestamp was found, call `Set-Timestamp` to write it to the file.
+3. If a consolidated geotag was found, call `Set-Geotag` to write it to the file.
+4. Each write operation is wrapped in a `try/catch` block to log warnings on failure without halting the entire process.
+
+Function Calls:
+🔹 Merge_FileMetadata
+🔹 Set-Timestamp
+🔹 Set-Geotag
+
+Possible Issues:
+* ✅ Covered: Highly efficient by calling `Merge_FileMetadata` only once.
+* ✅ Covered: Gracefully handles cases where only a timestamp, only a geotag, or neither is found to write.
+* ✅ Covered: Logs individual write failures as warnings without stopping the process.

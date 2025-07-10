@@ -1,0 +1,24 @@
+🧭 MediaTools.Get-LatitudeReference Function Documentation
+
+
+Description:
+Determines the correct latitude reference ("N" for North, "S" for South) from a signed decimal latitude value.
+
+Input Type:
+1. latitude [double] (Mandatory) — The signed decimal latitude value (e.g., `40.7128`, `-34.6037`).
+
+
+Output Type:
+✅ [string] — Returns "N" if the latitude is positive or zero. Returns "S" if the latitude is negative.
+
+
+Algorithm (Pseudo-code):
+1. Accept a mandatory `[double]` parameter named `$latitude`.
+2. If `$latitude` is greater than or equal to 0, return "N".
+3. Otherwise, return "S".
+
+Possible Issues:
+* ✅ Covered: Correctly handles positive, negative, and zero values.
+* ✅ Covered: The parameter is mandatory, which prevents `$null` input from being silently converted to `0` and returning an incorrect "N" reference.
+* ❌ Not Covered: This function does not validate if the latitude value is within the standard -90 to +90 range. It only checks the sign.
+

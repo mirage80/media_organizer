@@ -1,0 +1,25 @@
+Stop-GraphicalProgressBar Function Documentation
+
+Description:
+Closes and disposes of the global graphical progress bar form, releasing its resources. Ensures that global variables tracking the form and progress bar are removed.
+
+Input Type:
+None
+
+Output Type:
+✅ [void] — Closes the graphical progress bar window and cleans up resources.
+
+Algorithm (Pseudo-code):
+1. Check if the global progress form variable exists and is not disposed.  
+2. If so, call Close() and Dispose() on the form to release resources.  
+3. If an exception occurs during closing, issue a warning with the error message.  
+4. In all cases, remove the global variables for the form and progress bar to clean up.
+
+Function Calls:
+None
+
+Possible Issues:
+✅ Covered: Gracefully handles exceptions during close without stopping the caller.  
+✅ Covered: Ensures global variables are removed to prevent stale references.  
+❌ Not Covered: Does not check if the form was ever created before.  
+❌ Not Covered: Does not handle re-creation of the progress bar.

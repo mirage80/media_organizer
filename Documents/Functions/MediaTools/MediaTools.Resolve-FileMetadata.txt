@@ -1,0 +1,30 @@
+📁 MediaTools.Resolve-FileMetadata Function Documentation
+
+Description:  
+Orchestrates the process of finding the best available timestamp and geotag for a file by calling the high-level `Find_ValidTimestamp` and `Find-ValidGeotag` functions.
+
+Input Type:  
+1. File [System.IO.FileInfo] (Mandatory) — The media file to process.  
+
+Output Type:  
+✅ [PSCustomObject] — A custom object with two properties:  
+    • ConsolidatedTimestamp: The best timestamp found, or `$null`.  
+    • ConsolidatedGeotag: The best geotag found, or `$null`.
+
+Algorithm (Pseudo-code):  
+1. Call `Find_ValidTimestamp` for the file inside a `try/catch` block.  
+    - If it succeeds, store the result.  
+    - If it fails, store `$null` and log a warning.  
+2. Call `Find-ValidGeotag` for the file inside a `try/catch` block.  
+    - If it succeeds, store the result.  
+    - If it fails, store `$null` and log a warning.  
+3. Return a `PSCustomObject` containing the timestamp and geotag.
+
+Function Calls:  
+🔹 Find_ValidTimestamp  
+🔹 Find-ValidGeotag
+
+Possible Issues:  
+* ✅ Covered: Gracefully handles failures from the underlying `Find-*` functions by catching exceptions and returning `$null`.  
+* ✅ Covered: Reuses validated logic from `Find_ValidTimestamp` and `Find-ValidGeotag`.  
+* ❌ Not Covered: This function does not perform its own validation—relies entirely on upstream logic.

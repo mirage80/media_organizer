@@ -1,0 +1,35 @@
+📸 MediaTools.Get-ExifGeotag Function Documentation
+
+Description:
+Extracts and returns the most relevant geotag from a file's Exif metadata. It fetches all potential geotag fields at once for performance and then uses a prioritized strategy to construct the best possible geotag.
+
+Input Type:
+1. File [System.IO.FileInfo] (Mandatory) — The media file to process.
+2. TimeoutSeconds [int] (Optional, Default: 60) — The timeout to pass down to the underlying ExifTool process.
+
+Output Type:
+✅ [string] — The standardized 4-part geotag string.
+❌ Returns `$null` if no valid geotag can be found or assembled.
+
+Algorithm (Pseudo-code):
+1. Call `Get_ExifDataAsJson` once to get a cached or fresh object containing all required Exif data.
+2. If no data is returned, return `$null`.
+3. **Strategy 1:** Look for a complete `GPSPosition` tag. If it exists and is valid, standardize it and return the result.
+4. **Strategy 2:** If `GPSPosition` is not found or invalid, attempt to assemble a geotag from individual components (`GPSLatitude`, `GPSLatitudeRef`, `GPSLongitude`, `GPSLongitudeRef`).
+5. If all four components exist:
+   a. Standardize the `GPSLatitude` and `GPSLongitude` values (which may be in DMS format) using `Convert-GeoTagValueToDecimal`.
+   b. Construct a 4-part string from the absolute values and the references.
+   c. Pass the assembled string to `Format-GeoTag` and return the result.
+6. If neither strategy yields a valid geotag, return `$null`.
+
+Function Calls:
+🔹 Get_ExifDataAsJson
+🔹 Test-GeoTag
+🔹 Format-GeoTag
+🔹 Convert-GeoTagValueToDecimal
+
+Possible Issues:
+* ✅ Covered: Highly efficient by fetching all Exif data in a single process call.
+* ✅ Covered: Prioritizes a complete `GPSPosition` tag over individual components.
+* ✅ Covered: Can successfully assemble a valid geotag from individual DMS or decimal components.
+* ✅ Covered: Ensures all output is in the module's canonical format.

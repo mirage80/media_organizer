@@ -1,0 +1,25 @@
+📁 MediaTools.Flush-MediaToolsCache Function Documentation
+
+Description:
+Reinitializes all MediaTools caches and logger by first clearing existing state, then resetting the logger configuration. Used during module reload or when changing log destinations.
+
+Input Type:
+❌ None
+
+Output Type:
+✅ [void] — Does not return any output.
+❌ Throws only in rare cases like uninitialized global state.
+
+Algorithm (Pseudo-code):
+1. Call `Clear-MediaToolsCache` to wipe all global field maps and logger.
+2. Call `Set-MediaToolsLogger` to reconfigure logging with current module state.
+3. Use as part of a full metadata pipeline reset or to flush stale configurations.
+
+Function Calls:
+✅ `Clear-MediaToolsCache`  
+✅ `Set-MediaToolsLogger`
+
+Possible Issues:
+✅ Logger instance reset may cause reinitialization conflicts if called during active operations  
+✅ Safe when called during startup or explicit reset  
+❌ Not Covered: No lock guarantees if shared across threads

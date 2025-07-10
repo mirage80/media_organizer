@@ -1,0 +1,29 @@
+📹 MediaTools.Get-FfprobeTimestamp Function Documentation
+
+Description:
+Extracts the `creation_time` tag from a media file's ffprobe metadata and returns it as a standardized timestamp string.
+
+Input Type:
+1. File [System.IO.FileInfo] (Mandatory) — The media file to process.
+2. TimeoutSeconds [int] (Optional, Default: 60) — The timeout to pass down to the underlying ffprobe process.
+
+Output Type:
+✅ [string] — The standardized timestamp string.
+❌ Returns `$null` if no `creation_time` tag is found.
+❌ Throws an exception if the found timestamp string is invalid and cannot be standardized.
+
+Algorithm:
+1. Call `Get-FfprobeData` to get the cached or fresh metadata for the file.
+2. If no metadata is returned, return `$null`.
+3. Access the `creation_time` tag from the metadata (`metadata.format.tags.creation_time`).
+4. If the tag exists, pass its value to `Format-Timestamp` and return the result.
+5. If the tag does not exist, return `$null`.
+
+Function Calls:
+🔹 Get-FfprobeData
+🔹 Format-Timestamp
+
+Possible Issues:
+* ✅ Covered: Leverages the high-performance caching of `Get-FfprobeData`.
+* ✅ Covered: Ensures all output is in the module's canonical format by using `Format-Timestamp`.
+* ❌ Not Covered: This function specifically targets the `creation_time` tag and will not find timestamps stored in other ffprobe metadata tags.

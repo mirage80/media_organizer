@@ -1,0 +1,38 @@
+📁 MediaTools.Invoke-FfprobeProcess Function Documentation
+
+**Description:**  
+Executes an `ffprobe` command using PowerShell, capturing the standard output lines for further processing. This low-level function powers higher-level metadata extraction operations in the module.
+
+---
+
+**Input Type:**  
+1. `command [string]` (Mandatory) — The `ffprobe` command to execute (must include full path to the media file).  
+2. `timeoutSeconds [int]` (Optional, Default: `60`) — The number of seconds to wait before timing out.
+
+---
+
+**Output Type:**  
+✅ `[string[]]` — Array of output lines captured from `ffprobe`.  
+❌ Throws `[System.Exception]` — If the process times out or fails to start.
+
+---
+
+**Algorithm (Pseudo-code):**  
+1. Start the `ffprobe` process with the given command.  
+2. Wait for the process to exit, enforcing the timeout.  
+3. Read the standard output and split it into lines.  
+4. Return the output lines.  
+5. If the process fails or times out, throw an exception.
+
+---
+
+**Function Calls:**  
+🔹 None (leaf-level process wrapper)
+
+---
+
+**Possible Issues:**  
+✅ Covered: Timeout support prevents hanging on broken video files.  
+✅ Covered: Captures stdout cleanly for downstream parsing.  
+❌ Not Covered: No stderr capture or parsing.  
+❌ Not Covered: Assumes `ffprobe` binary is available in the environment path.

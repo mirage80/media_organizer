@@ -1,0 +1,29 @@
+📹 MediaTools.Get-FfprobeData Function Documentation
+
+Description:
+A high-performance, caching wrapper for ffprobe. It retrieves all format and stream metadata for a given file. It checks a session-level cache first; if the data is present, it returns it instantly. Otherwise, it calls `Invoke_FfprobeProcess` to get the data, caches it, and then returns it.
+
+Input Type:
+1. File [System.IO.FileInfo] (Mandatory) — The media file to get metadata for.
+2. TimeoutSeconds [int] (Optional, Default: 60) — The timeout to pass down to `Invoke_FfprobeProcess` if a cache miss occurs.
+
+Output:
+✅ [PSCustomObject] — The parsed ffprobe metadata object.
+❌ Returns `$null` if the process fails or the JSON output cannot be parsed.
+
+Algorithm:
+1. Check if the file's full path exists as a key in the module-level `$script:FfprobeDataCache`.
+2. If it's a cache hit, log it and return the cached data immediately.
+3. If it's a cache miss, call `Invoke_FfprobeProcess` to execute ffprobe and get the raw JSON output.
+4. If `Invoke_FfprobeProcess` fails (returns null), cache a `$null` value for the file to prevent future attempts in the same session, and return `$null`.
+5. If it succeeds, attempt to parse the JSON string using `ConvertFrom-Json`.
+6. If parsing fails, cache `$null` and return `$null`.
+7. If parsing succeeds, add the resulting `PSCustomObject` to the cache and return it.
+
+Function Calls:
+🔹 Invoke_FfprobeProcess
+
+Possible Issues:
+* ✅ Covered: Significantly improves performance by caching results and avoiding redundant ffprobe process calls for the same file.
+* ✅ Covered: Prevents repeated attempts to process known-bad files by caching `$null` results.
+* ✅ Covered: Delegates the actual process execution to the robust, timeout-protected `Invoke_FfprobeProcess` function.

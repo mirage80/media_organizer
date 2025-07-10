@@ -83,7 +83,7 @@ GeotagFilesBasedOnAlias _SourceDir $CategorizedDirs.NoTime_NoGeo_NoJson _Alias "
 
 # Step 8: Final categorization into a "Round2" directory
 $Round2Dir = "$BaseDirectory\Round2"
-Categorize_Media_Based_On_Metadata _SourceDir $OutputDirectory _DestDir $Round2Dir
+Get-MediaFileCategory _SourceDir $OutputDirectory _DestDir $Round2Dir
 
 
 

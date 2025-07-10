@@ -63,7 +63,7 @@ foreach ($path in $jsonData.PSObject.Properties.Name) {
 
     try {
         $file = Get-Item $path
-        $merged = Merge-FileMetadata -File $file
+        $merged = Resolve-FileMetadata -File $file
         $jsonData[$path].ConsolidatedTimestamp = $merged.ConsolidatedTimestamp
         $jsonData[$path].ConsolidatedGeotag    = $merged.ConsolidatedGeotag
     } catch {

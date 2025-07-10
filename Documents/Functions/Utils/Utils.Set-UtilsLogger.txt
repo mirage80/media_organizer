@@ -1,0 +1,21 @@
+Utils.Set-UtilsLogger Function Documentation
+
+Description:
+Sets the module-wide logger variable $script:UtilsLogger to the provided logger object.
+
+Input Type:
+1. Logger [object] — The logger object to assign. Typically a script block or delegate.
+
+Output Type:
+✅ [void] — Assigns the logger to the module variable.
+
+Algorithm (Pseudo-code):
+1. Accept a mandatory parameter $Logger.
+2. Assign $Logger to the module-scoped variable $script:UtilsLogger.
+
+Function Calls:
+None
+
+Possible Issues:
+❌ Not Covered: No validation is performed on the logger object.
+❌ Not Covered: Overwrites any previously set logger without warning.

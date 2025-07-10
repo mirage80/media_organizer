@@ -1,0 +1,24 @@
+📹 MediaTools.Test-IsVideo Function Documentation
+
+Description:
+Checks if a given file is a video by comparing its extension against a predefined, module-level list of common video formats.
+
+Input Type:
+1. file [System.IO.FileInfo] (Mandatory) — The file object to check.
+
+Output Type:
+✅ [bool] — Returns `$true` if the file's extension is a known video format, otherwise `$false`.
+
+Algorithm (Pseudo-code):
+1. Get the file's extension from the input file object.
+2. Convert the extension to lowercase to ensure a reliable, case-insensitive comparison.
+3. Check if the lowercase extension exists in the module-level `$script:videoExtensions` list.
+4. Return the boolean result of the check.
+
+Function Calls:
+None.
+
+Possible Issues:
+* ✅ Covered: The check is case-insensitive (e.g., ".MOV", ".MP4" are handled correctly).
+* ✅ Covered: Relies on a centralized, module-level list of extensions (`$script:videoExtensions`) for easy maintenance.
+* ❌ Not Covered: The function only checks the extension. It does not validate the file's content (e.g., using magic bytes). A file renamed to `.mp4` that is not a video will still be identified as a video.

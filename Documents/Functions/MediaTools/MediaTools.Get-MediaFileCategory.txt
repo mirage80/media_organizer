@@ -1,0 +1,38 @@
+📁 MediaTools.Get-MediaFileCategory Function Documentation
+
+**Description:**  
+Determines whether a media file is categorized as a `with_time_with_geo`, `with_time_no_geo`, or `no_time_with_geo`, based on its file extension. It uses predefined global extension lists for image and with_time_no_geo formats.
+
+---
+
+**Input Type:**  
+1. `SrcFile [System.IO.FileInfo]` (Mandatory) — The media file to categorize.
+
+---
+
+**Output Type:**  
+✅ `[string]` — Returns `'with_time_with_geo'`, `'with_time_no_geo'`, or `'no_time_with_geo'`.  
+❌ Returns `'unknown'` if the file has an unsupported or missing extension.
+
+---
+
+**Algorithm (Pseudo-code):**  
+1. Extract the file's extension using `.Extension`.  
+2. Normalize the extension to lowercase.  
+3. Check if the extension exists in the global `$with_time_with_geo_extensions` list.  
+   - If yes, return `'with_time_with_geo'`.  
+4. Check if the extension exists in the global `$with_time_no_geo_extensions` list.  
+   - If yes, return `'with_time_no_geo'`.  
+5. If the extension does not match either list, return `'no_time_with_geo'`.
+
+---
+
+**Function Calls:**  
+🔹 None (relies on global variables)
+
+---
+
+**Possible Issues:**  
+✅ Covered: Handles all casing variations of extensions via normalization.  
+✅ Covered: Gracefully handles no_time_with_geo or missing extensions by returning `'no_time_with_geo'`.  
+❌ Not Covered: Does not validate that the file actually exists or is readable.

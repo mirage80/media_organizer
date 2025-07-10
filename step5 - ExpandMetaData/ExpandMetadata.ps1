@@ -69,8 +69,8 @@ foreach ($path in $allPaths) {
         $file = Get-Item $path
 
         # Correcting function calls to match definitions in MediaTools.psm1
-        $timestamp_from_filename = Parse_DateTimeFromFilename -FilePath $file
-        $timestamp_from_exif     = Get_Exif_Timestamp -File $file
+        $timestamp_from_filename = ConvertFrom-FilenameToTimestamp -FilePath $file
+        $timestamp_from_exif     = Get-ExifTimestamp -File $file
 
         # NOTE: The following functions are not defined in the provided MediaTools.psm1 and will cause errors.
         # You will need to implement them or remove these lines.
@@ -79,7 +79,7 @@ foreach ($path in $allPaths) {
 
         # $geotag_from_filename = Get-GeotagFromFilename -File $file
         $geotag_from_filename = $null # Placeholder
-        $geotag_from_exif     = Get_Exif_Geotag -File $file
+        $geotag_from_exif     = Get-ExifGeotag -File $file
         # $geotag_from_ffprobe  = Get-GeotagFromFFprobe -File $file
         $geotag_from_ffprobe = $null # Placeholder
 

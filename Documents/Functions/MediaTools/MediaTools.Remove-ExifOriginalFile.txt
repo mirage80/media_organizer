@@ -1,0 +1,25 @@
+🗑️ MediaTools.Remove-ExifOriginalFile Function Documentation
+
+Description:
+Recursively finds and deletes backup files created by tools like ExifTool. It specifically targets any file whose extension ends with `_original` (e.g., `photo.jpg_original`).
+
+Input Type:
+1. root [System.IO.DirectoryInfo] (Mandatory) — The root directory to search within.
+
+Output Type:
+✅ [int] — The number of files successfully deleted.
+
+Algorithm (Pseudo-code):
+1. Accept a mandatory directory path `$root`.
+2. Initialize a `deletedCount` to 0.
+3. Recursively search for all files within `$root` where the extension is like `*_original`.
+4. For each file found:
+   a. Attempt to delete the file inside a `try/catch` block.
+   b. On success, log an INFO message and increment `deletedCount`.
+   c. On failure (e.g., permission denied), log a WARNING with the error message and continue.
+5. Return the final `deletedCount`.
+
+Possible Issues:
+* ✅ Covered: The function no longer fails silently. Deletion errors (e.g., file in use, permissions) are caught and logged as warnings.
+* ✅ Covered: Provides feedback by logging each successful deletion and returning a total count.
+* ❌ Not Covered: The function does not check for or delete any associated sidecar files (e.g., a `.json` file that might have been created for the `_original` file).

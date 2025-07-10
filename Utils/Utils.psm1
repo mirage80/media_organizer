@@ -157,12 +157,19 @@ function Stop-GraphicalProgressBar {
 }
 
 
-# --- End Show-ProgressBar Function Definition ---
 function Write-JsonAtomic {
     param (
         [Parameter(Mandatory = $true)][object]$Data,
         [Parameter(Mandatory = $true)][string]$Path
     )
+
+    if ($null -eq $Data) {
+        throw "Data parameter cannot be null."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Path parameter cannot be null or empty."
+    }
 
     try {
         $tempPath = "$Path.tmp"

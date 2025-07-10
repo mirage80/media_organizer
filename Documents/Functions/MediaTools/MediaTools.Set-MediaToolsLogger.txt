@@ -1,0 +1,30 @@
+⚙️ MediaTools.Set-MediaToolsLogger Function Documentation
+
+
+Description:
+Initializes the module-wide logger with a user-provided script block. This function should be called once at the start of a script to enable logging. If this function is not called, the module will use a default "no-op" (no operation) logger and will run silently without errors.
+
+Input Type:
+
+1. Logger [scriptblock] (Mandatory) — A script block that will be used for logging. It is expected to accept two parameters: a log level string (e.g., "INFO", "ERROR") and a message string.
+
+Output Type:
+✅ None. This function configures an internal module variable.
+❌ Throws a parameter binding exception if the provided value is not a `[scriptblock]`.
+
+Algorithm:
+
+1. Accept a mandatory `[scriptblock]` parameter named `$Logger`.
+2. Assign this script block to the internal `$script:MediaToolsLogger` variable, overwriting the default no-op logger.
+
+
+Function Calls:
+
+None.
+
+Possible Issues:
+
+* ✅ Covered: Sets logger only once explicitly with the provided object
+* ✅ Covered: Type safety is enforced by the `[scriptblock]` parameter type. Passing anything else will cause an immediate PowerShell error.
+* ✅ Covered: If this function is never called, the module uses a default, silent logger, preventing crashes from uninitialized logger calls.
+* ❌ Not Covered: The function does not validate the *content* of the script block (e.g., that it correctly handles the parameters passed to it). The responsibility for providing a correctly-formed logger script block lies with the calling script.

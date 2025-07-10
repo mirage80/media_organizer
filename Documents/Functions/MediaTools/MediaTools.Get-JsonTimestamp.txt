@@ -1,0 +1,29 @@
+🕒 MediaTools.Get-JsonTimestamp Function Documentation
+
+Description:
+Extracts and standardizes the best available timestamp from a Google Photos `.json` sidecar file. It prioritizes the `photoTakenTime` field and falls back to `creationTime`.
+
+Input Type:
+
+1. JsonFile [System.IO.FileInfo] (Mandatory) — The `.json` sidecar file to process.
+
+Output Type:
+✅ [string] — The standardized timestamp string.
+❌ Throws [System.FormatException] — If no valid timestamp can be found in the JSON file.
+
+Algorithm:
+1. Read and parse the input `JsonFile`.
+2. Pass the `photoTakenTime.formatted` and `creationTime.formatted` values to `Format-Timestamp`.
+3. Check if the standardized `photoTakenDate` is valid using `Test-Timestamp`. If it is, return it.
+4. If not, check if the standardized `creationDate` is valid. If it is, return it.
+5. If neither timestamp is valid, throw a `FormatException`.
+
+Function Calls:
+🔹 Format-Timestamp
+🔹 Test-Timestamp
+
+Possible Issues:
+* ✅ Covered: Prioritizes the more accurate `photoTakenTime` over `creationTime`.
+* ✅ Covered: Gracefully handles missing or null timestamp fields.
+* ✅ Covered: Ensures all output is in the module's canonical format by using `Format-Timestamp`.
+* ✅ Covered: Fails fast by throwing an exception if no valid timestamp can be found.

@@ -1,0 +1,49 @@
+### 📄 Function Name: MediaTools.Move-FileToDestination
+
+#### 🧾 Inputs:
+1. file (string) — path to the file to move  
+2. destination (string) — target folder path  
+3. keepDirectoryStructure (bool) — whether to preserve subfolder structure  
+4. basePath (string) — root path to calculate relative path from (optional, required if keepDirectoryStructure is $true)  
+
+#### ✅ Output: string (final moved path)
+
+---
+
+### 🧠 Algorithm:
+1. If destination does not exist:
+    a. Create the destination directory
+
+2. If keepDirectoryStructure is true:
+    a. Compute relative path from basePath to file
+    b. Append relative path to destination path
+    c. Create full destination directory if it doesn't exist
+
+3. If keepDirectoryStructure is false:
+    a. Use only the file name and join with destination path
+
+4. If source and destination paths are the same:
+    a. Return original file path without moving
+
+5. Try to move file:
+    a. Use Move-Item -Force
+    b. If it fails, raise a terminating error
+
+6. Return final path of moved file
+
+---
+
+### 📚 Acceptable Format Patterns:
+- file: absolute path to file (e.g., C:\Media\IMG_001.jpg)
+- destination: absolute path to target folder (e.g., C:\Sorted\Photos)
+- keepDirectoryStructure: $true or $false
+- basePath: absolute directory prefix of file (required if structure preserved)
+
+---
+
+### ⚠️ Possible Issues:
+- ✅ Destination directory missing → must be created before move  
+- ✅ File already exists at destination → will be overwritten with -Force  
+- ✅ keepDirectoryStructure is $true but basePath is null → relative path calculation will fail  
+- ✅ File is locked or in use → Move-Item may throw an error  
+- ✅ Destination path results in invalid characters or long path errors on Windows  

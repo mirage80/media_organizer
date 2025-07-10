@@ -1,0 +1,26 @@
+🖼️ MediaTools.Test-IsPhoto Function Documentation
+
+
+Description:
+Checks if a given file is a photo by comparing its extension against a predefined, module-level list of common image formats.
+
+Input Fields:
+1. file [System.IO.FileInfo] (Mandatory) — The file object to check.
+
+Output Type:
+✅ [bool] — Returns `$true` if the file's extension is a known photo format, otherwise `$false`.
+
+Algorithm (Pseudo-code):
+1. Get the file's extension from the input file object.
+2. Convert the extension to lowercase to ensure a reliable, case-insensitive comparison.
+3. Check if the lowercase extension exists in the module-level `$script:imageExtensions` list.
+4. Return the boolean result of the check.
+
+Function Calls:
+None.
+
+Possible Issues:
+* ✅ Covered: The check is case-insensitive (e.g., ".JPG", ".JPEG" are handled correctly).
+* ✅ Covered: Relies on a centralized, module-level list of extensions (`$script:imageExtensions`) for easy maintenance.
+* ❌ Not Covered: The function only checks the extension. It does not validate the file's content (e.g., using magic bytes). A file renamed to `.jpg` that is not an image will still be identified as a photo.
+

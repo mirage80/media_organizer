@@ -1,0 +1,33 @@
+🗺️ MediaTools.Test-GeoTag Function Documentation
+
+Description:
+Checks if a given geotag string is a valid, 4-part coordinate (`latitude,latitudeRef,longitude,longitudeRef`). It validates the format, range, and consistency of the components.
+
+Input Type:
+1. GeoTag [string] — The 4-part geotag string to validate.
+
+Output Type:
+✅ [bool] — Returns `$true` if the geotag is valid, otherwise `$false`.
+
+Algorithm (Pseudo-code):
+1. If the input string is null, empty, or the module's default "zero geotag", return `$false`.
+2. Split the string by commas. If it does not have exactly 4 parts, return `$false`.
+3. Attempt to parse the components inside a `try/catch` block:
+   a. Convert part 1 (latitude) and part 3 (longitude) to `[double]`.
+   b. Convert part 2 (latRef) and part 4 (lonRef) to uppercase strings.
+4. If parsing fails, return `$false`.
+5. Validate the components:
+   a. Check if numeric latitude or longitude are negative. If so, return `$false` (they must be positive in this format).
+   b. Check if latitude > 90 or longitude > 180. If so, return `$false`.
+   c. Check if latitude reference is "N" or "S". If not, return `$false`.
+   d. Check if longitude reference is "E" or "W". If not, return `$false`.
+6. If all checks pass, return `$true`.
+
+Function Calls:
+None.
+
+Possible Issues:
+* ✅ Covered: Explicitly rejects the module's default "zero geotag" value.
+* ✅ Covered: Validates that the coordinate values are within the correct range (0-90 for lat, 0-180 for lon).
+* ✅ Covered: Validates that the numeric values are positive, preventing ambiguous coordinates like `"-40.5,S,..."`.
+* ✅ Covered: Validates that the reference strings are one of N, S, E, or W.
