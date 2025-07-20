@@ -1,0 +1,16 @@
+Function Name: Stop-GraphicalProgressBar
+
+Inputs:
+(None)
+
+Output:
+✅ No return value (void)
+
+Algorithm:
+1. If global form exists and is not disposed:
+    - Close and dispose the form
+2. Clear all global variables related to progress bar form and controls
+
+Possible Issues:
+✅ Must be called to free resources after progress UI is no longer needed
+✅ Calling multiple times is safe (no operation after first close)

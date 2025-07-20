@@ -1,0 +1,24 @@
+Update-OverallProgress Function Documentation
+
+Description:
+Updates the top-level progress bar and step label text to reflect current overall pipeline progress.
+
+Input Type:
+1. PercentComplete [int] — Progress percentage (0 to 100).
+2. StepName [string] — Descriptive name of the current step.
+
+Output Type:
+✅ [void] — Updates the GUI overall progress bar and label.
+
+Algorithm (Pseudo-code):
+1. Check if the progress form exists and is not disposed.
+2. Set the overall progress bar value, clamped to 100 max.
+3. Update the step label text with the given step name.
+4. Process UI events to refresh the display.
+
+Function Calls:
+None
+
+Possible Issues:
+✅ Covered: Avoids updates if form is not present.
+❌ Not Covered: No thread-safety guarantees.

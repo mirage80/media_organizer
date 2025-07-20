@@ -3,36 +3,34 @@ param(
     [string]$unzippedDirectory,
     [string]$ffmpeg,
     [string]$magickPath,
+    [Parameter(Mandatory=$true)]
     [string]$step
 )
 
+# --- Path Setup ---
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Outputs Directory
+$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+$metaPath = Join-Path $OutputDirectory "Consolidate_Meta_Results.json"
+
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
 Import-Module $UtilFile -Force
+Import-Module $MediaToolsFile -Force
 
-#Outputs Dirctory
-$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+# --- Logging Setup ---
+$logDirectory = Join-Path $scriptDirectory "..\Logs"
+$Logger = Initialize-ScriptLogger -LogDirectory $logDirectory -ScriptName $scriptName -Step $step
+$Log = $Logger.Logger
 
-# --- Logging Setup for this script ---
-# 1. Define the log file path
-$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
 
-# 2. Get logging configuration from environment variables
-$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
-
-# 3. Create a local, pre-configured logger for this script
-$Log = {
-    param([string]$Level, [string]$Message)
-    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
-}
-
-# 4. Write initial log message to ensure file creation
 & $Log "INFO" "--- Script Started: $scriptName ---"
 
 # Validate the directory
@@ -47,6 +45,29 @@ $progressLogPath = Join-Path $OutputDirectory "Step5_ffmpeg_progress_realtime.lo
 # Define the list of video and photo extensions
 $videoExtensions = @(".mov", ".avi", ".mkv", ".flv", ".webm", ".mpeg", ".mpx", ".3gp", ".mp4", ".wmv", ".mpg" , ".m4v" ) #added .mpeg
 $photoExtensions = @(".jpeg", ".png", ".gif", ".bmp", ".tiff", ".heic", ".heif") # added heif
+
+$initialData = @{}
+if (Test-Path $metaPath) {
+    try {
+        # Load the file content and convert from JSON into a hashtable.
+        $initialData = Get-Content $metaPath -Raw | ConvertFrom-Json -AsHashtable -Depth 100
+    } catch {
+        & $Log "CRITICAL" "Failed to parse JSON at $metaPath : $($_.Exception.Message)"
+        exit 1
+    }
+}
+
+# Create a thread-safe ConcurrentDictionary with the desired string comparer.
+# This uses an unambiguous constructor that is guaranteed to exist.
+$initialJsonData = [System.Collections.Concurrent.ConcurrentDictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+# Populate the dictionary from the initial data. This two-step process is more robust
+# than relying on constructor overload resolution, which can be ambiguous in PowerShell.
+if ($null -ne $initialData) {
+    foreach ($key in $initialData.Keys) {
+        $initialJsonData.TryAdd($key, $initialData[$key]) | Out-Null
+    }
+}
 
 # Function to convert video files using FFmpeg
 function Convert-VideoUsingFFmpeg {
@@ -91,8 +112,9 @@ function Convert-VideoUsingFFmpeg {
 	
 				if ($line -match "out_time_ms=(\d+)") {
 					$elapsedSeconds = [math]::Round(($matches[1] -as [double]) / 1000000, 2)
-					$percentComplete = [math]::Round(($elapsedSeconds / $totalSeconds) * 100, 2)
-					Write-Progress -Activity "Converting: $inputFile" -Status "$percentComplete% complete" -PercentComplete $percentComplete
+					$percentComplete = if ($totalSeconds -gt 0) { [int](($elapsedSeconds / $totalSeconds) * 100) } else { 0 }
+                    # Update the sub-task message to show FFmpeg's progress for the current file, without changing the overall percentage bar.
+                    Update-GraphicalProgressBar -SubTaskMessage "Converting $(Split-Path $inputFile -Leaf) ($percentComplete%)"
 				}
 	
 				# Save to progress file every few lines
@@ -154,31 +176,6 @@ function Convert-PhotoToJpg {
     return $true
 }
 
-function Rename-SidecarFiles {
-    param (
-        [string]$OriginalFilePath,
-        [string]$NewFilePath
-    )
-    $originalFileName = Split-Path -Path $OriginalFilePath -Leaf
-    $newFileName = Split-Path -Path $NewFilePath -Leaf
-    $directory = Split-Path -Path $OriginalFilePath -Parent
-
-    # Find files that start with the original filename, but are not the original file itself.
-    # e.g., for "IMG_1234.MOV", this finds "IMG_1234.MOV.json"
-    $sidecarFiles = Get-ChildItem -Path $directory -File -Filter "$originalFileName.*" | Where-Object { $_.FullName -ne $OriginalFilePath }
-
-    foreach ($sidecar in $sidecarFiles) {
-        # Replace the original filename part with the new filename part
-        $newSidecarName = $sidecar.Name.Replace($originalFileName, $newFileName, [System.StringComparison]::OrdinalIgnoreCase)
-        try {
-            Rename-Item -Path $sidecar.FullName -NewName $newSidecarName -Force -ErrorAction Stop
-            & $Log "INFO" "Renamed sidecar: '$($sidecar.Name)' -> '$newSidecarName'"
-        } catch {
-            & $Log "ERROR" "Failed to rename sidecar '$($sidecar.FullName)': $_"
-        }
-    }
-}
-
 # Remove .MP files before processing
 & $Log "INFO" "Starting cleanup: removing .MP files..."
 $mpFiles = Get-ChildItem -Path $unzippedDirectory -Recurse -File -Filter "*.mp"
@@ -194,30 +191,25 @@ if (-not (Test-Path $metaPath)) {
     exit 1
 }
 
-try {
-    $sourceJsonData = Get-Content $metaPath -Raw | ConvertFrom-Json
-} catch {
-    & $Log "CRITICAL" "Failed to parse JSON at '$metaPath': $($_.Exception.Message)"
-    exit 1
-}
+$updatedJsonData = @{}
 
-# This will hold the results with updated paths
-$updatedJsonData = [ordered]@{}
+$allPaths = Get-ChildItem -Path $unzippedDirectory -Recurse -File
 
-$allPaths = $sourceJsonData.PSObject.Properties.Name
 $currentItem = 0
 $totalItems = $allPaths.Count
 
 foreach ($originalPath in $allPaths) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Converting: $(Split-Path $originalPath -Leaf)"
+    $percent = if ($totalItems -gt 0) { [int](($currentItem / $totalItems) * 100) } else { 100 }
+    Update-GraphicalProgressBar -SubTaskPercent $percent -SubTaskMessage "Processing file $currentItem of $totalItems : $(Split-Path $originalPath -Leaf)"
 
     if (-not (Test-Path $originalPath)) {
-        & $Log "WARNING" "File '$originalPath' from metadata JSON not found on disk. Skipping."
+        & $Log "WARNING" "File '$originalPath' not found on disk. Skipping."
         continue
     }
 
     $file = Get-Item $originalPath
+    $originalPath = ConvertTo-StandardPath -Path $file.FullName
     $extension = $file.Extension.ToLower()
     $newPath = $originalPath
     $conversionNeeded = $false
@@ -235,7 +227,12 @@ foreach ($originalPath in $allPaths) {
         if (Test-Path $newPath) {
             & $Log "WARNING" "Target file '$newPath' already exists. Skipping conversion of '$originalPath'."
             # Add the original data to the new map, assuming the existing file is what we want
-            $updatedJsonData[$originalPath] = $sourceJsonData.$originalPath
+            if ($initialJsonData.ContainsKey($originalPath)) {
+                $updatedJsonData[$newPath] = $initialJsonData[$originalPath]
+            } else {
+                $updatedJsonData[$newPath] = New-DefaultMetadataObject -filepath $newPath
+            }
+            $updatedJsonData[$newPath] = $initialJsonData[$originalPath]
             continue
         }
 
@@ -250,7 +247,15 @@ foreach ($originalPath in $allPaths) {
             Rename-SidecarFiles -OriginalFilePath $originalPath -NewFilePath $newPath
             Remove-Item -Path $originalPath -Force
             & $Log "INFO" "Removed original file after conversion: $originalPath"
-            $updatedJsonData[$newPath] = $sourceJsonData.$originalPath
+            if ($initialJsonData.ContainsKey($originalPath)) {
+                & $Log "INFO" "Adding converted file '$newPath' to updated metadata."
+                # Add the converted file to the updated metadata
+                $updatedJsonData[$newPath] = $initialJsonData[$originalPath]
+                $updatedJsonData[$newPAth].size = (Get-Item $newPath).Length
+                $updatedJsonData[$newPath].name = Split-Path $newPath -Leaf 
+            } else {
+                $updatedJsonData[$newPath] = New-DefaultMetadataObject -filepath $newPath
+            }
         } else {
             & $Log "ERROR" "Failed to convert '$originalPath'. It will be excluded from the updated metadata file."
             # Clean up partially converted file on failure
@@ -261,11 +266,18 @@ foreach ($originalPath in $allPaths) {
         }
     } else {
         # No conversion needed, just copy the data over
-        $updatedJsonData[$originalPath] = $sourceJsonData.$originalPath
+        if ($initialJsonData.ContainsKey($originalPath)) {
+            $updatedJsonData[$originalPath] = $initialJsonData[$originalPath]
+        } else {
+            $updatedJsonData[$originalPath] = New-DefaultMetadataObject -filepath $originalPath
+        }
+       & $Log "INFO" "No conversion needed for '$originalPath'. Keeping original path."
     }
 }
 
-# --- Atomically write the updated JSON data back to the file ---
+# Convert all keys to standardized string paths before writing to JSON
+$updatedJsonData = Convert-HashtableToStringKey -InputHashtable $updatedJsonData
+# Atomically write the updated JSON data back to the file
 try {
     Write-JsonAtomic -Data $updatedJsonData -Path $metaPath
     & $Log "INFO" "Successfully updated metadata file with converted paths."

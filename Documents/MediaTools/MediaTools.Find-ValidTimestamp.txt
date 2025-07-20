@@ -15,14 +15,14 @@ Algorithm (Pseudo-code):
 1. **Check JSON Sidecar:** Attempt to get a timestamp using `Get-JsonTimestamp`. If a valid timestamp is returned, return it immediately.
 2. **Check EXIF Data:** Attempt to get a timestamp using `Get-ExifTimestamp`. If a valid timestamp is returned, return it immediately.
 3. **Check FFprobe Data (for videos):** If the file is a video, attempt to get a timestamp using `Get-FfprobeTimestamp`. If a valid timestamp is returned, return it immediately.
-4. **Check Filename:** As a last resort, attempt to parse the filename using `ConvertFrom-FilenameToTimestamp`. If a valid timestamp is returned, return it.
+4. **Check Filename:** As a last resort, attempt to parse the filename using `Get-FilenameTimestamp`. If a valid timestamp is returned, return it.
 5. **Failure:** If all sources have been checked and none provided a valid timestamp, log a warning and throw a `FormatException`.
 
 Function Calls:
 🔹 Get-JsonTimestamp
 🔹 Get-ExifTimestamp
 🔹 Get-FfprobeTimestamp
-🔹 ConvertFrom-FilenameToTimestamp
+🔹 Get-FilenameTimestamp
 🔹 Test-Timestamp
 
 Possible Issues:

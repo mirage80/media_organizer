@@ -1,6 +1,8 @@
 import os
-import argparse
 import sys
+import argparse
+import json
+import logging
 
 # --- Determine Project Root and Add to Path ---
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -14,7 +16,8 @@ from Utils import utils # <--- CHANGE THIS LINE
 SCRIPT_NAME = os.path.splitext(os.path.basename(__file__))[0]
 logger = utils.setup_logging(PROJECT_ROOT, SCRIPT_NAME)
 
-def count_file_types_in_directory(root_dir):
+def count_file_types_in_directory(root_dir: str) -> dict[str, int] | None:
+    extension_counts: dict[str, int] = {}
     """
     Counts the number of files of each type (by extension) in a directory tree.
 
@@ -46,6 +49,7 @@ def count_file_types_in_directory(root_dir):
                 else:
                     # Handle files with no extension
                     extension_counts["no_extension"] = extension_counts.get("no_extension", 0) + 1
+            logger.debug(f"Processed directory: {dirpath} ({len(filenames)} files)")
 
     except FileNotFoundError:
         logger.error(f"Directory not found: {root_dir}") # Use logger
@@ -76,9 +80,7 @@ if __name__ == "__main__":
         try:
             # Open the file only when counts are available
             with open(output_file_path, 'w', encoding='utf-8') as outputfile:
-                # Sort items for consistent output order (optional but nice)
-                for extension, count in sorted(counts.items()):
-                    outputfile.write(f"Extension: {extension}, Count: {count}\n")
+                json.dump(counts, outputfile, indent=2)
             logger.info(f"Successfully wrote counts to {output_file_path}")
         except IOError as e:
             logger.error(f"Error writing to output file {output_file_path}: {e}") # Use logger

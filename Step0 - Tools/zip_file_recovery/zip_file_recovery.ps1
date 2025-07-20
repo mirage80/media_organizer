@@ -54,7 +54,7 @@ function Search-And-ExtractFilesInZip {
         # Search for the files inside the zip archive
         foreach ($fileToSearch in $filesToSearchFor) {
             # Replace backslashes with forward slashes in the search string
-            $fileToSearch = $fileToSearch -replace '\\', '/'
+            $fileToSearch = ConvertTo-StandardPath -Path $fileToSearch 
             $foundEntries = $zip.Entries | Where-Object { $_.FullName -like "*$fileToSearch*" }
             foreach ($entry in $foundEntries) {
                 $relativePath = $entry.FullName

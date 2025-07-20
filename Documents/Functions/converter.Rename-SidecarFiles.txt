@@ -24,12 +24,12 @@ Algorithm (Pseudo-code):
         2.1.1 Construct sidecar file path using OldPath base + extension
         2.1.2 If sidecar file exists:
             a. Construct new sidecar path using NewPath base + extension
-            b. Try to rename it using Rename-Item
+            b. Try to rename it using Move-Item
             c. If success → log success with Logger
             d. If failure → log warning with Logger
 
 Function Calls:
-• Rename-Item → Performs the rename
+• Move-Item → Performs the rename
 • Logger → Called to log rename success/failure
 • Test-Path → Checks sidecar existence
 • Join-Path, [System.IO.Path]::GetFileNameWithoutExtension → Used for base name construction
@@ -38,7 +38,7 @@ Possible Issues:
 • ✅ Covered: Sidecar file missing
 • ✅ Covered: Sidecar renaming logged
 • ✅ Covered: Base names correctly extracted
-• ❌ Not Covered: Rename-Item fails due to file in use
+• ❌ Not Covered: Move-Item fails due to file in use
 • ❌ Not Covered: Destination sidecar already exists
 • ❌ Not Covered: Logger not provided (may fail silently)
 • ❌ Not Covered: Unknown or unlisted sidecar extensions

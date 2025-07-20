@@ -8,22 +8,39 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# Define the log directory path once
-$logDir = Join-Path $scriptDirectory "..\Logs"
-# --- Centralized Logging Setup ---
-try {
-    # This script doesn't use a step number, so the log file name is simpler.
-    $logFile = Join-Path $logDir -ChildPath "$scriptName.log"
-    Initialize-ChildScriptLogger -ChildLogFilePath $logFile
-} catch {
-    Write-Error "FATAL: Failed to initialize logger. Error: $_"
-    exit 1
+# --- Logging Setup for this script ---
+# 1. Define the log file path
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
+Import-Module $MediaToolsFile -Force
+
+# --- Logging Setup for this script ---
+# 1. Define the log file path
+$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+
+# 2. Get logging configuration from environment variables
+$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
+$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
+$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+# 3. Create a local, pre-configured logger for this script
+$Log = {
+    param([string]$Level, [string]$Message)
+    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
 }
+
+& $Log "INFO" "--- Script Started: $scriptName ---"
+
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
+
+# 4. Write initial log message to ensure file creation
+& $Log "INFO" "--- Script Started: $scriptName ---"
 
 # --- Add WPF Assemblies ---
 try {

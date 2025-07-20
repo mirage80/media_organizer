@@ -1,0 +1,24 @@
+Function Name: Update-GraphicalProgressBar
+
+Inputs:
+1. [int] $PercentComplete: Progress percent (0–100) to set on progress bar(s)
+2. [string] $Activity: Text to show as current step/activity label
+3. [string] $SubTaskMessage (optional): Text to show as subtask label for second-level progress bar
+
+Output:
+✅ No return value (void)
+
+Algorithm:
+1. If global form does not exist, call Show-GraphicalProgressBar enabling second-level bar if $SubTaskMessage is provided
+2. If form exists and is valid:
+    - Update overall progress bar value clamped to 0–100
+    - Update step label text to $Activity
+    - If $SubTaskMessage is provided and second-level controls exist:
+        - Update second-level progress bar value clamped to 0–100
+        - Update subtask label text to $SubTaskMessage
+3. Call Application.DoEvents to refresh UI
+
+Possible Issues:
+✅ Calling without showing form first creates it automatically
+✅ Values outside 0–100 range are clamped
+✅ UI freeze if called too frequently without delay or from wrong thread

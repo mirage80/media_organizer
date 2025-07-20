@@ -1,4 +1,4 @@
-📁 MediaTools.Flush-MediaToolsCache Function Documentation
+📁 MediaTools.Update-MediaToolsCache Function Documentation
 
 Description:
 Reinitializes all MediaTools caches and logger by first clearing existing state, then resetting the logger configuration. Used during module reload or when changing log destinations.

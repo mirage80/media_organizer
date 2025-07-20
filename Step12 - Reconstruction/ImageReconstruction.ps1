@@ -7,17 +7,26 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
 # --- Logging Setup for this script ---
+# 1. Define the log file path
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
+Import-Module $MediaToolsFile -Force
+
+# --- Logging Setup for this script ---
+# 1. Define the log file path
 $childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+
+# 2. Get logging configuration from environment variables
 $logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
 $consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
 $fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
 
+# 3. Create a local, pre-configured logger for this script
 $Log = {
     param([string]$Level, [string]$Message)
     Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
@@ -27,6 +36,10 @@ $Log = {
 
 # Inject logger for module functions
 Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
+
+# 4. Write initial log message to ensure file creation
+& $Log "INFO" "--- Script Started: $scriptName ---"
 
 # --- Helper Function for ImageMagick ---
 function Invoke-Magick {
@@ -117,7 +130,7 @@ $successfullyReconstructed = [System.Collections.Generic.List[string]]::new()
 foreach ($imagePath in $imagesToReconstruct) {
     $currentItem++
     $baseName = Split-Path $imagePath -Leaf
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Reconstructing: $baseName"
+   Show-GraphicalProgressBar -Current $currentItem -Total $totalItems -Message "Reconstructing: $baseName"
 
     if (-not (Test-Path $imagePath)) {
         & $Log "WARNING" "Missing: '$imagePath'. Skipping."
@@ -157,10 +170,10 @@ foreach ($imagePath in $imagesToReconstruct) {
             $backupPath = "$imagePath.bak"
             try {
                 # 1. Rename original to backup
-                Rename-Item $imagePath $backupPath -Force -ErrorAction Stop
+                Move-Item $imagePath $backupPath -Force -ErrorAction Stop
                 & $Log "DEBUG" "Renamed original '$imagePath' to '$backupPath'."
                 # 2. Rename temp file to original name
-                Rename-Item $tempOutputPath $imagePath -Force -ErrorAction Stop
+                Move-Item $tempOutputPath $imagePath -Force -ErrorAction Stop
                 & $Log "INFO" "Replaced original with re-muxed version: '$imagePath'"
 
                 # 3. If successful, remove backup
@@ -174,7 +187,7 @@ foreach ($imagePath in $imagesToReconstruct) {
                 # Attempt rollback if possible
                 if ((Test-Path $backupPath) -and -not (Test-Path $imagePath)) {
                     & $Log "INFO" "Attempting to restore original from backup '$backupPath'..."
-                    Rename-Item $backupPath $imagePath -Force
+                    Move-Item $backupPath $imagePath -Force
                 }
                 # Clean up temp file if it still exists
                 if (Test-Path $tempOutputPath) { Remove-Item $tempOutputPath -Force -ErrorAction SilentlyContinue }

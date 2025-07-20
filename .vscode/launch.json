@@ -1,13 +1,37 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "PowerShell",
-            "request": "launch",
-            "name": "top.ps1",
-            "script": "${workspaceFolder}/top.ps1",
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Attach",
+      "type": "debugpy",
+      "request": "attach",
+      "connect": {
+        "host": "localhost",
+        "port": 5678
+      }
+    },
+    {
+      "name": "PowerShell: Current File",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${file}"
+    },
+    {
+      "name": "Node.js: Current File",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug All",
+      "configurations": [
+        "Python: Attach",
+        "PowerShell: Current File",
+        "Node.js: Current File"
+      ]
+    }
+  ],
+  
 }

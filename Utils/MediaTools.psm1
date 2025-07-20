@@ -57,8 +57,9 @@ $patterns = @(
     '(?<date>\d{4}-\d{2}-\d{2}) (?<time>\d{2}:\d{2}:\d{2}\.\d{3})',  # Matches 2023-03-29 12:34:56.123
     '@(?<date>\d{2}-\d{2}-\d{4})_(?<time>\d{2}-\d{2}-\d{2})',      # Matches photo_1406@18-10-2016_06-50-25
     '(?<date>\d{4}:\d{2}:\d{2}) (?<time>\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:[+-]\d{2}:\d{2})?)',  # Matches 2023:03:29 12:34:56+00:00
-    '(?<prefix>[A-Za-z]+)_(?<date>\d{8})_(?<time>\d{6})'           # Matches PREFIX_YYYYMMDD_HHMMSS
-)
+    '(?<prefix>[A-Za-z]+)_(?<date>\d{8})_(?<time>\d{6})',          # Matches PREFIX_YYYYMMDD_HHMMSS
+    '_(?<date>\d{2}-\d{2}-\d{4})_(?<time>\d{2}-\d{2}-\d{2})'      # Matches photo_7000_16-06-2025_09-21-41.jpg
+    )
 
 # Define time formats for validating timestamps
 $time_formats = @(
@@ -76,6 +77,18 @@ $time_formats = @(
     "yyyy:MM:dd HH:mm:ss.ff zzz",   # Format with fractional seconds
     "yyyy:MM:dd HH:mm:ss.fffzzz",   # Format with milliseconds
     "yyyy:MM:dd HH:mm:ss"           # Format without timezone
+)
+
+# Define prioritized EXIF timestamp fields (most to least preferred)
+$script:EXIFprioritizedFields = @(
+    "DateTimeOriginal",   # a. Original capture date
+    "CreateDate",         # b. File creation timestamp
+    "ModifyDate",         # c. Last modification timestamp
+    "GPSDateTime",        # d. GPS timestamp if no camera clock
+    "MediaCreateDate",    # e. Used in some devices
+    "TrackCreateDate",    # f. For video streams
+    "SubSecDateTimeOriginal",  # g. Subsecond original timestamp
+    "DigitalCreationDateTime" # h. For scanned images or processed media
 )
 
 function Test-IsPhoto {
@@ -199,6 +212,42 @@ function Resolve-DirectionString {
     return $inputString
 }
 
+function Get-FfprobeDataAsJSON {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
+    )
+    $filePath = ConvertTo-StandardPath -Path $File.FullName
+
+    # Check cache first
+    if ($script:FfprobeDataCache.ContainsKey($filePath)) {
+        & $script:MediaToolsLogger "DEBUG" "FFPROBE CACHE HIT for $($File.Name)."
+        return $script:FfprobeDataCache[$filePath]
+    }
+
+    # On cache miss, execute ffprobe to get all format and stream data
+    & $script:MediaToolsLogger "DEBUG" "FFPROBE CACHE MISS for $($File.Name). Executing ffprobe."
+    $ffprobeArgs = @("-v", "quiet", "-print_format", "json", "-show_format", "-show_streams")
+    $jsonOutput = Invoke-FfprobeProcess -file $File -arguments $ffprobeArgs
+
+    if (-not $jsonOutput) {
+        # Add a null to the cache to prevent re-probing a known-bad file in the same session
+        $script:FfprobeDataCache.TryAdd($filePath, $null) | Out-Null
+        return $null
+    }
+
+    try {
+        $metadata = $jsonOutput | ConvertFrom-Json
+        # Add the full metadata object to the cache
+        $script:FfprobeDataCache.TryAdd($filePath, $metadata) | Out-Null
+        return $metadata
+    } catch {
+        & $script:MediaToolsLogger "WARNING" "Could not parse ffprobe JSON for '$($File.Name)'. Error: $($_.Exception.Message)"
+        $script:FfprobeDataCache.TryAdd($filePath, $null) | Out-Null
+        return $null
+    }
+}
+
 function Invoke-ExifToolProcess {
     param (
         [Parameter(Mandatory = $true)]
@@ -217,7 +266,7 @@ function Invoke-ExifToolProcess {
         throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
         # return # Or just return if throwing is too disruptive downstream
     }
-    $ExifToolPath = $env:EXIFTOOL_PATH
+    $ExifToolPath = ConvertTo-StandardPath -Path $env:EXIFTOOL_PATH
     if (-not (Test-Path -Path $ExifToolPath)) {
         & $script:MediaToolsLogger "CRITICAL" "exiftool.exe not found at path specified in environment variable EXIFTOOL_PATH: '$ExifToolPath'"
         throw [System.IO.FileNotFoundException] "exiftool.exe not found at '$ExifToolPath'"
@@ -288,79 +337,95 @@ function Invoke-ExifToolProcess {
     }
 }
 
-function Get-FfprobeData {
+function Invoke-FfprobeProcess {
     param (
         [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File
-    )
-    $filePath = $File.FullName
-
-    # Check cache first
-    if ($script:FfprobeDataCache.ContainsKey($filePath)) {
-        & $script:MediaToolsLogger "DEBUG" "FFPROBE CACHE HIT for $($File.Name)."
-        return $script:FfprobeDataCache[$filePath]
-    }
-
-    # On cache miss, execute ffprobe to get all format and stream data
-    & $script:MediaToolsLogger "DEBUG" "FFPROBE CACHE MISS for $($File.Name). Executing ffprobe."
-    $ffprobeArgs = @("-v", "quiet", "-print_format", "json", "-show_format", "-show_streams")
-    $jsonOutput = Invoke-FfprobeProcess -file $File -arguments $ffprobeArgs
-
-    if (-not $jsonOutput) {
-        # Add a null to the cache to prevent re-probing a known-bad file in the same session
-        $script:FfprobeDataCache.TryAdd($filePath, $null) | Out-Null
-        return $null
-    }
-
-    try {
-        $metadata = $jsonOutput | ConvertFrom-Json
-        # Add the full metadata object to the cache
-        $script:FfprobeDataCache.TryAdd($filePath, $metadata) | Out-Null
-        return $metadata
-    } catch {
-        & $script:MediaToolsLogger "WARNING" "Could not parse ffprobe JSON for '$($File.Name)'. Error: $($_.Exception.Message)"
-        $script:FfprobeDataCache.TryAdd($filePath, $null) | Out-Null
-        return $null
-    }
-}
-
-function Invoke-FfprobeProcess {
-    param(
-        [Parameter(Mandatory=$true)]
         [System.IO.FileInfo]$file,
-        [Object[]]$arguments
+        [Object[]]$arguments,
+        [string]$type = "execute",
+        [int]$maxRetries = 3,
+        [int]$retryDelay = 10,
+        [int]$TimeoutSeconds = 60
     )
-    if (-not (Test-Path -Path $file.FullName)) {
+
+     # Ensure the file exists
+     if (-not (Test-Path -Path $file.FullName)) {
+        # & $script:MediaToolsLogger using the main & $script:MediaToolsLogger function
         & $script:MediaToolsLogger "ERROR" "File not found for ffprobe command: $($file.FullName)"
         throw [System.IO.FileNotFoundException] "File not found: $($file.FullName)"
+        # return # Or just return if throwing is too disruptive downstream
     }
-
-    $ffprobePath = $env:FFPROBE_PATH
+    $ffprobePath = ConvertTo-StandardPath -Path $env:FFPROBE_PATH
     if (-not (Test-Path -Path $ffprobePath)) {
         & $script:MediaToolsLogger "CRITICAL" "ffprobe.exe not found at path specified in environment variable FFPROBE_PATH: '$ffprobePath'"
         throw [System.IO.FileNotFoundException] "ffprobe.exe not found at '$ffprobePath'"
     }
+    
+    $fullPath  = $file.FullName       # Full path of the file
 
-    $commandArgs = @($arguments) + @($file.FullName)
-    $commandStringForLog = "$ffprobePath " + ($commandArgs -join ' ')
-    & $script:MediaToolsLogger "DEBUG" "RUN_FFPROBE: Executing: $commandStringForLog"
+    # Build the command string and wrap it in additional quotes
+    $commandArgs = @($ffprobePath) + $arguments + @($fullPath) # Combine executable, specific args, and file path
 
-    try {
-        $ffprobeOutput = & $ffprobePath $commandArgs 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            throw "ffprobe failed with exit code $LASTEXITCODE. Output: $($ffprobeOutput -join '; ')"
+    # Retry Logic
+    $attempt = 0
+    $ffprobeOutput = $null
+    while ($attempt -lt $maxRetries) {
+        try {
+            $attempt++
+            $commandStringForLog = $commandArgs -join ' ' # For logging only
+            & $script:MediaToolsLogger "INFO" "RUN_FFPROBE: Attempt $attempt : Executing: $commandStringForLog"
+ 
+            $ffprobeOutput = & $commandArgs[0] $commandArgs[1..($commandArgs.Count-1)] 2>&1
+            & $script:MediaToolsLogger "DEBUG" "RUN_FFPROBE: Attempt $attempt : Finished execution for '$fullPath'"
+
+            # Check for errors or warnings in the output
+            if ($ffprobeOutput -match "Error") {
+                $errorMessage = "FFProbe command returned an error: $($ffprobeOutput -join '; ')"
+                & $script:MediaToolsLogger "DEBUG" $errorMessage
+                throw [System.Exception]$errorMessage
+            }
+            if ($ffprobeOutput -match "Warning") {
+                & $script:MediaToolsLogger "WARNING" "FFProbe command returned a warning: $($ffprobeOutput -join '; ')"
+                 return $null # Return null on warning. Returning a geotag for any command with a warning is a bug.
+           }
+            break  # Exit the loop on success
+        } catch [System.Exception] {
+            & $script:MediaToolsLogger "DEBUG" "RUN_FFPROBE: Attempt $attempt failed for '$fullPath'. Error: $_"
+            # Catch specific FFProbe error first
+            if ($_.Exception.Message -match "FFProbe command returned an error") {
+                 & $script:MediaToolsLogger "ERROR" "FFProbe execution failed on attempt $attempt for '$fullPath'. Error: $($_.Exception.Message)"
+                 if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                 Start-Sleep -Seconds $retryDelay
+            } else {
+                # & $script:MediaToolsLogger other potential exceptions during execution
+                & $script:MediaToolsLogger "ERROR" "Unexpected error executing FFProbe on attempt $attempt for '$fullPath'. Error: $_"
+                if ($attempt -ge $maxRetries) { throw } # Re-throw after max retries
+                Start-Sleep -Seconds $retryDelay
+            }
         }
-        # Return the raw output (which should be JSON)
-        return $ffprobeOutput
-    } catch {
-        & $script:MediaToolsLogger "WARNING" "Failed to execute ffprobe for '$($file.FullName)'. Error: $($_.Exception.Message)"
-        # Return null on failure so the calling function can handle it gracefully.
-        return $null
+    }
+    # Process the output based on the type
+    switch ($type.ToLower()) {
+        "timestamp" {
+            if ($ffprobeOutput -and $ffprobeOutput -ne "") {
+                return Format-Timestamp -InputTimestamp $ffprobeOutput
+            } else {
+                return New-DefaultTimestamp
+            }
+        }
+        "geotag" {
+            if ($ffprobeOutput -and $ffprobeOutput -ne "") {
+                return Format-GeoTag -InputGeoTag $ffprobeOutput
+            } else {
+                return New-DefaultGeoTag
+            }
+        }
+        default {
+            return $ffprobeOutput
+        }
     }
 }
 
-# This is the new caching wrapper. It replaces the old Invoke-ExifTool.
-# It intelligently decides whether to serve from the cache or execute a new process.
 function Invoke-ExifTool {
     param (
         [Parameter(Mandatory = $true)]
@@ -369,7 +434,7 @@ function Invoke-ExifTool {
         [string]$type = "execute",
         [int]$TimeoutSeconds = 60
     )
-    $filePath = $file.FullName
+    $filePath = ConvertTo-StandardPath -Path $file.FullName
 
     # --- Determine Operation Type (Read vs. Write) ---
     # A write operation is any call that includes an argument with an equals sign (e.g., "-TagName=Value").
@@ -379,11 +444,11 @@ function Invoke-ExifTool {
     if ($writeArgs.Count -gt 0) {
         & $script:MediaToolsLogger "DEBUG" "CACHE WRITE operation detected for file $($file.Name)."
 
-        # Step 1: Ensure the file's data is in the main EXIF cache. If not, read it.
+        # Step 1: Ensure the file's data is in the main EXIF cache
         if (-not $script:ExifDataCache.ContainsKey($filePath)) {
             & $script:MediaToolsLogger "DEBUG" "CACHE MISS for write on $filePath. Fetching all EXIF data first."
             try {
-                $exifResult = Get-ExifDataAsJson -File $file
+                $exifResult = Get-ExifDataAsJson -File $file -TimeoutSeconds $TimeoutSeconds
                 # Use TryAdd in case another thread added it in the meantime.
                 if ($exifResult) {
                     $script:ExifDataCache.TryAdd($exifResult.FilePath, $exifResult.ExifData) | Out-Null
@@ -445,7 +510,11 @@ function Invoke-ExifTool {
         & $script:MediaToolsLogger "DEBUG" "CACHE MISS for read on $filePath. Fetching all EXIF data."
         try {
             $exifResult = Get-ExifDataAsJson -File $file -TimeoutSeconds $TimeoutSeconds
-            $script:ExifDataCache.TryAdd($exifResult.FilePath, $exifResult.ExifData) | Out-Null
+            if ($exifResult) {
+                $script:ExifDataCache.TryAdd($exifResult.FilePath, $exifResult.ExifData) | Out-Null
+            } else {
+                $script:ExifDataCache.TryAdd($filePath, $null) | Out-Null
+            }
         } catch {
             & $script:MediaToolsLogger "WARNING" "Failed to fetch and cache EXIF data for $filePath. Read will fail. Error: $_"
             $script:ExifDataCache.TryAdd($filePath, $null) | Out-Null
@@ -457,7 +526,7 @@ function Invoke-ExifTool {
     $foundValue = $null
     if ($null -ne $cachedData) {
         # Find the property in the cached object. It might have a group prefix like "EXIF:".
-        $property = $cachedData.PSObject.Properties | Where-Object { $_.Name -like "*:$tagToRead" } | Select-Object -First 1
+        $property = $cachedData.PSObject.Properties | Where-Object { $_.Name -like "*:$tagToRead" -or $_.Name -eq $tagToRead } | Select-Object -First 1
         if ($property) {
             $foundValue = $property.Value
         }
@@ -485,6 +554,145 @@ function Invoke-ExifTool {
         }
         "geotag" {
             if ($foundValue -and $foundValue -ne "") {
+                return Format-GeoTag -InputGeoTag $foundValue
+            } else {
+                return New-DefaultGeoTag
+            }
+        }
+        default {
+            return $foundValue
+        }
+    }
+}
+
+function Invoke-FFProbe {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$file,
+        [Object[]]$arguments,
+        [string]$type = "execute",
+        [int]$TimeoutSeconds = 60
+    )
+    $filePath = ConvertTo-StandardPath -Path $file.FullName
+
+    # --- Determine Operation Type (Read vs. Write) ---
+    # A write operation is any call that includes an argument with an equals sign (e.g., "-TagName=Value").
+    $writeArgs = $arguments | Where-Object { $_ -like '-*=*' }
+
+    # --- Handle WRITE operation (queue changes, modify cache) ---
+    if ($writeArgs.Count -gt 0) {
+        & $script:MediaToolsLogger "DEBUG" "CACHE WRITE operation detected for file $($file.Name)."
+
+        # Step 1: Ensure the file's data is in the FFPROBE cache
+        if (-not $script:FFProbeDataCache.ContainsKey($filePath)) {
+            & $script:MediaToolsLogger "DEBUG" "CACHE MISS for write on $filePath. Fetching all FFProbe data first."
+            try {
+                $ffprobeResult = Get-FfprobeDataAsJson -File $file -TimeoutSeconds $TimeoutSeconds
+                # Use TryAdd in case another thread added it in the meantime.
+                if ($ffprobeResult) {
+                    $script:FFProbeDataCache.TryAdd($ffprobeResult.FilePath, $ffprobeResult.FFProbeData) | Out-Null
+                } else {
+                    $script:FFProbeDataCache.TryAdd($filePath, $null) | Out-Null
+                }
+            } catch {
+                & $script:MediaToolsLogger "WARNING" "Failed to fetch and cache FFProbe data for $filePath. Write will fail. Error: $_"
+                # Add a null entry to prevent retrying a known-bad file.
+                $script:FFProbeDataCache.TryAdd($filePath, $null) | Out-Null
+            }
+        }
+
+        # Step 2: Get or create the pending writes dictionary for this file.
+        $filePendingWrites = $script:PendingWrites.GetOrAdd($filePath, { [System.Collections.Concurrent.ConcurrentDictionary[string, string]]::new() })
+
+        # Step 3: Update both the pending writes queue and the live cache for each tag.
+        $cachedData = $script:FFProbeDataCache[$filePath]
+        if ($null -ne $cachedData) {
+            foreach ($arg in $writeArgs) {
+                # This regex handles arguments like "-TagName='Value'"
+                if ($arg -match '(-[^=]+)=(.+)') {
+                    $tagToWrite = $matches[1].TrimStart('-')
+                    $valueToWrite = $matches[2].Trim("`'") # The value is expected to be quoted.
+
+                    # Add/update in the pending writes queue.
+                    $filePendingWrites[$tagToWrite] = $valueToWrite
+
+                    # Add/update in the live cache so subsequent reads see the change.
+                    $cachedData | Add-Member -MemberType NoteProperty -Name $tagToWrite -Value $valueToWrite -Force
+                    & $script:MediaToolsLogger "INFO" "Queued write and updated cache for '$filePath' with [$tagToWrite = $valueToWrite]."
+                }
+            }
+        } else {
+            & $script:MediaToolsLogger "WARNING" "Cannot perform cache write on '$filePath' because initial cache data is null."
+        }
+        # Return after queueing the write. Do not execute a process.
+        return
+    }
+
+    # --- Handle READ operation (from cache) ---
+    # Find the tag we are supposed to read from the arguments.
+    $tagToRead = $null
+    foreach ($arg in $arguments) {
+        if ($arg -like '-*' -and $arg -ne '-s3' -and $arg -ne '-m') {
+            $tagToRead = $arg.TrimStart('-')
+            break
+        }
+    }
+
+    # If we couldn't determine a simple tag to read, it's a complex command that needs direct execution.
+    if (-not $tagToRead) {
+        & $script:MediaToolsLogger "DEBUG" "Complex FFPROBE command detected. Executing directly: $($arguments -join ' ')"
+        return Invoke-FfprobeProcess -file $file -arguments $arguments -type $type -TimeoutSeconds $TimeoutSeconds
+    }
+
+    # Ensure the file's data is in the cache for the read operation.
+    if (-not $script:FFProbeDataCache.ContainsKey($filePath)) {
+        & $script:MediaToolsLogger "DEBUG" "CACHE MISS for read on $filePath. Fetching all FFProbe data."
+        try {
+            $ffprobeResult = Get-FfprobeDataAsJson -File $file -TimeoutSeconds $TimeoutSeconds
+            if ($ffprobeResult) {
+                $script:FFProbeDataCache.TryAdd($ffprobeResult.FilePath, $ffprobeResult.FFProbeData) | Out-Null
+            } else {
+                $script:FFProbeDataCache.TryAdd($filePath, $null) | Out-Null
+            }
+        } catch {
+            & $script:MediaToolsLogger "WARNING" "Failed to fetch and cache FFProbe data for $filePath. Read will fail. Error: $_"
+            $script:FFProbeDataCache.TryAdd($filePath, $null) | Out-Null
+        }
+    }
+
+    # Now, retrieve the specific tag value from the cached data.
+    $cachedData = $script:FFProbeDataCache[$filePath]
+    $foundValue = $null
+    if ($null -ne $cachedData) {
+        # Find the property in the cached object. It might have a group prefix like "Format:".
+        $property = $cachedData.PSObject.Properties | Where-Object { $_.Name -like "*:$tagToRead" -or $_.Name -eq $tagToRead } | Select-Object -First 1
+        if ($property) {
+            $foundValue = $property.Value
+        }
+    }
+
+    # If the tag wasn't found in the cache, return a default value for the type.
+    if ($null -eq $foundValue) {
+        & $script:MediaToolsLogger "DEBUG" "Tag '$tagToRead' not found in cache for $filePath. Returning default for type '$type'."
+        switch ($type.ToLower()) {
+            "timestamp" { return New-DefaultTimestamp }
+            "geotag"    { return New-DefaultGeoTag }
+            default     { return $null }
+        }
+    }
+
+    # Process and return the cached value.
+    & $script:MediaToolsLogger "DEBUG" "CACHE HIT for tag '$tagToRead' in file $($file.Name)."
+    switch ($type.ToLower()) {
+        "timestamp" {
+            if ($foundValue -ne "") {
+                return Format-Timestamp -InputTimestamp $foundValue
+            } else {
+                return New-DefaultTimestamp
+            }
+        }
+        "geotag" {
+            if ($foundValue -ne "") {
                 return Format-GeoTag -InputGeoTag $foundValue
             } else {
                 return New-DefaultGeoTag
@@ -564,33 +772,35 @@ function Test-Timestamp {
     return $true
 }
 
-
 function Convert-GeoTagToDecimal {
     param (
         [Parameter(Mandatory = $true)][string]$geoTag,
         [Parameter(Mandatory = $true)][string]$direction
     )
 
-    $geoTag = $geoTag -replace '>', '"'
+    # Match DMS format: e.g., "45 deg 30' 15.5""
+    # Supports optional quote (") and typographic quote (”)
+    if ($geoTag -match '(\d+)\s*deg\s*(\d+)''\s*(\d+(\.\d+)?)(?:["”])?') {
+        try {
+            $degrees = [double]$matches[1]
+            $minutes = [double]$matches[2]
+            $seconds = [double]$matches[3]
 
-    # Match DMS format
-    if ($geoTag -match "(\d+)\s*deg\s*(\d+)'\s*(\d+(\.\d+)?)""") {
-        $degrees = [double]$matches[1]
-        $minutes = [double]$matches[2]
-        $seconds = [double]$matches[3]
+            $decimal = $degrees + ($minutes / 60) + ($seconds / 3600)
 
-        # Convert DMS to decimal
-        $decimal = $degrees + ($minutes / 60) + ($seconds / 3600)
-
-        # Adjust sign based on direction
-        switch ($direction) {
-            "S" { return -$decimal }
-            "W" { return -$decimal }
-            default { return $decimal }
+            switch ($direction.ToUpper()) {
+                "S" { return -$decimal }
+                "W" { return -$decimal }
+                default { return $decimal }
+            }
+        } catch {
+            $errorMessage = "Error converting DMS to decimal: $geoTag. Error: $_"
+            & $script:MediaToolsLogger "ERROR" "$errorMessage"
+            throw
         }
     } else {
         $errorMessage = "Invalid coordinate format: $geoTag"
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+        & $script:MediaToolsLogger "ERROR" "$errorMessage"
         throw [System.FormatException]$errorMessage
     }
 }
@@ -649,6 +859,167 @@ function Select-ValidTimestamp {
     return $null
 }
 
+function Get-ExifDataAsJson {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File,  # The media file path (image or video)
+        [int]$TimeoutSeconds = 60
+
+    )
+    # Get all possible timestamp and geotag fields in one go for maximum performance.
+    # This avoids starting exiftool.exe multiple times for the same file.
+    $allTimestampFieldNames = $TimeStampFields.Values | ForEach-Object { $_ } | Select-Object -Unique
+    $allGpsFieldNames = $gpsFields.Values | ForEach-Object { $_ } | Select-Object -Unique
+    
+    $allFieldNames = $allTimestampFieldNames + $allGpsFieldNames | Select-Object -Unique
+    $allFieldsForExiftool = $allFieldNames | ForEach-Object { "-$_" }
+
+    # Use -json to get structured output, -G to get group names (e.g., "EXIF", "File")
+    $exifArgs = @("-json", "-G", "-s") + $allFieldsForExiftool
+
+    try {
+        # Invoke-ExifTool returns an array of strings (the JSON output)
+        $jsonOutput = Invoke-ExifToolProcess -Arguments $exifArgs -File $File -type "execute"
+        if ($jsonOutput) {
+            $exifDataObject = ($jsonOutput | ConvertFrom-Json)[0]
+            # Return a structured object containing both the file path and the retrieved EXIF data.
+            # This makes it easier for the calling script to manage the results.
+            return [PSCustomObject]@{
+                FilePath = ConvertTo-StandardPath -Path $File.FullName
+                ExifData = $exifDataObject
+            }
+        }
+        return $null
+    } catch {
+        & $script:MediaToolsLogger "WARNING" "Failed to get bulk EXIF JSON for $($File.FullName). Error: $($_.Exception.Message)"
+        return $null
+    }
+}
+
+function Get-FilenameTimestamp {
+    param (
+        [System.IO.FileInfo]$File
+    )
+
+    $filename = $File.BaseName  # File name without extension
+
+    # Iterate through patterns to extract date and time
+    foreach ($pattern in $patterns) {
+        if ($filename -match $pattern) {
+            $date = $matches['date']
+            $time = $matches['time']
+            & $script:MediaToolsLogger "DEBUG" "Extracting timestamp from filename: $filename matched with $pattern"
+            & $script:MediaToolsLogger "DEBUG" "Extracted date: $date"
+            & $script:MediaToolsLogger "DEBUG" "Extracted time: $time"
+
+            # Handle missing date or time
+            if ([string]::IsNullOrEmpty($date) -or [string]::IsNullOrEmpty($time)) {
+                continue
+            }
+
+            # Normalize date formats
+            try {
+                $formattedDate = switch ($true) {
+                    ($date -match '^[A-Za-z]{3} \d{1,2}, \d{4}$')     { ([datetime]::ParseExact($date, 'MMM d, yyyy', $null)).ToString('yyyy:MM:dd') }
+                    ($date -match '^\d{2}-\d{2}-\d{4}$')              { ([datetime]::ParseExact($date, 'dd-MM-yyyy', $null)).ToString('yyyy:MM:dd')  }
+                    ($date -match '^\d{4}-\d{2}-\d{2}$')              { ([datetime]::ParseExact($date, 'yyyy-MM-dd', $null)).ToString('yyyy:MM:dd') }
+                    ($date -match '^\d{4}/\d{2}/\d{2}$')              { ([datetime]::ParseExact($date, 'yyyy/MM/dd', $null)).ToString('yyyy:MM:dd') }
+                    ($date -match '^\d{4}:\d{2}:\d{2}$')              { $date }  # Already in yyyy:MM:dd format
+                    ($date -match '^\d{8}$')                          { "$($date.Substring(0,4)):$($date.Substring(4,2)):$($date.Substring(6,2))" }
+                    ($date -match '^\d{4}_\d{4}$')                    { "$($date.Substring(0,4)):$($date.Substring(5,2)):$($date.Substring(7,2))" }
+                    default                                           { throw "Unrecognized date format" }
+                }
+            }
+            catch {
+                & $script:MediaToolsLogger "WARNING" "Unrecognized or invalid date format: $date"
+                continue
+            }
+
+            # Normalize time formats
+            try {                  
+                $formattedTime = switch ($true) {                  
+                    ($time -match '^\d{6}$')                                        { "$($time.Substring(0,2)):$($time.Substring(2,2)):$($time.Substring(4,2))+00:00" }
+                    ($time -match '^\d{2}-\d{2}-\d{2}$')                            { "$($time -replace '-', ':')+00:00" }
+                    ($time -match '^\d{2}:\d{2}:\d{2}$')                            { "$time+00:00" }
+                    ($time -match '^\d{2}:\d{2}:\d{2}\.\d{3}$')                     { "$($time.Substring(0,8))+00:00" }
+                    ($time -match '^\d{1,2}:\d{2}:\d{2}(AM|PM)$')                   { "$(([datetime]::ParseExact($time, 'h:mm:sstt', $null)).ToString('HH:mm:ss'))+00:00" }
+                    ($time -match '^\d{2}:\d{2}:\d{2}(\.\d{1,3})?[+-]\d{2}$')       { "$(([datetimeoffset]::Parse($time).DateTime).ToString('HH:mm:ss'))+00:00" }
+                    ($time -match '^\d{2}:\d{2}:\d{2}(\.\d{1,3})?[+-]\d{2}:\d{2}$') { "$(([datetimeoffset]::Parse($time).DateTime).ToString('HH:mm:ss'))+00:00" }
+                    default                                                         { throw "Unrecognized format" }
+                }
+            }
+            catch {
+                & $script:MediaToolsLogger "WARNING" "Unrecognized or invalid time format: $time"
+                continue
+            }
+
+
+            # Combine and validate
+            $formattedDateTime = "$formattedDate $formattedTime"
+            & $script:MediaToolsLogger "DEBUG" "Combined date: $formattedDateTime"
+
+            if (Test-Timestamp -InputTimestamp $formattedDateTime) {
+                & $script:MediaToolsLogger "INFO" "Finalized Extracted timestamp: $formattedDateTime"
+                return Format-Timestamp -InputTimestamp $formattedDateTime
+            } else {
+                & $script:MediaToolsLogger "WARNING" "Invalid timestamp parsed from filename: $formattedDateTime"
+            }
+        }
+        else {
+            & $script:MediaToolsLogger "DEBUG" "Pattern '$pattern' did not match filename: $filename"
+        }
+    }
+
+    & $script:MediaToolsLogger "INFO" "No valid timestamp parsed from filename: $filename"
+    return $null
+}
+
+function Get-ExifTimestamp {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File,
+        [int]$TimeoutSeconds = 60
+    )
+
+    # Verify the file exists
+    if (-not (Test-Path $File.FullName)) {
+        $errorMessage = "File not found: $($File.FullName)"
+        & $script:MediaToolsLogger "ERROR" $errorMessage
+        throw [System.IO.FileNotFoundException] $errorMessage
+    }
+
+    # Get the file extension in lowercase
+    $extension = $File.Extension.ToLower()
+
+    # Get timestamp fields for the given extension
+    $actions = Resolve-FieldByExtension -Extension $extension -FieldDictionary $TimeStampFields
+    if (-not $actions -or $actions.Count -eq 0) {
+        $errorMessage = "No timestamp fields defined for extension: $extension"
+        return $null
+    }
+
+    # Get all EXIF data at once for performance. This uses the cache.
+    $exifDataResult = Get-ExifDataAsJson -File $File -TimeoutSeconds $TimeoutSeconds
+    if (-not $exifDataResult) {
+        & $script:MediaToolsLogger "INFO" "No EXIF data found for file: $($File.FullName)"
+        return $null
+    }
+
+    # Check fields by priority (e.g., DateTimeOriginal, CreateDate, ModifyDate, etc.)
+    foreach ($field in $EXIFprioritizedFields) {
+        $property = $exifDataResult.ExifData.PSObject.Properties |
+                    Where-Object { $_.Name -like "*:$field" } |
+                    Select-Object -First 1
+
+        if ($property -and (Test-TimeStamp -InputTimestamp $property.Value)) {
+            return Format-Timestamp -InputTimestamp $property.Value
+        }
+    }
+
+    & $script:MediaToolsLogger "INFO" "No valid EXIF timestamp found for file: $($File.FullName)"
+    return $null
+}
+
 function Get-JsonTimestamp {
     param (
         [Parameter(Mandatory = $true)]
@@ -695,83 +1066,25 @@ function Get-JsonTimestamp {
     return $result
 }
 
-function Get-ExifDataAsJson {
+function Get-FfprobeTimestamp {
     param (
         [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File  # The media file path (image or video)
+        [System.IO.FileInfo]$File
     )
-    # Get all possible timestamp and geotag fields in one go for maximum performance.
-    # This avoids starting exiftool.exe multiple times for the same file.
-    $allTimestampFieldNames = $TimeStampFields.Values | ForEach-Object { $_ } | Select-Object -Unique
-    $allGpsFieldNames = $gpsFields.Values | ForEach-Object { $_ } | Select-Object -Unique
-    
-    $allFieldNames = $allTimestampFieldNames + $allGpsFieldNames | Select-Object -Unique
-    $allFieldsForExiftool = $allFieldNames | ForEach-Object { "-$_" }
+    $metadata = Get-FfprobeDataAsJSON -File $File
+    if (-not $metadata) { return $null }
 
-    # Use -json to get structured output, -G to get group names (e.g., "EXIF", "File")
-    $exifArgs = @("-json", "-G", "-s") + $allFieldsForExiftool
-
-    try {
-        # Invoke-ExifTool returns an array of strings (the JSON output)
-        $jsonOutput = Invoke-ExifToolProcess -Arguments $exifArgs -File $File -type "execute"
-        if ($jsonOutput) {
-            $exifDataObject = ($jsonOutput | ConvertFrom-Json)[0]
-            # Return a structured object containing both the file path and the retrieved EXIF data.
-            # This makes it easier for the calling script to manage the results.
-            return [PSCustomObject]@{
-                FilePath = $File.FullName
-                ExifData = $exifDataObject
-            }
-        }
-        return $null
-    } catch {
-        & $script:MediaToolsLogger "WARNING" "Failed to get bulk EXIF JSON for $($File.FullName). Error: $($_.Exception.Message)"
-        return $null
-    }
-}
-
-function Get-ExifTimestamp {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File,
-        [int]$TimeoutSeconds = 60
-    )
-
-    # Ensure the file exists
-    if (-not (Test-Path $File.FullName)) {
-        $errorMessage = "File not found: $($File.FullName)"
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-        throw [System.IO.FileNotFoundException]$errorMessage
-    }
-
-    # Get the file extension in lowercase
-    $extension = $File.Extension.ToLower()
-
-    # Get timestamp fields for the given extension
-    $actions = Resolve-FieldByExtension -Extension $extension -FieldDictionary $TimeStampFields
-    if (-not $actions -or $actions.Count -eq 0) {
-        $errorMessage = "No timestamp fields defined for extension: $extension"
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-        throw [System.IO.FileNotFoundException]$errorMessage
-    }
-
-    # Get all EXIF data at once for performance. This uses the cache.
-    $exifDataResult = Get-ExifDataAsJson -File $File -TimeoutSeconds $TimeoutSeconds
-    if (-not $exifDataResult) { return $null }
-
-    # Iterate through the prioritized fields and return the first valid one found.
-    foreach ($field in $prioritizedFields) {
-        $property = $exifDataResult.ExifData.PSObject.Properties | Where-Object { $_.Name -like "*:$field" } | Select-Object -First 1
-        if ($property -and (Test-TimeStamp -InputTimestamp $property.Value)) {
-            return Format-Timestamp -InputTimestamp $property.Value
+    # The 'creation_time' tag is the most common and reliable source for a timestamp.
+    $timestampString = $metadata.format.tags.creation_time
+    if ($timestampString) {
+        try {
+            return Format-Timestamp -InputTimestamp $timestampString
+        } catch {
+            & $script:MediaToolsLogger "DEBUG" "Could not standardize ffprobe timestamp '$timestampString' for $($File.Name)."
         }
     }
-
-    # If no valid timestamp was found in any of the prioritized fields.
-    return $null
+    return $null # Return null if no valid timestamp was found
 }
-
-# Inside MediaTools.psm1
 
 function Find-ValidTimestamp {
     param (
@@ -779,8 +1092,8 @@ function Find-ValidTimestamp {
         [System.IO.FileInfo]$File  # The media file path (image or video)
     )
 
-    $fullPath = $File.FullName
-    $JsonPath = "${fullPath}.json"
+    $fullPath = ConvertTo-StandardPath -Path $File.FullName
+    $JsonPath = "$fullPath.json"
 
     # Create an ordered list of potential timestamp sources.
     # The order determines the priority. The first valid one found will be used.
@@ -814,7 +1127,7 @@ function Find-ValidTimestamp {
 
     # 4. Filename (Lowest priority)
     try {
-        $potentialTimestamps.Add($(Convert-FilenameToTimestamp -FilePath $File))
+        $potentialTimestamps.Add($(Get-FilenameTimestamp -File $File))
     } catch {
         & $script:MediaToolsLogger "DEBUG" "Could not get timestamp from filename for $($File.Name): $($_.Exception.Message)"
     }
@@ -828,70 +1141,118 @@ function Find-ValidTimestamp {
     } else {
         # If no valid timestamp could be determined
         $noValidTimestampMsg = "No valid timestamp could be determined for file: $($File.FullName)"
-        & $script:MediaToolsLogger "WARNING" $noValidTimestampMsg # Log as warning
+        & $script:MediaToolsLogger "INFO" $noValidTimestampMsg # Log as warning
         throw [System.FormatException]::new($noValidTimestampMsg) # Throw specific error
     }
 }
 
-function Convert-FilenameToTimestamp {
+function Get-FilenameGeotag {
     param (
-        [System.IO.FileInfo]$FilePath
+        [System.IO.FileInfo]$File
+    )
+    return $null # Placeholder for future implementation
+}
+
+function Get-ExifGeotag {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
     )
 
-    $filename = $FilePath.BaseName  # File name without extension
+    # Validate the file
+    if (-not (Test-Path $File.FullName)) {
+        $errorMessage = "File not found: $($File.FullName)"
+        & $script:MediaToolsLogger "ERROR" $errorMessage
+        throw [System.IO.FileNotFoundException]$errorMessage
+    }
 
-    # Iterate through patterns to extract date and time
-    foreach ($pattern in $patterns) {
-        if ($filename -match $pattern) {
-            $date = $matches['date']
-            $time = $matches['time']
+    $extension = $File.Extension.ToLower()
 
-            # Handle missing date or time
-            if ([string]::IsNullOrEmpty($date) -or [string]::IsNullOrEmpty($time)) {
-                continue
-            }
+    # Get actions for the given extension
+    $actions = Resolve-FieldByExtension -Extension $extension -FieldDictionary $gpsFields
+    if (-not $actions -or $actions.Count -eq 0) {
+        & $script:MediaToolsLogger "INFO" "No geotag fields mapped for extension '$extension' in file: $($File.FullName)"
+        return $null
+    }
 
-            # Normalize date formats
-            $formattedDate = switch ($true) {
-                ($date -match '\d{8}') { $date.Substring(0, 4) + ":" + $date.Substring(4, 2) + ":" + $date.Substring(6, 2) }
-                ($date -match '\d{2}-\d{2}-\d{4}') { $date.Substring(6, 4) + ":" + $date.Substring(3, 2) + ":" + $date.Substring(0, 2) }
-                ($date -match '\d{4}-\d{2}-\d{2}') { $date -replace '-', ':' }
-                default {
-                    & $script:MediaToolsLogger  "WARNING" "Date format not recognized: $date"
-                    continue
-                }
-            }
-
-            # Normalize time formats
-            $formattedTime = switch ($true) {
-                ($time -match '\d{6}') { $time.Substring(0, 2) + ":" + $time.Substring(2, 2) + ":" + $time.Substring(4, 2) }
-                ($time -match '\d{2}-\d{2}-\d{2}') { $time -replace '-', ':' }
-                ($time -match '\d{2}:\d{2}:\d{2}') { $time }
-                default {
-                    & $script:MediaToolsLogger  "WARNING" "Time format not recognized: $time. Defaulting to 00:00:00."
-                    "00:00:00"
-                }
-            }
-
-            # Combine date and time
-            $formattedDateTime = "$formattedDate $formattedTime"
-
-            # Validate the combined date-time using $time_formats
-            foreach ($format in $time_formats) {
-                try {
-                    $parsedDateTime = [datetimeoffset]::ParseExact($formattedDateTime, $format, $null)
-                    return $parsedDateTime.ToString("yyyy:MM:dd HH:mm:sszzz")  # Return standardized format
-                } catch {
-                    # Continue to the next format if parsing fails
-                }
-            }
-        } else {
+    $geo_tag_fields = @()
+    # Execute ExifTool commands for each action
+    foreach ($action in $actions) {
+        $exifArgs = @("-${action}", "-s3", "-m")
+        try {
+            $temp_GeoTag = Invoke-ExifTool -Arguments $exifArgs -File $File -type "GeoTag"
+            $geo_tag_fields += $temp_GeoTag
+        } catch {
+            & $script:MediaToolsLogger  "ERROR" "Failed to execute ExifTool command for action: $action. Error: $_"
+            throw
         }
     }
 
-    # Log if no match was found
-    & $script:MediaToolsLogger  "WARNING" "No valid date-time found in filename: $filename" # Log the error
-    throw [System.FormatException] "No valid date-time found in filename: $filename" # Re-throw the exception
+    try {
+        $result_GeoTag = New-GeoTagFromParts -fields $actions -values $geo_tag_fields
+        return $result_GeoTag
+    } catch {
+        & $script:MediaToolsLogger "INFO" "No valid geotag assembled from file: $($File.FullName)"
+        return $null
+    }
+}
+
+function Get-JsonGeotag {
+    param (
+        [System.IO.FileInfo]$JsonFile
+    )
+
+    # Check if the JSON file exists
+    if (-not (Test-Path -Path $JsonFile.FullName)) {
+        $errorMessage = "JSON file not found: $($JsonFile.FullName)"
+        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+        throw [System.IO.FileNotFoundException]$errorMessage
+    }
+
+    # Load the JSON file
+    try {
+        $jsonContent = Get-Content -Path $JsonFile.FullName | ConvertFrom-Json
+    } catch { 
+        $errorMessage = "Failed to read or parse JSON file: $($JsonFile.FullName). Error: $_" # This error message is not logged
+        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+        throw [System.FormatException]$errorMessage
+    }
+
+    # Extract latitude and longitude
+    $latitude = $jsonContent.geoData?.latitude
+    $longitude = $jsonContent.geoData?.longitude
+
+    if ($latitude -and $longitude) {
+        # Standardize and return the geotag
+        return Format-GeoTag -InputGeoTag "${latitude}, ${longitude}"
+    } else { # This warning is not using the main Log function
+        & $script:MediaToolsLogger  "WARNING" "GeoData is missing or incomplete in JSON file: $($JsonFile.FullName)"
+        return $null
+    }
+}
+
+function Get-FfprobeGeotag {
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
+    )
+    $metadata = Get-FfprobeDataAsJSON -File $File
+    if (-not $metadata) { return $null }
+
+    try {
+        # Location is often in an ISO 6709 string in one of these tags
+        $locationString = $metadata.format.tags.'com.apple.quicktime.location.ISO6709' -or $metadata.format.tags.location
+
+        if ($locationString -and $locationString -match '([+-]\d+\.\d+)([+-]\d+\.\d+)') {
+            $latitude = [double]$matches[1]
+            $longitude = [double]$matches[2]
+            # Standardize the geotag using the helper functions
+            return Format-GeoTag -InputGeoTag "$latitude,$longitude"
+        }
+    } catch {
+        & $script:MediaToolsLogger "WARNING" "Could not parse ffprobe JSON or find geotag for '$($File.Name)'. Error: $($_.Exception.Message)"
+    }
+    return $null # Return null if no valid geotag was found
 }
 
 function Set-Timestamp {
@@ -988,12 +1349,17 @@ function Move-FileToDestination {
         [System.IO.DirectoryInfo]$SrcRoot,
         [System.IO.DirectoryInfo]$DestRoot
     )
-    # Calculate the relative path
-    $relativePath = $File.FullName -replace [regex]::Escape($SrcRoot.FullName), ""
-    $relativePath = $relativePath.TrimStart("\\")
+    $standardFile = ConvertTo-StandardPath -Path $File.FullName
+    $standardSrcRoot = ConvertTo-StandardPath -Path $SrcRoot.FullName
+    $standardDestRoot = ConvertTo-StandardPath -Path $DestRoot.FullName
+
+    # Calculate the relative path using standardized paths
+    $relativePath = $standardFile -replace [regex]::Escape($standardSrcRoot), ''
+    $relativePath = $relativePath.TrimStart('/')
 
     # Combine the new root with the relative path
-    $destination = Join-Path -Path $DestRoot.FullName -ChildPath $relativePath 
+    # Manually join with forward slashes to maintain the standard.
+    $destination = ConvertTo-StandardPath -Path "$standardDestRoot/$relativePath" 
 
     # Ensure the destination directory exists
     try {
@@ -1030,7 +1396,7 @@ function Clear-MediaToolsCache {
     & $script:MediaToolsLogger "INFO" "MediaTools caches have been cleared."
 }
 
-function Flush-MediaToolsCache {
+function Update-MediaToolsCache {
     [CmdletBinding()]
     param()
 
@@ -1043,7 +1409,7 @@ function Flush-MediaToolsCache {
 
     # Use .Keys.ToArray() to create a static copy, as we'll be modifying the collection inside the loop.
     foreach ($filePath in $script:PendingWrites.Keys.ToArray()) {
-        $file = Get-Item -LiteralPath $filePath
+        $file = Get-Item -LiteralPath (ConvertTo-StandardPath -Path $filePath)
         $pendingTags = $script:PendingWrites[$filePath]
 
         # Construct ExifTool arguments from the pending tags
@@ -1090,40 +1456,6 @@ function Resolve-FileMetadata {
     return [PSCustomObject]@{
         ConsolidatedTimestamp = $timestampResult
         ConsolidatedGeotag    = $geotagResult
-    }
-}
-
-function Get-JsonGeotag {
-    param (
-        [System.IO.FileInfo]$JsonFile
-    )
-
-    # Check if the JSON file exists
-    if (-not (Test-Path -Path $JsonFile.FullName)) {
-        $errorMessage = "JSON file not found: $($JsonFile.FullName)"
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-        throw [System.IO.FileNotFoundException]$errorMessage
-    }
-
-    # Load the JSON file
-    try {
-        $jsonContent = Get-Content -Path $JsonFile.FullName | ConvertFrom-Json
-    } catch { 
-        $errorMessage = "Failed to read or parse JSON file: $($JsonFile.FullName). Error: $_" # This error message is not logged
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-        throw [System.FormatException]$errorMessage
-    }
-
-    # Extract latitude and longitude
-    $latitude = $jsonContent.geoData?.latitude
-    $longitude = $jsonContent.geoData?.longitude
-
-    if ($latitude -and $longitude) {
-        # Standardize and return the geotag
-        return Format-GeoTag -InputGeoTag "${latitude}, ${longitude}"
-    } else { # This warning is not using the main Log function
-        & $script:MediaToolsLogger  "WARNING" "GeoData is missing or incomplete in JSON file: $($JsonFile.FullName)"
-        return $null
     }
 }
 
@@ -1210,58 +1542,86 @@ function Convert-GeoTagValueToDecimal {
         [string]$InputGeoTag
     )
 
-    # Normalize direction strings
     $sanitizedInputGeoTag = Resolve-DirectionString -inputString $InputGeoTag
+    $sanitizedInputGeoTag = $sanitizedInputGeoTag -replace '"', ''
 
-    # Remove unescaped double quotes
-    $sanitizedInputGeoTag = $sanitizedInputGeoTag -replace '"', '>'
+    # Handle coordinate pairs (e.g., "26 deg 49' 29.09 N, 113 deg 10' 15.01 W")
+    if ($sanitizedInputGeoTag -like "*,*") {
+        $parts = $sanitizedInputGeoTag -split '\s*,\s*'
+        if ($parts.Count -ne 2) {
+            $errorMessage = "Expected two coordinates in geotag pair: $InputGeoTag"
+            & $script:MediaToolsLogger "ERROR" "$errorMessage"
+            throw [System.FormatException]$errorMessage
+        }
 
-    # Handle single direction (e.g., "N", "S", "E", "W")
-    if ($sanitizedInputGeoTag -match "^[NSEW]$") {
-        return $sanitizedInputGeoTag
-    }
-
-    # Handle coordinate with direction (e.g., "45.123 N")
-    if ($sanitizedInputGeoTag -match "(.+?)\s*([NSEW])$") {
         try {
-            $coordinate = $matches[1].Trim()
-            $direction = $matches[2].ToUpper()
-            return Convert-GeoTagToDecimal -geoTag $coordinate -direction $direction
+            $latitude = Convert-GeoTagValueToDecimal -InputGeoTag $parts[0]
+            $longitude = Convert-GeoTagValueToDecimal -InputGeoTag $parts[1]
+            return @($latitude, $longitude)
         } catch {
-            $errorMessage = "Error during decimal conversion for geotag: $sanitizedInputGeoTag. Error: $_"
-            & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+            $errorMessage = "Error parsing geotag pair: $InputGeoTag. Error: $_"
+            & $script:MediaToolsLogger "ERROR" "$errorMessage"
             throw
         }
     }
 
-    # Handle decimal format (e.g., "45.123")
+    # Case 1: Single letter direction
+    if ($sanitizedInputGeoTag -match "^[NSEW]$") {
+        return $sanitizedInputGeoTag
+    }
+
+    # Case 2: Decimal with direction (e.g., 45.123 N)
+    if ($sanitizedInputGeoTag -match "(.+?)\s*([NSEW])$") {
+        try {
+            $coordinate = $matches[1].Trim()
+            $direction = $matches[2].ToUpper()
+            $result = Convert-GeoTagToDecimal -geoTag $coordinate -direction $direction
+            return $result
+        } catch {
+            $errorMessage = "Error during decimal conversion for geotag: $sanitizedInputGeoTag. Error: $_"
+            & $script:MediaToolsLogger "ERROR" "$errorMessage"
+            throw
+        }
+    }
+
+    # Case 3: Decimal only (e.g., 45.123)
     if ($sanitizedInputGeoTag -match "^[+-]?\d+(\.\d+)?$") {
         try {
             return [double]$sanitizedInputGeoTag
         } catch {
             $errorMessage = "Error converting geotag to decimal: $sanitizedInputGeoTag. Error: $_"
-            & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+            & $script:MediaToolsLogger "ERROR" "$errorMessage"
             throw
         }
     }
 
-    # Handle degrees, minutes, seconds format (e.g., "45 deg 30' 15.5\")
-    if ($sanitizedInputGeoTag -match "(\d+)\s*deg\s*(\d+)'\s*(\d+(\.\d+)?)>") {
-        try {
-            $degrees = [double]$matches[1]
-            $minutes = [double]$matches[2]
-            $seconds = [double]$matches[3]
-            return $degrees + ($minutes / 60) + ($seconds / 3600)
-        } catch { # This catch block is redundant
-            $errorMessage = "Error parsing degrees, minutes, seconds format: $sanitizedInputGeoTag. Error: $_"
-            & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-            throw
-        }
-    }
+# Case 4: Degrees-Minutes-Seconds (with or without quote or direction)
+if ($sanitizedInputGeoTag -match '(\d+)\s*deg\s*(\d+)''\s*(\d+(\.\d+)?)(?:["”])?\s*([NSEW])?') {
+    try {
+        $degrees = [double]$matches[1]
+        $minutes = [double]$matches[2]
+        $seconds = [double]$matches[3]
+        $direction = $matches[5]
 
-    # Log and throw error for invalid format
+        $decimal = $degrees + ($minutes / 60) + ($seconds / 3600)
+
+        if ($direction -and ($direction -eq 'S' -or $direction -eq 'W')) {
+            $decimal = -1 * $decimal
+        }
+
+        return $decimal
+    } catch {
+        $errorMessage = "Error parsing DMS geotag: $sanitizedInputGeoTag. Error: $_"
+        & $script:MediaToolsLogger "ERROR" "$errorMessage"
+        throw
+    }
+}
+
+
+
+    # Final fallback
     $errorMessage = "Invalid geotag format: $InputGeoTag"
-    & $script:MediaToolsLogger  "ERROR" "$errorMessage" # Log the error
+    & $script:MediaToolsLogger "ERROR" "$errorMessage"
     throw [System.FormatException]$errorMessage
 }
 
@@ -1272,7 +1632,7 @@ function New-GeoTagFromParts {
         [string[]]$values
     )
 
-    $result_GeoTag = New-DefaultGeoTag
+    $Result_GeoTag = New-DefaultGeoTag
     $GPS_valid = $true
     $pos_valid = $true
     $zero_GeoTag = New-DefaultGeoTag
@@ -1281,74 +1641,72 @@ function New-GeoTagFromParts {
         $field = $fields[$i]
         $value = $values[$i]
 
-        # Validate field and value
-        # Update the appropriate field
         switch ($field) {
             "GPSLatitudeRef" {
-               if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
-                    $GPS_valid=$false
+                if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
+                    $GPS_valid = $false
                 } else {
                     $value = Resolve-DirectionString -inputString $value
                     if ($value -eq "N" -or $value -eq "S") {
                         $GPSLatitudeRef = $value
-                    }  else {
+                    } else {
                         $errorMessage = "Invalid LatitudeRef value: $value"
-                        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+                        & $script:MediaToolsLogger "ERROR" $errorMessage
                         throw [System.FormatException]$errorMessage
                     }
                 }
             }
             "GPSLatitude" {
                 if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
-                    $GPS_valid=$false
+                    $GPS_valid = $false
                 } else {
                     $value = Convert-GeoTagValueToDecimal -InputGeoTag $value
                     try {
-                        $GPSLatitude = [double]$value
+                        $GPSLatitude = [math]::Abs([double]$value)
                     } catch {
                         $errorMessage = "Error: Unable to convert '$value' to a valid latitude."
-                        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+                        & $script:MediaToolsLogger "ERROR" $errorMessage
                         throw [System.FormatException]$errorMessage
                     }
                 }
             }
             "GPSLongitudeRef" {
                 if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
-                    $GPS_valid=$false
+                    $GPS_valid = $false
                 } else {
                     $value = Resolve-DirectionString -inputString $value
                     if ($value -eq "E" -or $value -eq "W") {
                         $GPSLongitudeRef = $value
                     } else {
                         $errorMessage = "Invalid LongitudeRef value: $value"
-                        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+                        & $script:MediaToolsLogger "ERROR" $errorMessage
                         throw [System.FormatException]$errorMessage
                     }
-                }                    
+                }
             }
             "GPSLongitude" {
                 if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
-                    $GPS_valid=$false
+                    $GPS_valid = $false
                 } else {
                     $value = Convert-GeoTagValueToDecimal -InputGeoTag $value
                     try {
-                        $GPSLongitude = [double]$value
+                        $GPSLongitude = [math]::Abs([double]$value)
                     } catch {
                         $errorMessage = "Error: Unable to convert '$value' to a valid longitude."
-                        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
+                        & $script:MediaToolsLogger "ERROR" $errorMessage
                         throw [System.FormatException]$errorMessage
                     }
                 }
             }
             "GPSPosition" {
                 if (-not $value -or $value -eq "" -or $value -eq $zero_GeoTag) {
-                    $pos_valid=$false
+                    $pos_valid = $false
                 } else {
                     $geoParts = $value -split ","
                     try {
-                        $GPSLatitude_pos = $([math]::Abs([double]($geoParts[0].Trim())))
+                        $GPSLatitude_pos = [math]::Abs([double]($geoParts[0].Trim()))
                         $GPSLatitudeRef_pos = $geoParts[1].Trim()
-                        $GPSLongitude_pos = $([math]::Abs([double]($geoParts[2].Trim())))
+                        $GPSLongitude_pos = [math]::Abs([double]($geoParts[2].Trim()))
                         $GPSLongitudeRef_pos = $geoParts[3].Trim()
                     } catch {
                         $errorMessage = "Error: Unable to parse GPSPosition value: $value. Error: $_"
@@ -1358,43 +1716,39 @@ function New-GeoTagFromParts {
                 }
             }
             default {
-                & $script:MediaToolsLogger  "WARNING" "Unknown field: $field. No changes made."
-            } # This warning is not using the main Log function
+                & $script:MediaToolsLogger "WARNING" "Unknown field: $field. No changes made."
+            }
         }
     }
 
-    if ( $GPS_valid ){
-        # Calculate latitude and longitude references
-        if (($GPSLatitudeRef -eq "S" -and $GPSLatitude -gt 0) -or
-            ($GPSLatitudeRef -eq "N" -and $GPSLatitude -lt 0) -or
-            ($GPSLongitudeRef -eq "W" -and $GPSLongitude -gt 0) -or
-            ($GPSLongitudeRef -eq "E" -and $GPSLongitude -lt 0) ) 
-        {
-            $errorMessage = "Error: Invalid GPSPosition value: $value. Latitude and Longitude references do not match."
+    # Float comparison tolerance
+    $epsilon = 0.00001
+
+    if ($pos_valid -and $GPS_valid) {
+        $latMatch = [math]::Abs($GPSLatitude - $GPSLatitude_pos) -lt $epsilon
+        $lonMatch = [math]::Abs($GPSLongitude - $GPSLongitude_pos) -lt $epsilon
+        $refMatch = ($GPSLatitudeRef -eq $GPSLatitudeRef_pos -and $GPSLongitudeRef -eq $GPSLongitudeRef_pos)
+
+        if ($latMatch -and $lonMatch -and $refMatch) {
+            $Result_GeoTag = "$GPSLatitude,$GPSLatitudeRef,$GPSLongitude,$GPSLongitudeRef"
+        } else {
+            $errorMessage = "Error: Mismatch between GPSPosition value and separate GPS fields."
             & $script:MediaToolsLogger "ERROR" $errorMessage
             throw [System.FormatException]$errorMessage
         }
-        $GPSLatitude = $([math]::Abs($GPSLatitude)) # Absolute latitude
-        $GPSLongitude = $([math]::Abs($GPSLongitude)) # Absolute longitude
     }
-
-    if ($pos_valid -and $GPS_valid) {
-        if ($GPSLatitude -eq $GPSLatitude_pos -and $GPSLongitude -eq $GPSLongitude_pos -and $GPSLatitudeRef -eq $GPSLatitudeRef_pos -and $GPSLongitudeRef -eq $GPSLongitudeRef_pos) {
-            # No changes needed, as the geotag is already valid
-            $Result_GeoTag = "${GPSLatitude},${GPSLatitudeRef},${GPSLongitude},${GPSLongitudeRef}"
-        } else {
-            $errorMessage = "Error: MisMatch between GPSPosition value & GPS values."
-            throw [System.FormatException]$errorMessage
-        }
-    } elseif (-not $pos_valid -and $GPS_valid) {
-        $Result_GeoTag = "${GPSLatitude},${GPSLatitudeRef},${GPSLongitude},${GPSLongitudeRef}"
-    } elseif ($pos_valid -and -not $GPS_valid) {
-        $Result_GeoTag = "${GPSLatitude_pos},${GPSLatitudeRef_pos},${GPSLongitude_pos},${GPSLongitudeRef_pos}"
-    } else {
-        $errorMessage = "warning: No geotag value found."
-        & $script:MediaToolsLogger "WARNING" $errorMessage
+    elseif (-not $pos_valid -and $GPS_valid) {
+        $Result_GeoTag = "$GPSLatitude,$GPSLatitudeRef,$GPSLongitude,$GPSLongitudeRef"
+    }
+    elseif ($pos_valid -and -not $GPS_valid) {
+        $Result_GeoTag = "$GPSLatitude_pos,$GPSLatitudeRef_pos,$GPSLongitude_pos,$GPSLongitudeRef_pos"
+    }
+    else {
+        $errorMessage = "No geotag value found in either GPS or GPSPosition."
+        & $script:MediaToolsLogger "INFO" $errorMessage
         throw [System.FormatException]$errorMessage
     }
+
     return $Result_GeoTag
 }
 
@@ -1425,49 +1779,6 @@ function Resolve-FieldByExtension {
         & $script:MediaToolsLogger  "WARNING" "No fields defined for extension: $normalizedExtension" # This warning is not using the main Log function
         return @()
     }
-}
-
-function Get-ExifGeotag {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File
-    )
-
-    # Validate the file
-    if (-not (Test-Path $File.FullName)) {
-        $errorMessage = "File not found: $($File.FullName)"
-        & $script:MediaToolsLogger  "ERROR" "$errorMessage"
-        throw [System.IO.FileNotFoundException]$errorMessage
-    }
-
-    $extension = $File.Extension.ToLower()  # File extension (including the leading dot)
-
-    # Get actions for the given extension
-    $actions = Resolve-FieldByExtension -Extension $extension -FieldDictionary $gpsFields
-    if (-not $actions -or $actions.Count -eq 0) {
-        & $script:MediaToolsLogger  "WARNING" "No actions to execute for file: $($File.FullName)"
-        return $null
-    }
-
-    $geo_tag_fields = @()
-    # Execute ExifTool commands for each action
-    foreach ($action in $actions) {
-        $exifArgs = @("-${action}", "-s3", "-m")
-        try {
-            $temp_GeoTag = Invoke-ExifTool -Arguments $exifArgs -File $File -type "GeoTag"
-            $geo_tag_fields += $temp_GeoTag
-        } catch { # This catch block is redundant
-            & $script:MediaToolsLogger  "ERROR" "Failed to execute ExifTool command for action: $action. Error: $_"
-            throw
-        }
-    }
-    try {
-        $result_GeoTag = New-GeoTagFromParts -fields $actions -values $geo_tag_fields
-    } catch {
-        & $script:MediaToolsLogger  "INFO" "No valid geotag found in: $($File.FullName)."
-        throw
-    }
-    return $result_GeoTag
 }
 
 function Set-Geotag {
@@ -1581,12 +1892,13 @@ function Find-ValidGeotag {
         [System.IO.FileInfo]$File  # The media file path (image or video)
     )
 
-    # Get the full path of the file
-    $fullPath = $File.FullName
-    $JsonPath = "${fullPath}.json"
+    # Standardize the path for consistency
+    $fullPath = ConvertTo-StandardPath -Path $File.FullName
+    $JsonPath = "$fullPath.json"
 
     # Create an ordered list of potential geotag sources.
     # The order determines the priority.
+
     $potentialGeoTags = [System.Collections.Generic.List[string]]::new()
 
     # Get the geotag from the JSON metadata if the JSON file exists
@@ -1622,53 +1934,9 @@ function Find-ValidGeotag {
     } else {
         # If no valid geotag could be determined
         $noValidGeotagMsg = "No valid geotag could be determined for file: $($File.FullName)"
-        & $script:MediaToolsLogger "WARNING" $noValidGeotagMsg # Log as warning
+        & $script:MediaToolsLogger "INFO" $noValidGeotagMsg # Log as warning
         throw [System.FormatException]::new($noValidGeotagMsg) # Throw specific error
     }
-}
-
-function Get-FfprobeTimestamp {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File
-    )
-    $metadata = Get-FfprobeData -File $File
-    if (-not $metadata) { return $null }
-
-    # The 'creation_time' tag is the most common and reliable source for a timestamp.
-    $timestampString = $metadata.format.tags.creation_time
-    if ($timestampString) {
-        try {
-            return Format-Timestamp -InputTimestamp $timestampString
-        } catch {
-            & $script:MediaToolsLogger "DEBUG" "Could not standardize ffprobe timestamp '$timestampString' for $($File.Name)."
-        }
-    }
-    return $null # Return null if no valid timestamp was found
-}
-
-function Get-FfprobeGeotag {
-    param (
-        [Parameter(Mandatory = $true)]
-        [System.IO.FileInfo]$File
-    )
-    $metadata = Get-FfprobeData -File $File
-    if (-not $metadata) { return $null }
-
-    try {
-        # Location is often in an ISO 6709 string in one of these tags
-        $locationString = $metadata.format.tags.'com.apple.quicktime.location.ISO6709' -or $metadata.format.tags.location
-
-        if ($locationString -and $locationString -match '([+-]\d+\.\d+)([+-]\d+\.\d+)') {
-            $latitude = [double]$matches[1]
-            $longitude = [double]$matches[2]
-            # Standardize the geotag using the helper functions
-            return Format-GeoTag -InputGeoTag "$latitude,$longitude"
-        }
-    } catch {
-        & $script:MediaToolsLogger "WARNING" "Could not parse ffprobe JSON or find geotag for '$($File.Name)'. Error: $($_.Exception.Message)"
-    }
-    return $null # Return null if no valid geotag was found
 }
 
 function Move-MediaFileByMetadata {
@@ -1682,17 +1950,54 @@ function Move-MediaFileByMetadata {
         [Parameter(Mandatory = $true)]
         [System.IO.DirectoryInfo]$targetPath
     )
-    $category = Get-MediaFileCategory -SrcFile $filePath
-    $newroot = Join-Path -Path $targetPath -ChildPath $category
+    $standardFilePath = ConvertTo-StandardPath -Path $filePath.FullName
+    $standardRootDir = ConvertTo-StandardPath -Path $rootDir.FullName
+    $standardTargetPath = ConvertTo-StandardPath -Path $targetPath.FullName
 
-    $relativePath = $filePath -replace [regex]::Escape($rootDir), ""
-    $destination = Join-Path -Path $newRoot -ChildPath $relativePath
+    $category = Get-MediaFileCategory -SrcFile $filePath
+    # Manually join with forward slashes to maintain the standard.
+    $newroot = ConvertTo-StandardPath -Path "$standardTargetPath/$category"
+
+    $relativePath = $standardFilePath -replace [regex]::Escape($standardRootDir), ''
+    $relativePath = $relativePath.TrimStart('/')
+    $destination = ConvertTo-StandardPath -Path "$newroot/$relativePath" 
+
     $desiredPath = Split-Path -Path $destination
     New-Item -Path $desiredPath -ItemType Directory -Force | Out-Null
 
-    Move-Item -Path $filePath.FullName -Destination $destination
+    Move-Item -Path $filePath.FullName -Destination $destination -Force
     & $script:MediaToolsLogger  "INFO" "Moved $($filePath.FullName) to $category"
     return $category
+}
+
+function Rename-SidecarFiles {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)][string]$OriginalFilePath,
+        [Parameter(Mandatory=$true)][string]$NewFilePath
+    )
+    $originalFileName = Split-Path -Path $OriginalFilePath -Leaf
+    $newFileName = Split-Path -Path $NewFilePath -Leaf
+    $directory = Split-Path -Path $OriginalFilePath -Parent
+
+    # Find files that start with the original filename, but are not the original file itself.
+    # e.g., for "IMG_1234.MOV", this finds "IMG_1234.MOV.json"
+    $normalizedOriginalPath = ConvertTo-StandardPath -Path (Resolve-Path -LiteralPath $OriginalFilePath).Path
+    $sidecarFiles = Get-ChildItem -Path $directory -File -Filter "$originalFileName.*" | Where-Object {
+        (ConvertTo-StandardPath -Path (Resolve-Path -LiteralPath $_.FullName).Path) -ne $normalizedOriginalPath
+    }
+
+    foreach ($sidecar in $sidecarFiles) {
+        # Replace the original filename part with the new filename part
+        $newSidecarName = $sidecar.Name.Replace($originalFileName, $newFileName, [System.StringComparison]::OrdinalIgnoreCase)
+        $newSidecarPath = Join-Path -Path $directory -ChildPath $newSidecarName
+        try {
+            Move-Item -Path $sidecar.FullName -Destination $newSidecarPath -Force -ErrorAction Stop
+            & $script:MediaToolsLogger "INFO" "Renamed sidecar: '$($sidecar.Name)' -> '$newSidecarName'"
+        } catch {
+            & $script:MediaToolsLogger "ERROR" "Failed to rename sidecar '$($sidecar.FullName)' to '$newSidecarPath': $_"
+        }
+    }
 }
 
 #===========================================================
@@ -1726,5 +2031,65 @@ function Get-MediaFileCategory {
     }
 }
 
-# Explicitly exported functions
-Export-ModuleMember -Function Convert-GeoTagToDecimal, Convert-GeoTagValueToDecimal, Convert-FilenameToTimestamp, Find-ValidGeotag, Find-ValidTimestamp, Format-GeoTag, Format-Timestamp, Get-ExifDataAsJson, Get-ExifGeotag, Get-ExifTimestamp, Get-FfprobeData, Get-FfprobeGeotag, Get-FfprobeTimestamp, Resolve-FieldByExtension, Get-JsonGeotag, Get-JsonTimestamp, Get-MediaFileCategory, Get-TimeZoneOffset, Invoke-ExifTool, Invoke-ExifToolProcess, Invoke-FfprobeProcess, Move-FileToDestination, Move-MediaFileByMetadata, New-DefaultGeoTag, New-DefaultTimestamp, New-GeoTagFromParts, Resolve-FileMetadata, Select-ValidGeotag, Select-ValidTimestamp, Set-Geotag, Set-MediaToolsLogger, Set-Timestamp, Test-GeoTag, Test-IsPhoto, Test-IsVideo, Test-Timestamp, Update-FileMetadata
+function New-DefaultMetadataObject {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$filepath
+    )
+
+    $normalized_path = ConvertTo-StandardPath -Path $filepath
+    $name = if (Test-Path $normalized_path) { Split-Path $normalized_path -Leaf } else { $null }
+    $size = if (Test-Path $normalized_path) { (Get-Item $normalized_path).Length } else { $null }
+
+    return [ordered]@{
+        name     = $name
+        hash     = $null
+        size     = $size
+        duration = $null
+        exif     = @()
+        filename = @()
+        ffprobe  = @()
+        json     = @()
+    }
+}
+
+Export-ModuleMember -Function `
+    Set-MediaToolsLogger, `
+    Clear-MediaToolsCache, `
+    Get-MediaFileCategory, `
+    Test-IsPhoto, `
+    Test-IsVideo, `
+    Get-ExifDataAsJson, `
+    Get-ExifTimestamp, `
+    Get-ExifGeotag, `
+    Get-FfprobeDataAsJSON, `
+    Get-FfprobeTimestamp, `
+    Get-FfprobeGeotag, `
+    Invoke-FfprobeProcess, `
+    Invoke-FFProbe, `
+    Get-FilenameTimestamp, `
+    Get-FilenameGeotag, `
+    Get-JsonTimestamp, `
+    Get-JsonGeotag, `
+    Format-Timestamp, `
+    Get-TimeZoneOffset, `
+    New-DefaultTimestamp, `
+    Select-ValidTimestamp, `
+    Test-Timestamp, `
+    Format-GeoTag, `
+    Convert-GeoTagValueToDecimal, `
+    Convert-GeoTagToDecimal, `
+    Get-LatitudeReference, `
+    Get-LongitudeReference, `
+    Resolve-DirectionString, `
+    Test-GeoTag, `
+    New-DefaultGeoTag, `
+    New-GeoTagFromParts, `
+    Find-ValidGeotag, `
+    Move-FileToDestination, `
+    Move-MediaFileByMetadata, `
+    Invoke-ExifTool, `
+    Invoke-ExifToolProcess, `
+    New-DefaultMetadataObject, `
+    Rename-SidecarFiles

@@ -1,35 +1,34 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$unzippedDirectory,
+    [Parameter(Mandatory=$true)]
     [string]$zippedDirectory,
+    [Parameter(Mandatory=$true)]
     [string]$extractor,
+    [Parameter(Mandatory=$true)]
     [string]$step
 )
 
+# --- Path Setup ---
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
 Import-Module $UtilFile -Force
+Import-Module $MediaToolsFile -Force
 
-# --- Logging Setup for this script ---
-# 1. Define the log file path
-$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+# --- Logging Setup ---
+$logDirectory = Join-Path $scriptDirectory "..\Logs"
+$Logger = Initialize-ScriptLogger -LogDirectory $logDirectory -ScriptName $scriptName -Step $step
+$Log = $Logger.Logger
 
-# 2. Get logging configuration from environment variables
-$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
 
-# 3. Create a local, pre-configured logger for this script
-$Log = {
-    param([string]$Level, [string]$Message)
-    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
-}
-
-# 4. Write initial log message to ensure file creation
 & $Log "INFO" "--- Script Started: $scriptName ---"
 
 # --- Robust Parameter Validation ---
@@ -53,12 +52,18 @@ if (-not (Test-Path -Path $extractor -PathType Leaf)) {
     exit 1
 }
 
+if ($unzippedDirectory -like '* *') {
+    & $Log "CRITICAL" "The configured output directory path for extraction ('$unzippedDirectory') contains spaces. This is not supported. Please use a path without spaces."
+    Stop-GraphicalProgressBar
+    exit 1
+}
+
 # Get all zip files in the directory.
 $zipFiles = Get-ChildItem -Path $zippedDirectory -recurse -Filter "*.zip" -File
 
 if ($null -eq $zipFiles -or $zipFiles.Count -eq 0) {
     & $Log "INFO" "No .zip files found in '$zippedDirectory'. Nothing to extract."
-    exit 0 # Exit gracefully
+ee3e6800-8f13-410f-864f-68b59ba97c43    exit 0 # Exit gracefully
 }
 
 $currentItem = 0
@@ -66,11 +71,20 @@ $totalItems = $zipFiles.count
 # Loop through each zip file and extract its contents.
 foreach ($zipFile in $zipFiles) {
     $currentItem++
-    Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Extracting: $($zipFile.Name)"
+    $percent = if ($totalItems -gt 0) { [int](($currentItem / $totalItems) * 100) } else { 100 }
+
+    Update-GraphicalProgressBar -SubTaskPercent $percent -SubTaskMessage  "Extracting: $($zipFile.Name)"
     try {
-        # Use -bsp1 to redirect progress output, and 2>&1 to capture stderr
-        $output = & "$extractor" x -aos "$zipFile" "-o$unzippedDirectory" -bsp1 2>&1
-        if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE. Output: $($output -join "`n")" }
+        # 7-Zip Arguments:
+        #   x: Extract with full paths
+        #   -aos: Skip Over Existing files (prevents re-extracting everything on a re-run)
+        #   -o: Set Output directory (no space between -o and path)
+        #   -bsp1: Redirect progress output to stdout for capture
+        $7zipArgs = "x", "-aos", $zipFile.FullName, "-o$unzippedDirectory", "-bsp1"
+        
+        # Execute 7-Zip and capture all output (stdout and stderr)
+        $output = & $extractor $7zipArgs 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "7-Zip failed with exit code $LASTEXITCODE. Output: $($output -join [System.Environment]::NewLine)" }
         & $Log "DEBUG" "Successfully extracted $($zipFile.FullName)"
     } catch {
         & $Log "ERROR" "Failed to extract '$($zipFile.FullName)'. Error: $_"

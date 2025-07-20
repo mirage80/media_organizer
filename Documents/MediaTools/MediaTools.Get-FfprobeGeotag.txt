@@ -13,17 +13,17 @@ Output Type:
 ❌ Throws an exception if the found location string is invalid and cannot be standardized.
 
 Algorithm:
-1. Call `Get-FfprobeData` to get the cached or fresh metadata for the file.
+1. Call `Get-FfprobeDataAsJSON` to get the cached or fresh metadata for the file.
 2. If no metadata is returned, return `$null`.
 3. Access the location tag from the metadata (checking both `com.apple.quicktime.location.ISO6709` and `location`).
 4. If the tag exists, pass its value directly to `Format-GeoTag` and return the result.
 5. If the tag does not exist, return `$null`.
 
 Function Calls:
-🔹 Get-FfprobeData
+🔹 Get-FfprobeDataAsJSON
 🔹 Format-GeoTag
 
 Possible Issues:
-* ✅ Covered: Leverages the high-performance caching of `Get-FfprobeData`.
+* ✅ Covered: Leverages the high-performance caching of `Get-FfprobeDataAsJSON`.
 * ✅ Covered: Ensures all output is in the module's canonical format by delegating parsing to `Format-GeoTag`.
 * ❌ Not Covered: This function specifically targets the `location` and `com.apple.quicktime.location.ISO6709` tags and will not find geotags stored in other ffprobe metadata tags.

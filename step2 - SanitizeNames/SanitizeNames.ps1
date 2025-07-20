@@ -1,38 +1,53 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$unzippedDirectory,
+    [Parameter(Mandatory=$true)]
     [string]$step
 )
 
+# --- Path Setup ---
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
+$MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
 Import-Module $UtilFile -Force
+Import-Module $MediaToolsFile -Force
 
-# --- Logging Setup for this script ---
-$childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
-$logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
-$consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-$fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+# --- Logging Setup ---
+$logDirectory = Join-Path $scriptDirectory "..\Logs"
+$Logger = Initialize-ScriptLogger -LogDirectory $logDirectory -ScriptName $scriptName -Step $step
+$Log = $Logger.Logger
 
-$Log = {
-    param([string]$Level, [string]$Message)
-    Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
-}
+# Inject logger for module functions
+Set-UtilsLogger -Logger $Log
+Set-MediaToolsLogger -Logger $Log
 
 & $Log "INFO" "--- Script Started: $scriptName ---"
 
 function Get-SanitizedName {
     param ([string]$Name)
+
+    # This list includes reserved names that are invalid as the base name of a file in Windows.
+    $reservedNames = 'CON', 'PRN', 'AUX', 'NUL', 'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9', 'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+
     # Allow word characters (alphanumeric + underscore), hyphen, and period. Replace others with underscore.
     $sanitized = $Name -replace '[^\w\-.]+', '_'
     # Collapse multiple underscores into one
     $sanitized = $sanitized -replace '__+','_'
     # Remove leading/trailing underscores AFTER collapsing
     $sanitized = $sanitized -replace '^_|_$',''
+
+    # Check if the resulting base name is a reserved system name.
+    $baseName = [System.IO.Path]::GetFileNameWithoutExtension($sanitized)
+    if ($reservedNames -icontains $baseName) {
+        $extension = [System.IO.Path]::GetExtension($sanitized)
+        # Prepend an underscore to the base name to make it valid.
+        $sanitized = "_$($baseName)$($extension)"
+    }
+
     return $sanitized
 }
 
@@ -167,9 +182,9 @@ function Use-ValidFilesRecursively {
 
     foreach ($file in $files) {
         $currentItem++
-        Show-ProgressBar -Current $currentItem -Total $totalItems -Message "Sanitizing file: $($file.Name)"
-        # Print progress for parent pipeline progress bar
-        Write-Output "$currentItem $totalItems Sanitizing file: $($file.Name)"
+        $percent = if ($totalItems -gt 0) { [int](($currentItem / $totalItems) * 100) } else { 100 }
+        # Update only the second-level progress bar with this step's specific progress
+        Update-GraphicalProgressBar -SubTaskPercent $percent -SubTaskMessage "Sanitizing Filename: $($file.Name)"
         Use-ValidFileName -FilePath $file.FullName
     }
 }

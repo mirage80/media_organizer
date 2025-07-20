@@ -1,0 +1,63 @@
+{
+  "settings": {
+    "enablePythonDebugging": true,
+    "logging": {
+      "defaultConsoleLevel": "ERROR",
+      "defaultFileLevel": "DEBUG"
+    },
+    "progressBar": {
+      "defaultPrefixLength": 15
+    }
+  },
+  "paths": {
+    "zipDirectory": "C:/Users/sawye/Downloads/test/input",
+    "unzippedDirectory": "C:/Users/sawye/Downloads/test/output",
+    "logDirectory": "C:/Users/sawye/Code/media_organizer/Logs",
+    "outputDirectory": "C:/Users/sawye/Code/media_organizer/Outputs",
+    "tools": {
+      "sevenZip": "C:/Program Files/7-Zip/7z.exe",
+      "exifTool": "C:/Program Files/exiftools/exiftool.exe",
+      "imageMagick": "C:/Program Files/ImageMagick-7.1.1-Q16-HDRI/magick.exe",
+      "python": "C:/Program Files/Python313/python.exe",
+      "ffmpeg": "C:/Program Files/ffmpeg/bin/ffmpeg.exe",
+      "ffprobe": "C:/Program Files/ffmpeg/bin/ffprobe.exe",
+      "vlc": "C:/Program Files/VideoLAN/VLC/vlc.exe"
+    }
+  },
+  "pipelineSteps": [
+    { "Name": "Initial File Count", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_1_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Extract Zip Files", "Type": "PowerShell", "Path": "step1 - Extract/Extract.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "zippedDirectory": "$zipDirectory", "extractor": "$sevenZip" }, "Enabled": true },
+    { "Name": "File Count After Extract", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_3_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Sanitize Names", "Type": "PowerShell", "Path": "step2 - SanitizeNames/SanitizeNames.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory" }, "Enabled": true },
+    { "Name": "File Count After Sanitize", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_5_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Map Google Photos JSON Data", "Type": "PowerShell", "Path": "step3 - MapGoogleJson/MapGoogleJson.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory" }, "Enabled": true },
+    { "Name": "File Count After JSON-Mapping", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_7_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Convert Media to Standard Formats", "Type": "PowerShell", "Path": "step4 - converter/converter.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "ffmpeg": "$ffmpeg", "magickPath": "$imageMagick" }, "Enabled": true },
+    { "Name": "File Count After Conversion", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_9_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Expand Metadata with EXIF/FFprobe", "Type": "PowerShell", "Path": "step5 - ExpandMetaData/ExpandMetadata.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "ExifToolPath": "$exifTool", "ffprobe": "$ffprobe" }, "Enabled": true },
+    { "Name": "File Count After Metadata Expansion", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_11_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Remove Recycle Bin", "Type": "PowerShell", "Path": "step6 - Remove_RecycleBin/RemoveRecycleBin.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory" }, "Enabled": true },
+    { "Name": "File Count After Recycle-Removal", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_13_filereport.txt", "$unzippedDirectory"], "Enabled": true },
+    { "Name": "Hash/Group Video Duplicates", "Type": "Python", "Path": "step7 - HashAndGroup/HashANDGroupPossibleVideoDuplicates.py", "Args": ["$unzippedDirectory"], "Enabled": true },
+    { "Name": "Hash/Group Image Duplicates", "Type": "Python", "Path": "step7 - HashAndGroup/HashANDGroupPossibleImageDuplicates.py", "Args": ["$unzippedDirectory"], "Enabled": false },
+    { "Name": "File Count After Hashing", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_16_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Consolidate Best Metadata", "Type": "PowerShell", "Path": "step8 - Consolidate_Meta/Consolidate_Meta.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "ExifToolPath": "$exifTool", "ffprobe": "$ffprobe" }, "Enabled": false },
+    { "Name": "File Count After Meta Consolidation", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_18_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Remove Exact Video Duplicates", "Type": "Python", "Path": "step9 - RemoveExactDuplicates/RemoveExactVideoDuplicate.py", "Args": [], "Enabled": false },
+    { "Name": "Remove Exact Image Duplicates", "Type": "Python", "Path": "step9 - RemoveExactDuplicates/RemoveExactImageDuplicate.py", "Args": [], "Enabled": false },
+    { "Name": "File Count After Exact-Dup-Removal", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_21_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Review/Remove Potential Video Duplicates", "Type": "Python", "Path": "step10 - ShowANDRemoveDuplicate/ShowANDRemoveDuplicateVideo.py", "Enabled": false },
+    { "Name": "Review/Remove Potential Image Duplicates", "Type": "Python", "Path": "step10 - ShowANDRemoveDuplicate/ShowANDRemoveDuplicateImage.py", "Enabled": false },
+    { "Name": "File Count After Potential-Dup-Removal", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_24_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Remove Junk Videos", "Type": "Python", "Path": "step11 - RemoveJunk/RemoveJunkVideo.py", "Args": ["$unzippedDirectory"], "Enabled": false },
+    { "Name": "Remove Junk Images", "Type": "Python", "Path": "step11 - RemoveJunk/RemoveJunkImage.py", "Args": ["$unzippedDirectory"], "Enabled": false },
+    { "Name": "File Count After Junk-Removal", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_27_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Reconstruct Corrupt Videos", "Type": "PowerShell", "Path": "Step12 - Reconstruction/VideoReconstruction.ps1", "Args": { "vlcpath": "$vlc", "reconstructListPath": "$outputDirectory/video_reconstruct_info.json", "ffmpeg": "$ffmpeg", "ffprobe": "$ffprobe" }, "Enabled": false },
+    { "Name": "Reconstruct Corrupt Images", "Type": "PowerShell", "Path": "Step12 - Reconstruction/ImageReconstruction.ps1", "Args": { "magickPath": "$imageMagick", "reconstructListPath": "$outputDirectory/image_reconstruct_info.json" }, "Enabled": false },
+    { "Name": "File Count After Reconstruction", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_30_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Categorize Files", "Type": "PowerShell", "Path": "step13 - Categorization/Categorize.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "ExifToolPath": "$exifTool" }, "Enabled": false },
+    { "Name": "File Count After Categorization", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_32_filereport.txt", "$unzippedDirectory"], "Enabled": false },
+    { "Name": "Estimate Location By Time", "Type": "PowerShell", "Path": "step14  - Estimate By Time/EstimateByTime.ps1", "Args": { "unzippedDirectory": "$unzippedDirectory", "ExifToolPath": "$exifTool" }, "Enabled": false },
+    { "Name": "Final File Count", "Type": "Python", "Path": "Step0 - Tools/counter/counter.py", "Args": ["$logDirectory/Step_34_filereport.txt", "$unzippedDirectory"], "Enabled": false }
+  ]
+}

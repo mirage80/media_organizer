@@ -1,0 +1,31 @@
+Function Name: Show-GraphicalProgressBar
+
+Inputs:
+1. [string] $Title (optional, default = "Progress"): Window title text
+2. [switch] $EnableSecondLevel (optional): Enables the display of second-level progress bar and labels
+
+Output:
+✅ No return value (void)
+
+Algorithm:
+1. Check if a global form instance $global:ProgressForm exists and is not disposed
+    - If exists, bring it to front and return
+2. Load System.Windows.Forms assembly if not already loaded
+3. Create a new Windows Form with:
+    - Title = $Title
+    - Width = 500
+    - Height = 170 if $EnableSecondLevel is set, else 110
+    - Fixed dialog style, no maximize/minimize buttons
+    - Center screen, always on top
+4. Create an overall progress bar and label, add to form
+5. If $EnableSecondLevel is set:
+    - Create second-level progress bar and subtask label, add to form
+    - Save references in global variables $global:StepProgressBar and $global:SubTaskLabel
+6. Else clear second-level global variables
+7. Store references to form, overall progress bar, and step label in globals
+8. Show the form non-modally and call Application.DoEvents to process UI events
+
+Possible Issues:
+✅ Multiple calls without closing form will reuse the same window
+✅ Must run in STA thread for Windows Forms UI to function correctly
+✅ UI freeze if called from non-UI thread without proper synchronization

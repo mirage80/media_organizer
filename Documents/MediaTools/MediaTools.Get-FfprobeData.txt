@@ -1,4 +1,4 @@
-📹 MediaTools.Get-FfprobeData Function Documentation
+📹 MediaTools.Get-FfprobeDataAsJSON Function Documentation
 
 Description:
 A high-performance, caching wrapper for ffprobe. It retrieves all format and stream metadata for a given file. It checks a session-level cache first; if the data is present, it returns it instantly. Otherwise, it calls `Invoke_FfprobeProcess` to get the data, caches it, and then returns it.

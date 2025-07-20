@@ -13,14 +13,14 @@ Output Type:
 ❌ Throws an exception if the found timestamp string is invalid and cannot be standardized.
 
 Algorithm:
-1. Call `Get-FfprobeData` to get the cached or fresh metadata for the file.
+1. Call `Get-FfprobeDataAsJSON` to get the cached or fresh metadata for the file.
 2. If no metadata is returned, return `$null`.
 3. Access the `creation_time` tag from the metadata (`metadata.format.tags.creation_time`).
 4. If the tag exists, pass its value to `Format-Timestamp` and return the result.
 5. If the tag does not exist, return `$null`.
 
 Function Calls:
-🔹 Get-FfprobeData
+🔹 Get-FfprobeDataAsJSON
 🔹 Format-Timestamp
 
 Possible Issues:

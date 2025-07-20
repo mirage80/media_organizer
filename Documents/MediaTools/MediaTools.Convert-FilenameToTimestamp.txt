@@ -1,4 +1,4 @@
-📁 MediaTools.Convert-FilenameToTimestamp Function Documentation
+📁 MediaTools.Get-FilenameTimestamp Function Documentation
 
 Description:
 Extracts a timestamp from a file's name by matching against common embedded date/time patterns. If a valid pattern is found, it converts the substring to a [DateTime] object. Returns $null if no match or parsing fails.

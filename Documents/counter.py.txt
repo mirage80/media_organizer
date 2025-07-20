@@ -1,0 +1,37 @@
+counter.py Function Documentation
+
+Description:
+Recursively counts files by their extensions within a specified root directory and writes the results to a JSON file.
+
+Input Type:
+1. root_dir [str] — The root directory path to scan for files.
+
+Output Type:
+✅ [dict[str, int]] — A dictionary mapping file extensions to their counts, or None on error.
+
+Algorithm (Pseudo-code):
+1. Initialize an empty dictionary for extension counts and a counter for files processed.
+2. Walk the directory tree starting at root_dir using os.walk.
+3. For each file encountered:
+    a. Extract the file extension using os.path.splitext.
+    b. Normalize the extension to lowercase or assign "no_extension" if none.
+    c. Increment the count for that extension.
+    d. Optionally log progress per directory or per number of files processed.
+4. Log the total files processed and the number of unique extensions found.
+5. Return the dictionary of extension counts.
+6. Handle FileNotFoundError and general exceptions by logging and returning None.
+7. In the main block:
+    a. Parse command-line arguments for output file path and root directory.
+    b. Call the counting function.
+    c. If successful, write the counts dictionary to the output file in JSON format.
+    d. Log success or failure accordingly.
+
+Function Calls:
+None (except standard library functions and logging utilities)
+
+Possible Issues:
+✅ Covered: Handles files without extensions.
+✅ Covered: Uses case-insensitive extension matching.
+❌ Not Covered: Symbolic links handling.
+❌ Not Covered: Performance optimizations for extremely large directories.
+❌ Not Covered: Permission errors on some directories or files.

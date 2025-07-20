@@ -8,20 +8,30 @@ param(
 $scriptDirectory = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
 
-#Utils Dirctory
+# Outputs Directory
+$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
+$metaPath = Join-Path $OutputDirectory "Consolidate_Meta_Results.json"
+
+# Utils Directory
 $UtilDirectory = Join-Path $scriptDirectory "..\Utils"
 $UtilFile = Join-Path $UtilDirectory "Utils.psm1"
 Import-Module $UtilFile -Force
 
-# --- Import Modules ---
+# --- Logging Setup for this script ---
+# 1. Define the log file path
 $MediaToolsFile = Join-Path $UtilDirectory 'MediaTools.psm1'
 Import-Module $MediaToolsFile -Force
 
-# --- Logging Setup ---
+# --- Logging Setup for this script ---
+# 1. Define the log file path
 $childLogFilePath = Join-Path "$scriptDirectory\..\Logs" -ChildPath $("Step_$step" + "_" + "$scriptName.log")
+
+# 2. Get logging configuration from environment variables
 $logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
 $consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
 $fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
+
+# 3. Create a local, pre-configured logger for this script
 $Log = {
     param([string]$Level, [string]$Message)
     Write-Log -Level $Level -Message $Message -LogFilePath $childLogFilePath -ConsoleLogLevel $consoleLogLevel -FileLogLevel $fileLogLevel -LogLevelMap $logLevelMap
@@ -32,11 +42,11 @@ $Log = {
 # Inject logger for module functions
 Set-UtilsLogger -Logger $Log
 Set-MediaToolsLogger -Logger $Log
-& $Log "INFO" "Starting media categorization based on consolidated metadata."
+
+# 4. Write initial log message to ensure file creation
+& $Log "INFO" "--- Script Started: $scriptName ---"
 
 # --- Load the consolidated metadata file which is our source of truth ---
-$OutputDirectory = Join-Path $scriptDirectory "..\Outputs"
-$metaPath = Join-Path $OutputDirectory "Consolidate_Meta_Results.json"
 if (-not (Test-Path $metaPath)) {
     & $Log "CRITICAL" "Consolidated metadata file not found at '$metaPath'. This script must run after 'Consolidate_Meta'."
     exit 1
@@ -122,7 +132,7 @@ foreach ($filePath in $allPaths) {
 # --- Wait for jobs and show progress ---
 while ($jobs.IsCompleted -contains $false) {
     $completedCount = ($jobs | Where-Object { $_.IsCompleted }).Count
-    Show-ProgressBar -Current $completedCount -Total $totalItems -Message "Categorizing Files"
+   Show-GraphicalProgressBar -Current $completedCount -Total $totalItems -Message "Categorizing Files"
     Start-Sleep -Milliseconds 200
 }
 

@@ -90,61 +90,65 @@ def restore_json_files(image_info_backup, image_info_file, image_grouping_backup
 
 def setup_logging(base_dir, script_name, console_level_env="DEDUPLICATOR_CONSOLE_LOG_LEVEL", 
                   file_level_env="DEDUPLICATOR_FILE_LOG_LEVEL", default_console_level_str="INFO", 
-                  default_file_level_str="DEBUG"):	
-	# 1. Define a map from level names (strings) to logging constants
-	LOG_LEVEL_MAP = {
-		'DEBUG': logging.DEBUG,
-		'INFO': logging.INFO,
-		'WARNING': logging.WARNING,
-		'ERROR': logging.ERROR,
-		'CRITICAL': logging.CRITICAL
-	}
-	
-	# 2. Define default levels (used if env var not set or invalid)
-	DEFAULT_CONSOLE_LOG_LEVEL_STR = default_console_level_str
-	DEFAULT_FILE_LOG_LEVEL_STR = default_file_level_str
-	
-	# 3. Read environment variables, get level string (provide default string)
-	console_log_level_str = os.getenv(console_level_env, DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
-	file_log_level_str = os.getenv(file_level_env, DEFAULT_FILE_LOG_LEVEL_STR).upper()
-	
-	# 4. Look up the actual logging level constant from the map (provide default constant)
-	#    Use .get() for safe lookup, falling back to default if the string is not a valid key
-	CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
-	FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
-	
-	# --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
-	LOGGING_DIR = os.path.join(base_dir, "Logs")
-	LOGGING_FILE = os.path.join(LOGGING_DIR, f"{script_name}.log")
-	LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-	
-	# Ensure log folder exists
-	os.makedirs(LOGGING_DIR, exist_ok=True)
-	
-	formatter = logging.Formatter(LOGGING_FORMAT)
-	
-	# --- File Handler ---
-	log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
-	log_handler.setFormatter(formatter)
-	log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
-	
-	# --- Console Handler ---
-	console_handler = logging.StreamHandler()
-	console_handler.setFormatter(formatter)
-	console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
-	
-	# --- Configure Root Logger ---
-	root_logger = logging.getLogger()
-	# Set root logger level to the *lowest* of the handlers to allow all messages through
-	root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
-	
-	# --- Add Handlers ---
-	if not root_logger.hasHandlers():
-		root_logger.addHandler(log_handler)
-		root_logger.addHandler(console_handler)
-	
-	# --- Get your specific logger ---
-	return logging.getLogger(script_name)
+                  default_file_level_str="DEBUG"):
+    # 1. Define a map from level names (strings) to logging constants
+    LOG_LEVEL_MAP = {
+        'DEBUG': logging.DEBUG,
+        'INFO': logging.INFO,
+        'WARNING': logging.WARNING,
+        'ERROR': logging.ERROR,
+        'CRITICAL': logging.CRITICAL
+    }
+    
+    # 2. Define default levels (used if env var not set or invalid)
+    DEFAULT_CONSOLE_LOG_LEVEL_STR = default_console_level_str
+    DEFAULT_FILE_LOG_LEVEL_STR = default_file_level_str
+    
+    # 3. Read environment variables, get level string (provide default string)
+    console_log_level_str = os.getenv(console_level_env, DEFAULT_CONSOLE_LOG_LEVEL_STR).upper()
+    file_log_level_str = os.getenv(file_level_env, DEFAULT_FILE_LOG_LEVEL_STR).upper()
+    
+    # 4. Look up the actual logging level constant from the map (provide default constant)
+    #    Use .get() for safe lookup, falling back to default if the string is not a valid key
+    CONSOLE_LOG_LEVEL = LOG_LEVEL_MAP.get(console_log_level_str, LOG_LEVEL_MAP[DEFAULT_CONSOLE_LOG_LEVEL_STR])
+    FILE_LOG_LEVEL = LOG_LEVEL_MAP.get(file_log_level_str, LOG_LEVEL_MAP[DEFAULT_FILE_LOG_LEVEL_STR])
+    
+    # --- Now use CONSOLE_LOG_LEVEL and FILE_LOG_LEVEL as before ---
+    LOGGING_DIR = os.path.join(base_dir, "Logs")
+    LOGGING_FILE = os.path.join(LOGGING_DIR, f"{script_name}.log")
+    LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+
+    # --- Delete existing file if it exists ---
+    if os.path.exists(LOGGING_FILE):
+        os.remove(LOGGING_FILE) # Remove the file if it exists 
+    
+    # Ensure log folder exists
+    os.makedirs(LOGGING_DIR, exist_ok=True)
+    
+    formatter = logging.Formatter(LOGGING_FORMAT)
+    
+    # --- File Handler ---
+    log_handler = logging.FileHandler(LOGGING_FILE, encoding='utf-8')
+    log_handler.setFormatter(formatter)
+    log_handler.setLevel(FILE_LOG_LEVEL) # Uses level derived from env var or default
+    
+    # --- Console Handler ---
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(CONSOLE_LOG_LEVEL) # Uses level derived from env var or default
+    
+    # --- Configure Root Logger ---
+    root_logger = logging.getLogger()
+    # Set root logger level to the *lowest* of the handlers to allow all messages through
+    root_logger.setLevel(min(CONSOLE_LOG_LEVEL, FILE_LOG_LEVEL))
+    
+    # --- Add Handlers ---
+    if not root_logger.hasHandlers():
+        root_logger.addHandler(log_handler)
+        root_logger.addHandler(console_handler)
+    
+    # --- Get your specific logger ---
+    return logging.getLogger(script_name)
     
 # --- Graphical Progress Bar ---
 _progress_bar_window = None
