@@ -1255,6 +1255,35 @@ function Get-FfprobeGeotag {
     return $null # Return null if no valid geotag was found
 }
 
+function Get-FfprobeRotation {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory = $true)]
+        [System.IO.FileInfo]$File
+    )
+    $metadata = Get-FfprobeDataAsJSON -File $File
+    if (-not $metadata) { return 0 } # Return 0 if no metadata
+
+    try {
+        # Find the first video stream
+        $videoStream = $metadata.streams | Where-Object { $_.codec_type -eq 'video' } | Select-Object -First 1
+
+        if ($videoStream) {
+            # Primary location: 'rotate' tag in the video stream
+            if ($videoStream.tags -and $videoStream.tags.PSObject.Properties['rotate']) {
+                $rotation = $videoStream.tags.rotate
+                & $script:MediaToolsLogger "DEBUG" "Found rotation '$rotation' in video stream tags for '$($File.Name)'."
+                return [int]$rotation
+            }
+        }
+    } catch {
+        & $script:MediaToolsLogger "WARNING" "Could not parse ffprobe JSON or find rotation for '$($File.Name)'. Error: $($_.Exception.Message)"
+    }
+
+    & $script:MediaToolsLogger "DEBUG" "No rotation metadata found for '$($File.Name)'. Returning 0."
+    return 0 # Return 0 if no rotation tag is found
+}
+
 function Set-Timestamp {
     param (
         [System.IO.FileInfo]$File,
@@ -2065,6 +2094,7 @@ Export-ModuleMember -Function `
     Get-ExifGeotag, `
     Get-FfprobeDataAsJSON, `
     Get-FfprobeTimestamp, `
+    Get-FfprobeRotation, `
     Get-FfprobeGeotag, `
     Invoke-FfprobeProcess, `
     Invoke-FFProbe, `

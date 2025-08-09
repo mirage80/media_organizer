@@ -18,14 +18,14 @@ PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-from Utils import utils # Import the utils module
+from Utils import utils, mediatools
 
 # --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
 DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
 DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
 CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
-logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step_" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 # Use PROJECT_ROOT to build paths relative to the project root
@@ -92,47 +92,6 @@ class JunkImageReviewer:
             logger.warning(f"Removed {removed_count} entries for media that no longer exist on disk (likely from a previous crash).")
             utils.write_json_atomic(self.media_info_data, IMAGE_INFO_FILE, logger=logger)
 
-        # New: Helper functions for moving/restoring files
-        def move_file_to_delete_folder(file_path):
-            """Moves a single file to the DELETE_DIR, handling name conflicts.
-            Returns a dict {original_path: new_path} if successful, or None if failed."""
-            os.makedirs(DELETE_DIR, exist_ok=True)
-            if not os.path.exists(file_path):
-                logger.warning(f"Cannot move file, source does not exist: {file_path}")
-                return None
-            try:
-                filename = os.path.basename(file_path)
-                dest_path = os.path.join(DELETE_DIR, filename)
-
-                # Handle potential name conflicts by adding a suffix
-                if os.path.exists(dest_path):
-                    base, ext = os.path.splitext(filename)
-                    i = 1
-                    while os.path.exists(dest_path):
-                        dest_path = os.path.join(DELETE_DIR, f"{base}_{i}{ext}")
-                        i += 1
-
-                os.rename(file_path, dest_path)
-                logger.info(f"Moved to delete folder: {file_path} -> {dest_path}")
-                return {file_path: dest_path}
-            except Exception as e:
-                logger.error(f"Failed to move file {file_path} to delete folder: {e}")
-                return None
-
-        def restore_from_delete_folder(moved_map):
-            """Restores files from the DELETE_DIR back to their original locations."""
-            for original_path, deleted_path in moved_map.items():
-                if not os.path.exists(deleted_path):
-                    logger.warning(f"Cannot restore, deleted file not found: {deleted_path}")
-                    continue
-                try:
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True) # Ensure destination directory exists
-                    os.rename(deleted_path, original_path)
-                    logger.info(f"Restored file: {deleted_path} -> {original_path}")
-                except Exception as e:
-                    logger.error(f"Failed to restore file {deleted_path} to {original_path}: {e}")
-        self.move_file_to_delete_folder = move_file_to_delete_folder # Make available to instance
-        self.restore_from_delete_folder = restore_from_delete_folder # Make available to instance
         self.setup_ui()
         self.show_page()
 
@@ -369,7 +328,7 @@ class JunkImageReviewer:
         # --- Deletion Logic (move to delete folder) ---
         deleted_count = 0
         for path in paths_to_delete:
-            moved_info = self.move_file_to_delete_folder(path) # Call the new helper
+            moved_info = mediatools.move_file_to_delete_folder(path) # Call the new helper
             if moved_info:
                 current_page_moved_map.update(moved_info)
                 deleted_count += 1
@@ -435,7 +394,7 @@ class JunkImageReviewer:
         # Restore files from delete folder
         moved_map = state_to_restore.get("current_page_moved_map", {})
         if moved_map:
-            self.restore_from_delete_folder(moved_map)
+            mediatools.restore_from_delete_folder(moved_map)
 
         # Restore media_info_data and processed_media
         self.media_info_data = state_to_restore["previous_media_info_data"]

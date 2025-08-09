@@ -413,5 +413,17 @@ function Convert-HashtableToStringKey {
     return $newHashtable
 }
 
+function Send-ProgressBarToBack {
+    if ($global:ProgressForm -and -not $global:ProgressForm.IsDisposed) {
+        $global:ProgressForm.TopMost = $false
+    }
+}
+
+function Bring-ProgressBarToFront {
+    if ($global:ProgressForm -and -not $global:ProgressForm.IsDisposed) {
+        $global:ProgressForm.TopMost = $true
+    }
+}
+
 # Export all public functions from this module.
-Export-ModuleMember -Function Write-Log, Show-ProgressBar, Stop-GraphicalProgressBar, Show-GraphicalProgressBar, Update-GraphicalProgressBar, Stop-GraphicalProgressBar, Write-JsonAtomic, Set-UtilsLogger, ConvertTo-StandardPath, Initialize-ScriptLogger, Convert-HashtableToStringKey
+Export-ModuleMember -Function Write-Log, Show-ProgressBar, Stop-GraphicalProgressBar, Show-GraphicalProgressBar, Update-GraphicalProgressBar, Write-JsonAtomic, Set-UtilsLogger, ConvertTo-StandardPath, Initialize-ScriptLogger, Convert-HashtableToStringKey, Send-ProgressBarToBack, Bring-ProgressBarToFront

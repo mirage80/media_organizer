@@ -10,6 +10,8 @@ import sys
 import subprocess
 import threading
 import math
+import copy
+
 
 try:
     from ffpyplayer.player import MediaPlayer
@@ -28,14 +30,14 @@ PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 if PROJECT_ROOT_DIR not in sys.path:
     sys.path.append(PROJECT_ROOT_DIR)
 
-from Utils import utils # Import the utils module
+from Utils import utils, mediatools
 
 # --- Setup Logging using utils ---
 # Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'warning')
-DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'warning')
+DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'WARNING')
+DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'WARNING')
 CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
-logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step_" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 # Use PROJECT_ROOT to build paths relative to the project root
@@ -44,7 +46,7 @@ OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
 DELETE_DIR = os.path.join(OUTPUT_DIR, "delete") # New: Define DELETE_DIR
 
 # Paths
-VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "video_info.json")
+VIDEO_INFO_FILE = os.path.join(OUTPUT_DIR, "Consolidate_Meta_Results.json")
 RECONSTRUCT_INFO_FILE = os.path.join(OUTPUT_DIR, "video_reconstruct_info.json") # Changed filename
 
 class JunkVideoReviewer:
@@ -89,65 +91,23 @@ class JunkVideoReviewer:
         # Filter out already processed media ONCE at startup
         if self.processed_media:
             processed_set = set(self.processed_media)
-            self.media_info_data = [ # Filter out already processed media ONCE at startup
-                v for v in self.media_info_data if v['path'] not in processed_set
-            ]
+            self.media_info_data = {
+                path: meta for path, meta in self.media_info_data.items()
+                if path not in processed_set and path.lower().endswith(".mp4")
+            }
 
         # Verify that all media in the list still exist on disk to handle crash recovery
         original_count = len(self.media_info_data)
-        self.media_info_data = [
-            v for v in self.media_info_data if os.path.exists(v['path'])
-        ]
+        self.media_info_data = {
+            path: meta for path, meta in self.media_info_data.items()
+            if os.path.exists(path)
+        }
         new_count = len(self.media_info_data)
 
         if new_count < original_count:
             removed_count = original_count - new_count
             logger.warning(f"Removed {removed_count} entries for media that no longer exist on disk (likely from a previous crash).")
             utils.write_json_atomic(self.media_info_data, VIDEO_INFO_FILE, logger=logger)
-
-        # New: Helper functions for moving/restoring files
-        def move_file_to_delete_folder(file_path):
-            """Moves a single file to the DELETE_DIR, handling name conflicts.
-            Returns a dict {original_path: new_path} if successful, or None if failed."""
-            os.makedirs(DELETE_DIR, exist_ok=True)
-            if not os.path.exists(file_path):
-                logger.warning(f"Cannot move file, source does not exist: {file_path}")
-                return None
-            try:
-                filename = os.path.basename(file_path)
-                dest_path = os.path.join(DELETE_DIR, filename)
-
-                # Handle potential name conflicts by adding a suffix
-                if os.path.exists(dest_path):
-                    base, ext = os.path.splitext(filename)
-                    i = 1
-                    while os.path.exists(dest_path):
-                        dest_path = os.path.join(DELETE_DIR, f"{base}_{i}{ext}")
-                        i += 1
-
-                os.rename(file_path, dest_path)
-                logger.info(f"Moved to delete folder: {file_path} -> {dest_path}")
-                return {file_path: dest_path}
-            except Exception as e:
-                logger.error(f"Failed to move file {file_path} to delete folder: {e}")
-                return None
-
-        def restore_from_delete_folder(moved_map):
-            """Restores files from the DELETE_DIR back to their original locations."""
-            for original_path, deleted_path in moved_map.items():
-                if not os.path.exists(deleted_path):
-                    logger.warning(f"Cannot restore, deleted file not found: {deleted_path}")
-                    continue
-                try:
-                    os.makedirs(os.path.dirname(original_path), exist_ok=True) # Ensure destination directory exists
-                    os.rename(deleted_path, original_path)
-                    logger.info(f"Restored file: {deleted_path} -> {original_path}")
-                except Exception as e:
-                    logger.error(f"Failed to restore file {deleted_path} to {original_path}: {e}")
-        self.move_file_to_delete_folder = move_file_to_delete_folder # Make available to instance
-        self.restore_from_delete_folder = restore_from_delete_folder # Make available to instance
-        self.setup_ui()
-        self.show_page()
 
     def load_reconstruct_info(self):
         """Loads the list of media that need reconstruction."""
@@ -248,9 +208,10 @@ class JunkVideoReviewer:
         self.status_label.config(text=f"Showing Media {start_index + 1}-{end_index} of {total_remaining_media} remaining. (Processed: {processed_count})")
 
         # Populate grid with placeholders
+        paths = list(self.media_info_data.keys())
         for i in range(start_index, end_index):
-            item_data = self.media_info_data[i]
-            path = item_data["path"]
+            path = paths[i]
+            meta = self.media_info_data[path]
             grid_pos = i - start_index
             row, col = divmod(grid_pos, self.grid_cols)
             cell_frame = ttk.Frame(self.content_frame, relief="groove", borderwidth=1)
@@ -464,7 +425,7 @@ class JunkVideoReviewer:
         paths_to_keep = all_page_paths - paths_to_delete
 
         # New: Store state for undo
-        previous_media_info_data = [item.copy() for item in self.media_info_data] # Deep copy
+        previous_media_info_data = copy.deepcopy(self.media_info_data)
         previous_processed_media = self.processed_media[:] # Shallow copy is fine for list of strings
 
         current_page_moved_map = {} # To store all moves for this page
@@ -472,7 +433,7 @@ class JunkVideoReviewer:
         # --- Deletion Logic (move to delete folder) ---
         deleted_count = 0
         for path in paths_to_delete:
-            moved_info = self.move_file_to_delete_folder(path) # Call the new helper
+            moved_info = mediatools.move_file_to_delete_folder(path) # Call the new helper
             if moved_info:
                 current_page_moved_map.update(moved_info)
                 deleted_count += 1
@@ -489,7 +450,11 @@ class JunkVideoReviewer:
 
         # Update the main data list by filtering out ALL items from this page
         if all_page_paths:
-            self.media_info_data = [item for item in self.media_info_data if item['path'] not in all_page_paths]
+            self.media_info_data = {
+                path: meta for path, meta in self.media_info_data.items()
+                if path not in all_page_paths
+            }
+
         self.save_state() # Save the updated media_info_data list
 
         # New: Push current state to trace_stack for undo
@@ -510,7 +475,7 @@ class JunkVideoReviewer:
             logger.info(f"Marked for reconstruction: {media_path}")
 
             # Remove the item from the main data list so it no longer appears in the grid
-            self.media_info_data = [item for item in self.media_info_data if item['path'] != media_path]
+            self.media_info_data.pop(media_path, None)
 
             # Save state immediately to persist the change
             self.save_state()
@@ -538,10 +503,14 @@ class JunkVideoReviewer:
         # Restore files from delete folder
         moved_map = state_to_restore.get("current_page_moved_map", {})
         if moved_map:
-            self.restore_from_delete_folder(moved_map)
+            mediatools.restore_from_delete_folder(moved_map)
 
         # Restore media_info_data and processed_media
-        self.media_info_data = state_to_restore["previous_media_info_data"]
+        self.media_info_data = {
+            path: meta for path, meta in state_to_restore["previous_media_info_data"].items()
+            if path.lower().endswith(".mp4")
+        }
+
         self.processed_media = state_to_restore["previous_processed_media"]
         self.current_page = state_to_restore["current_page_index"] # Go back to the page that was processed
 
@@ -572,6 +541,17 @@ class JunkVideoReviewer:
     def update_thumbnail_image(self, media_path, label, is_selected=None):
         """Loads a video thumbnail and applies a watermark if selected. Robust version."""
         try:
+            rotation = 0
+            if media_path in self.media_info_data and self.media_info_data[media_path]:
+                # Safely get the rotation value, defaulting to 0 if not found or None
+                ffprobe_meta = self.media_info_data[media_path].get('ffprobe', {})
+                rotation_val = ffprobe_meta.get('rotation') if ffprobe_meta else None
+                if rotation_val is not None:
+                    try:
+                        rotation = int(rotation_val)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Could not parse rotation value '{rotation_val}' for {media_path}. Defaulting to 0.")
+                        rotation = 0
             target_w = label.winfo_width()
             target_h = label.winfo_height()
 
@@ -594,6 +574,8 @@ class JunkVideoReviewer:
 
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
+            if rotation != 0:
+                img = img.rotate(-rotation, expand=True)
             img.thumbnail((target_w, target_h), Image.Resampling.LANCZOS)
 
             # --- Watermark Logic ---
@@ -1007,6 +989,11 @@ if __name__ == "__main__":
         media_data = json.load(f) # Load the media data from the JSON file
 
     root = tk.Tk()
-    app = JunkVideoReviewer(root, media_data) # Pass the loaded data to the reviewer class
+    video_only_data = {
+        path: meta for path, meta in media_data.items()
+        if path.lower().endswith(".mp4")
+    }
+    app = JunkVideoReviewer(root, video_only_data)
+
     root.mainloop()
     logger.info("Application finished.")

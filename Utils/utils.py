@@ -1,12 +1,29 @@
 import os
 import json
 import logging
+import math
 from math import radians, cos, sin, asin, sqrt
 from datetime import datetime # Needed for parse_timestamp
 import shutil # Needed for show_progress_bar
 import tempfile # Needed for write_json_atomic
 import tkinter as tk
 from tkinter import ttk
+import logging
+logger = logging.getLogger(__name__)
+
+# --- Graphical Progress Bar ---
+_progress_bar_window = None
+_progress_bar_widget = None
+_progress_bar_root = None # Hidden root for Toplevel
+_progress_bar_style = None # To hold the custom style
+_test_window_width = 800 # Width of the progress bar window
+_test_window_height = 600 # Height of the progress bar
+
+DECORATION_BORDER_SIZE = 5
+DEFAULT_BORDER = 0
+DEFAULT_TITLEBAR = 0
+DEFAULT_SCROLLBAR_WIDTH = 15
+BUTTONS_FRAME_HEIGHT = 30
 
 def write_json_atomic(data, path, logger):
     dir_name = os.path.dirname(path)
@@ -22,71 +39,105 @@ def write_json_atomic(data, path, logger):
             os.remove(temp_path)
         return False
 
-# In Utils/utils.py
-
-def delete_files(discarded, logger, base_dir):
+def move_to_delete_folder(paths_to_move, delete_dir, logger):
     """
-    Moves files to a .deleted directory within the base_dir.
-    Returns the number of files successfully moved.
+    Moves files to the specified delete_dir, handling name conflicts.
+    Returns a map of {original_path: new_path} for moved files.
     """
-    deleted_dir = os.path.join(base_dir, ".deleted")
-    os.makedirs(deleted_dir, exist_ok=True)
-    successful_moves = 0 # Initialize counter
-    failed_moves = []    # Keep track of failures
-
-    for f in discarded:
-        if not os.path.exists(f): # Skip if file doesn't exist before trying to move
-            logger.warning(f"⚠️ File not found, cannot move to .deleted: {f}")
+    os.makedirs(delete_dir, exist_ok=True)
+    moved_map = {} # original_path -> new_path
+    for src_path in paths_to_move:
+        if not os.path.exists(src_path):
+            logger.warning(f"Cannot move file, source does not exist: {src_path}")
             continue
         try:
-            destination = os.path.join(deleted_dir, os.path.basename(f))
-            # Handle potential name collisions in .deleted (optional but safer)
-            counter = 1
-            base, ext = os.path.splitext(destination)
-            while os.path.exists(destination):
-                destination = f"{base}_{counter}{ext}"
-                counter += 1
+            filename = os.path.basename(src_path)
+            dest_path = os.path.join(delete_dir, filename)
 
-            os.rename(f, destination)
-            successful_moves += 1 # Increment on success
+            # Handle potential name conflicts by adding a suffix
+            if os.path.exists(dest_path):
+                base, ext = os.path.splitext(filename)
+                i = 1
+                while os.path.exists(dest_path):
+                    dest_path = os.path.join(delete_dir, f"{base}_{i}{ext}")
+                    i += 1
+
+            os.rename(src_path, dest_path)
+            logger.info(f"Moved to delete folder: {src_path} -> {dest_path}")
+            moved_map[src_path] = dest_path
         except Exception as e:
-            logger.error(f"❌ Could not move {f} to {deleted_dir}: {e}")
-            failed_moves.append(os.path.basename(f))
+            logger.error(f"Failed to move file {src_path} to delete folder: {e}")
+    return moved_map
 
-    # Log summary of failures if any occurred
-    if failed_moves:
-        logger.error(f"Failed to move {len(failed_moves)} files: {', '.join(failed_moves)}")
-
-    # Return the count of successful moves
-    return successful_moves
-
-def restore_deleted_files(paths, logger, base_dir):
-    deleted_dir = os.path.join(base_dir, ".deleted")
-    for path in paths:
-        filename = os.path.basename(path)
-        deleted_path = os.path.join(deleted_dir, filename)
+def restore_from_delete_folder(moved_map, logger):
+    """Restores files from the DELETE_DIR back to their original locations using a map."""
+    for original_path, deleted_path in moved_map.items():
         if os.path.exists(deleted_path):
             try:
-                os.rename(deleted_path, path)
-                logger.info(f"✅ Restored: {path}")
+                # Ensure destination directory exists
+                os.makedirs(os.path.dirname(original_path), exist_ok=True)
+                os.rename(deleted_path, original_path)
+                logger.info(f"Restored file: {deleted_path} -> {original_path}")
             except Exception as e:
-                logger.error(f"❌ Failed to restore {path}: {e}")
+                logger.error(f"Failed to restore file {deleted_path} to {original_path}: {e}")
         else:
-            logger.warning(f"⚠️ Not found in .deleted/: {filename}")
+            logger.warning(f"Cannot restore, deleted file not found: {deleted_path}")
 
-def backup_json_files(logger, image_info_file, image_grouping_info_file):
-    for f in [image_info_file, image_grouping_info_file]:
+def merge_metadata_arrays(meta_list, logger):
+    """
+    Merges lists of metadata dictionaries from multiple sources and removes duplicates.
+    Handles dictionaries with unhashable types (like nested dicts) gracefully.
+    """
+    merged = {"json": [], "exif": [], "filename": [], "ffprobe": []}
+    for meta in meta_list:
+        if not isinstance(meta, dict):
+            logger.warning(f"Skipping non-dictionary item in meta_list: {meta}")
+            continue
+        for key in merged:
+            value_to_extend = meta.get(key, [])
+            if isinstance(value_to_extend, list):
+                merged[key].extend(value_to_extend)
+            elif value_to_extend is not None:
+                logger.warning(f"Expected a list for key '{key}' but got {type(value_to_extend)}. Adding as single item.")
+                merged[key].append(value_to_extend)
+
+    for key in merged:
+        deduped_list = []
+        seen_hashes = set()
+        for d in merged[key]:
+            if not isinstance(d, dict):
+                if d not in deduped_list:
+                    deduped_list.append(d)
+                continue
+            try:
+                hashable_item = tuple(sorted(d.items()))
+                if hashable_item not in seen_hashes:
+                    seen_hashes.add(hashable_item)
+                    deduped_list.append(d)
+            except TypeError:
+                if d not in deduped_list:
+                    deduped_list.append(d)
+        merged[key] = deduped_list
+    return merged
+
+def backup_json_files(logger, *file_paths):
+    for f in file_paths:
         if os.path.exists(f):
-            shutil.copy(f, f + ".bak")
+            try:
+                backup_path = f + ".bak"
+                shutil.copy(f, backup_path)
+                logger.info(f"Created backup: {backup_path}")
+            except Exception as e:
+                logger.error(f"Failed to create backup for {f}: {e}")
 
-def restore_json_files(image_info_backup, image_info_file, image_grouping_backup, image_grouping_info_file, logger):
-    if image_info_backup:
-        write_json_atomic(image_info_backup, image_info_file, logger=logger)
-        logger.info("✅ Restored image_info.json")
-
-    if image_grouping_backup:
-        write_json_atomic(image_grouping_backup, image_grouping_info_file,  logger=logger)
-        logger.info("✅ Restored image_grouping_info.json")
+def restore_json_files(files_to_restore, logger):
+    """Restores multiple JSON files from their in-memory backup data."""
+    for backup_data, dest_path in files_to_restore:
+        if backup_data is not None:
+            if write_json_atomic(backup_data, dest_path, logger=logger):
+                logger.info(f"✅ Restored {os.path.basename(dest_path)}")
+            else:
+                logger.error(f"❌ Failed to restore {os.path.basename(dest_path)}")
 
 def setup_logging(base_dir, script_name, console_level_env="DEDUPLICATOR_CONSOLE_LOG_LEVEL", 
                   file_level_env="DEDUPLICATOR_FILE_LOG_LEVEL", default_console_level_str="INFO", 
@@ -149,12 +200,6 @@ def setup_logging(base_dir, script_name, console_level_env="DEDUPLICATOR_CONSOLE
     
     # --- Get your specific logger ---
     return logging.getLogger(script_name)
-    
-# --- Graphical Progress Bar ---
-_progress_bar_window = None
-_progress_bar_widget = None
-_progress_bar_root = None # Hidden root for Toplevel
-_progress_bar_style = None # To hold the custom style
 
 def show_progress_bar(iteration, total, prefix='', suffix='', decimals=1, fill='=', print_end="\r", logger=None):
     """
@@ -370,11 +415,17 @@ def remove_files_not_available(grouping_json_path, info_json_path, logger, is_dr
                 continue # Skip this group
 
             original_member_count = len(group_members)
-            # Filter out files that no longer exist, checking 'path' safely
-            valid_members = [
-                member for member in group_members
-                if isinstance(member, dict) and os.path.exists(member.get("path", ""))
-            ]
+            # The structure can be a list of paths (new format) or a list of dicts (old format).
+            # We need to handle both gracefully.
+            is_dict_list = bool(group_members and isinstance(group_members[0], dict))
+
+            if is_dict_list:
+                valid_members = [
+                    member for member in group_members if os.path.exists(member.get("path", ""))
+                ]
+            else: # It's a list of paths
+                valid_members = [path for path in group_members if os.path.exists(path)]
+
             removed_count = original_member_count - len(valid_members)
             members_removed_in_key += removed_count
 
@@ -407,12 +458,8 @@ def remove_files_not_available(grouping_json_path, info_json_path, logger, is_dr
 
     # --- Clean info_json (e.g., image_info.json / video_info.json) ---
     try:
-        # Assuming info_json is a LIST of dictionaries, each with a "path"
         with open(info_json_path, 'r', encoding='utf-8') as f:
-            info_list = json.load(f)
-            if not isinstance(info_list, list):
-                 logger.error(f"Error: Expected {info_json_path} to contain a JSON list, but found {type(info_list)}. Cannot clean.")
-                 return False # Structure error is critical
+            info_data = json.load(f)
     except FileNotFoundError:
         logger.error(f"Error: Info file not found at {info_json_path}")
         return False # Indicate critical failure
@@ -423,13 +470,18 @@ def remove_files_not_available(grouping_json_path, info_json_path, logger, is_dr
         logger.error(f"Error reading info JSON file {info_json_path}: {e}")
         return False # Indicate critical failure
 
-    original_info_count = len(info_list)
-    # Remove entries for files that no longer exist, checking 'path' safely
-    cleaned_info_list = [
-        item for item in info_list
-        if isinstance(item, dict) and os.path.exists(item.get("path", ""))
-    ]
-    updated_info_count = len(cleaned_info_list)
+    # The info file can be a DICTIONARY (keyed by path) or a LIST of dictionaries.
+    if isinstance(info_data, dict):
+        original_info_count = len(info_data)
+        cleaned_info_data = {path: meta for path, meta in info_data.items() if os.path.exists(path)}
+    elif isinstance(info_data, list):
+        original_info_count = len(info_data)
+        cleaned_info_data = [item for item in info_data if isinstance(item, dict) and os.path.exists(item.get("path", ""))]
+    else:
+        logger.error(f"Error: Expected {info_json_path} to be a list or dict, but found {type(info_data)}. Cannot clean.")
+        return False
+
+    updated_info_count = len(cleaned_info_data)
     removed_info_count = original_info_count - updated_info_count
 
     logger.info(f"{prefix}Cleaned '{os.path.abspath(info_json_path)}': Removed {removed_info_count} non-existent file entries.")
@@ -438,7 +490,7 @@ def remove_files_not_available(grouping_json_path, info_json_path, logger, is_dr
     # Save the cleaned info_json (if not dry run) using atomic write
     if not is_dry_run:
         logger.info(f"Attempting to save cleaned info data to {info_json_path}")
-        if not write_json_atomic(cleaned_info_list, info_json_path, logger):
+        if not write_json_atomic(cleaned_info_data, info_json_path, logger):
             logger.error(f"Failed to update info JSON file {info_json_path}")
             overall_success = False # Mark failure
         else:
@@ -449,7 +501,6 @@ def remove_files_not_available(grouping_json_path, info_json_path, logger, is_dr
     logger.info(f"{prefix}JSON cleanup process finished. Overall success: {overall_success}")
     return overall_success # Return overall success/failure status
 
-#from removeExactVideoduplicate  & removeExactImageduplicate      
 def parse_timestamp(ts_str, logger):
     """Parses EXIF timestamp string into a datetime object."""
     if not ts_str or not isinstance(ts_str, str):
@@ -464,4 +515,84 @@ def parse_timestamp(ts_str, logger):
         except ValueError:
             logger.warning(f"Could not parse timestamp string: {ts_str}")
             return None
-        
+
+def get_canvas_usable_area():
+    root = tk.Tk()
+    canvas = tk.Canvas(root)
+    scroll = tk.Scrollbar(root, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scroll.set)
+
+    canvas.pack(side="left", fill="both", expand=True)
+    scroll.pack(side="right", fill="y")
+
+    root.update_idletasks()
+    usable_width = canvas.winfo_width()
+    usable_height = canvas.winfo_height()
+    root.destroy()
+
+    return usable_width, usable_height
+
+def compute_best_media_grid(
+    num_items,
+    usable_width,
+    usable_height,
+    ui_constants
+):
+    """
+    Compute optimal thumbnail grid layout and cell size.
+    Returns dict with: grid_cols, grid_rows, cell_size, window_width, window_height.
+    """
+
+    max_cols = ui_constants["max_cols"]
+    min_cell_size = ui_constants["min_cell_size"]
+    padding = ui_constants["grid_padding"]
+    scroll_w = ui_constants["scrollbar_width"]
+    border_px = ui_constants["border_width"]
+    titlebar_px = ui_constants["titlebar_height"]
+
+    logger.info("----[ Layout Debug ]----")
+    logger.info(f"Screen: {ui_constants['screen_width']} x {ui_constants['screen_height']}")
+    logger.info(f"UI Constants: border={border_px}, titlebar={titlebar_px}, scroll={scroll_w}, padding={padding}")
+    logger.info(f"Usable area: {usable_width} x {usable_height}")
+
+    found = False
+    cols = max_cols
+    while not found:
+        total_padding = (cols + 1) * padding
+        cell = (usable_width - total_padding) // cols
+        if cell > min_cell_size:
+            found = True
+            logger.info(f"found {cols} cols: cell width = {cell} ")
+        elif cols == 1:
+            found = True
+            logger.info("it is a Tiny Column. with cell size = {cell}")
+        else:
+            # Reduce columns and try again
+            cols -= 1
+    # Ensure we can fit at least the minimum cell size
+    logger.info(f"Decided on {cols} cols: cell width = {cell}")
+
+    rows = math.ceil(num_items / cols)
+    total_height = (cell * rows) + (rows + 1) * padding
+    total_width = (cell * cols) + total_padding
+
+    window_w = total_width + scroll_w + 2 * border_px
+    window_h = total_height + titlebar_px + 2 * border_px
+
+    logger.info(f"Trying {cols} cols: cell = {cell}, total row width = {total_width}, total height = {total_height}")
+
+    logger.info(f"Final Grid: {cols} cols × {rows} rows")
+    logger.info(f"Cell size: {cell}x{cell} pixels")
+    logger.info(f"Grid total: {total_width}x{total_height} pixels")
+    logger.info(f"Window size: {window_w} x {window_h}")
+    logger.info("------------------------")
+
+    return {
+        "cell_size": cell,
+        "grid_cols": cols,
+        "grid_rows": rows,
+        "window_width": window_w,
+        "window_height": window_h,
+        "usable_width": total_width,
+        "usable_height": total_height
+    }

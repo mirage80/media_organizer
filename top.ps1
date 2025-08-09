@@ -102,23 +102,21 @@ function Invoke-PythonScript {
         [Parameter(Mandatory = $true)][string]$ScriptPath,
         [Parameter(Mandatory = $true)][string]$ActivityName,
         [string[]]$Arguments,
-        [ScriptBlock]$ProgressCallback
+        [ScriptBlock]$ProgressCallback,
+        [Parameter(Mandatory = $true)]$Log
     )
 
     $outputEvent = $null
     $errorEvent = $null
-
     try {
         $processInfo = New-Object System.Diagnostics.ProcessStartInfo
         $processInfo.FileName = $pythonExe
 
         $pythonArgs = [System.Collections.Generic.List[string]]::new()
-
         $pythonArgs += "`"$ScriptPath`""
-        # Explicitly cast to [string[]] for the strict .NET AddRange method.
         $pythonArgs += [string[]]$Arguments
         $processInfo.Arguments = $pythonArgs -join ' '
-#        $processInfo.Arguments = "-m debugpy --listen 5678 --wait-for-client `"$ScriptPath`" $Arguments"
+
         $processInfo.RedirectStandardOutput = $true
         $processInfo.RedirectStandardError = $true
         $processInfo.UseShellExecute = $false
@@ -130,77 +128,85 @@ function Invoke-PythonScript {
         $process.StartInfo = $processInfo
         $stdErrLines = [System.Collections.ArrayList]::Synchronized((New-Object System.Collections.ArrayList))
 
-        $onOutputDataReceived = {
-            if ($null -ne $EventArgs.Data) {
+        $outputEvent = Register-ObjectEvent -InputObject $process -EventName 'OutputDataReceived' -MessageData @($ProgressCallback, $Log) -Action {
+            $callback = $event.MessageData[0]
+            $logFn    = $event.MessageData[1]
+
+            try {
                 $line = $EventArgs.Data
-                if ($line -match '^PROGRESS:(\d{1,3})\|(.*)$') {
-                    $percent = [int]$matches[1]
-                    $status = $matches[2].Trim()
-                    if ($ProgressCallback) { & $ProgressCallback $percent $status }
+                if ($null -ne $line) {
+                    if ($line -match '^PROGRESS:(\d{1,3})\|(.*)$') {
+                        $percent = [int]$matches[1]
+                        $status = $matches[2].Trim()
+                        if ($callback -is [ScriptBlock]) {
+                            & $callback $percent $status
+                        }
+                    }
+                    elseif ($line -match '^(\d+)\s+(\d+)\s+(.+)$') {
+                        $current = [int]$matches[1]
+                        $total = [int]$matches[2]
+                        $status = $matches[3].Trim()
+                        $percent = [int](($current / [math]::Max($total,1)) * 100)
+                        if ($callback -is [ScriptBlock]) {
+                            & $callback $percent $status
+                        }
+                    }
+                    else {
+                        & $logFn "DEBUG" "PY_STDOUT: $line"
+                    }
                 }
-                elseif ($line -match '^(\d+)\s+(\d+)\s+(.+)$') {
-                    $current = [int]$matches[1]
-                    $total = [int]$matches[2]
-                    $status = $matches[3].Trim()
-                    $percent = [int](($current / [math]::Max($total,1)) * 100)
-                    if ($ProgressCallback) { & $ProgressCallback $percent $status }
-                }
-                else {
-                    & $Log "DEBUG" "PY_STDOUT: $line"
-                }
+            } catch {
+                & $logFn "ERROR" "Exception in OutputDataReceived: $_"
             }
         }
 
-        $onErrorDataReceived = {
-            if ($null -ne $EventArgs.Data) {
+        $errorEvent = Register-ObjectEvent -InputObject $process -EventName 'ErrorDataReceived' -MessageData $Log -Action {
+            $logFn = $event.MessageData
+            try {
                 $line = $EventArgs.Data
-                & $Log "ERROR" "PY_STDERR: $line"
-                [void]$stdErrLines.Add($line)
+                if ($null -ne $line) {
+                    & $logFn "ERROR" "PY_STDERR: $line"
+                }
+            } catch {
+                & $logFn "ERROR" "Exception in ErrorDataReceived: $_"
             }
         }
-
-        $outputEvent = Register-ObjectEvent -InputObject $process -EventName 'OutputDataReceived' -Action $onOutputDataReceived
-        $errorEvent = Register-ObjectEvent -InputObject $process -EventName 'ErrorDataReceived' -Action $onErrorDataReceived
 
         $argStringForLog = $Arguments | ForEach-Object { """$_""" } | Join-String -Separator ' '
-        & $Log "DEBUG" "Executing: $pythonExe ""$ScriptPath"" $argStringForLog"
-        
+        & $Log "DEBUG" "Executing: $pythonExe `"$ScriptPath`" $argStringForLog"
+
         [void]$process.Start()
         $process.BeginOutputReadLine()
         $process.BeginErrorReadLine()
         $process.WaitForExit()
 
-        # Unregister the events here. This forces the main thread to wait for any
-        # queued event actions to complete, which solves the race condition where
-        # the exit code is checked before all stderr lines have been added to the list.
-        # This is CRITICAL for getting the full error traceback from failed Python scripts.
         if ($outputEvent) { Unregister-Event -SourceIdentifier $outputEvent.Name; $outputEvent = $null }
-        if ($errorEvent) { Unregister-Event -SourceIdentifier $errorEvent.Name; $errorEvent = $null }
+        if ($errorEvent)  { Unregister-Event -SourceIdentifier $errorEvent.Name;  $errorEvent  = $null }
 
         if ($process.ExitCode -ne 0) {
             $errorOutput = $stdErrLines -join "`n"
             throw "Python script '$ScriptPath' failed with exit code $($process.ExitCode). Output:`n$errorOutput"
         }
-
-        Write-Progress -Activity $ActivityName -Status "Completed" -Completed
     }
     catch {
         & $Log "ERROR" "Error running Python script '$ScriptPath'. Error: $_"
-        Write-Progress -Activity $ActivityName -Status "Failed" -Completed
         exit 1
     }
     finally {
-        # This finally block is still a good safety net in case an exception occurs
-        # before the explicit Unregister-Event calls inside the try block.
         if ($outputEvent) { Unregister-Event -SourceIdentifier $outputEvent.Name }
-        if ($errorEvent) { Unregister-Event -SourceIdentifier $errorEvent.Name }
+        if ($errorEvent)  { Unregister-Event -SourceIdentifier $errorEvent.Name }
     }
 }
-
 
 $pipelineSteps = $config.pipelineSteps
 $totalSteps = ($pipelineSteps | Where-Object { $_.Enabled }).Count
 $currentStepIndex = 0
+
+# --- Define a progress callback for Python scripts ---
+$progressCallback = {
+    param($percent, $status)
+    Update-GraphicalProgressBar -SubTaskPercent $percent -SubTaskMessage $status
+}
 
 # --- Show two-level progress bar GUI ---
 Show-GraphicalProgressBar -EnableSecondLevel
@@ -215,6 +221,11 @@ try {
 
         $percentComplete = [int](($currentStepIndex / $totalSteps) * 100)
         Update-GraphicalProgressBar -OverallPercent $percentComplete -Activity "Step $currentStepIndex : $($step.Name) " -SubTaskPercent 0 -SubTaskMessage "Starting..."
+
+        # Conditionally hide the progress bar for interactive steps
+        if ($step.Interactive) {
+            Send-ProgressBarToBack
+        }
 
         & $Log "INFO" "Starting Step $currentStepIndex/$totalSteps : $($step.Name)"
 
@@ -253,10 +264,13 @@ try {
             Invoke-PythonScript -ScriptPath (Join-Path $scriptDirectory $step.Path) `
                                 -Arguments $resolvedArgs `
                                 -ActivityName $step.Name `
-                                -ProgressCallback {
-                                    param($percent, $message)
-                                    Update-GraphicalProgressBar -SubTaskPercent $percent -SubTaskMessage $message
-                                }
+                                -ProgressCallback $progressCallback `
+                                -Log $Log
+        }
+
+        # Conditionally show the progress bar again after the step is complete
+        if ($step.Interactive) {
+            Bring-ProgressBarToFront
         }
     }
 }

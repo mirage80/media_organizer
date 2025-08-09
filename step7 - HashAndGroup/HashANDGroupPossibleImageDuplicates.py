@@ -22,14 +22,14 @@ DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'WARNING')
 CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
 
 # Initialize the logger with the project root, script name, and logging levels
-logger = utils.setup_logging(PROJECT_ROOT, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+logger = utils.setup_logging(PROJECT_ROOT, "Step_" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "Outputs")
 CONSOLIDATED_META_FILE = os.path.join(OUTPUT_DIR, "Consolidate_Meta_Results.json")
 IMAGE_DUPLICATES_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
-SUPPORTED_EXTENSIONS = (".jpg") # Aligned with MediaTools.psm1
+SUPPORTED_EXTENSIONS = (".jpg")
 HASH_ALGORITHM = "sha256"
 CHUNK_SIZE = 4096
 
@@ -58,24 +58,8 @@ def generate_image_hash(image_path):
         logger.error(f"Unexpected error hashing {image_path}: {e}")
         return None
 
-def load_and_flatten_consolidated_metadata(file_path):
-    """Loads the consolidated metadata report and flattens its structure if necessary."""
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # Handle the unusual [[{...}]] structure by flattening it.
-                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                    logger.debug("Detected nested list structure in JSON, flattening.")
-                    return [item for sublist in data for item in sublist]
-                return data # Assume it's already a flat list or empty
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from {file_path}. Returning empty list.")
-            return []
-        except Exception as e:
-            logger.error(f"Error loading {file_path}: {e}")
-            return []
-    return []
+def get_image_length(image_path):
+    return 0
 
 def discover_and_add_new_files(directory, meta_dict, supported_extensions, media_type, logger):
     """Scans a directory for media files and adds records for any not already in the list."""
@@ -110,6 +94,7 @@ def discover_and_add_new_files(directory, meta_dict, supported_extensions, media
                     meta_dict[normalized_path] = new_record
                     existing_paths.add(normalized_path) # Add normalized path to set to avoid re-adding
                     new_files_found += 1
+                    logger.debug(f" file {normalized_path} added to metadata records.")
                 else:
                     logger.debug(f"Skipping existing {media_type} file: {normalized_path}")
                     
@@ -125,6 +110,7 @@ def enrich_image_metadata(meta_dict):
     total_images = len(image_paths)
     processed_count = 0
     logger.info(f"Found {total_images} image records in the consolidated data to process.")
+    enriched_meta_dict_out = meta_dict.copy()  # Create a copy to avoid modifying the original during iteration
 
     for image_path in image_paths:
         processed_count += 1
@@ -138,32 +124,34 @@ def enrich_image_metadata(meta_dict):
         if not isinstance(record, dict):
             logger.warning(f"Skipping malformed record (not a dictionary): {record}")
             continue
-        # Enrich with name, size, and hash if they don't exist
-        if 'name' not in record: record['name'] = os.path.basename(image_path)
-        if 'size' not in record: record['size'] = os.path.getsize(image_path)
-        if 'hash' not in record:
-            record['hash'] = generate_image_hash(image_path)
-            if record['hash']: changes_made = True
-        enriched_meta_dict[image_path] = record  # Update the record with enriched data 
-    return enriched_meta_dict, changes_made
+        # Enrich with name, size, hash, and length if they don't exist
+        if 'name'   not in record or record['name']   is None: record['name']   = os.path.basename(image_path); changes_made = True
+        if 'size'   not in record or record['size']   is None: record["size"]   = os.path.getsize(image_path); changes_made = True
+        if 'hash'   not in record or record['hash']   is None: record['hash']   = generate_image_hash(image_path);  changes_made = True
+        if 'length' not in record or record['length'] is None: record['length'] = get_image_length(image_path); changes_made = True
+        enriched_meta_dict_out[image_path] = record  # Update the copy with the enriched record
+        logger.warning(f"processing image {record['hash']} ")
+    return enriched_meta_dict_out, changes_made
 
-def group_images_by_name_and_size(image_path_list):
+def group_images_by_name_and_size(meta_dict, image_path_list):
     """Group images by name and size."""
     processed_files = 0
     total_files = len(image_path_list)
     grouped_images = {}
     logger.info("Grouping images by name and size...")
     for image_path in image_path_list:
-        info = image_path_list[image_path] if isinstance(image_path, str) else info
+        logger.warning("Grouping by name and size for image: %s ", image_path)
+        info = meta_dict[image_path] if isinstance(image_path, str) else info
         name = info.get("name")
         size = info.get("size")
         if name is None or size is None:
             logger.warning(f"Skipping image with missing name/size: {info.get('path', 'Unknown path')}")
             continue
+
         key = f"{name}_{size}"
         if key not in grouped_images:
             grouped_images[key] = []
-        grouped_images[key].append(info)
+        grouped_images[key].append(image_path)
         processed_files += 1
         status = f"Grouping by name/size {processed_files}/{total_files}"
         report_progress(processed_files, total_files, status)
@@ -171,20 +159,20 @@ def group_images_by_name_and_size(image_path_list):
     return grouped_images
 
 # --- group_images_by_hash remains the same ---
-def group_images_by_hash(image_path_list):
+def group_images_by_hash(meta_dict, image_path_list):
     """Group images by hash."""
     processed_files = 0
     total_files = len(image_path_list)
     grouped_images = {}
     logger.info("Grouping images by hash...")
     for image_path in image_path_list:
-        info = image_path_list[image_path] if isinstance(image_path, str) else info
+        info = meta_dict[image_path] if isinstance(image_path, str) else info
         # Ensure hash exists, though get_image_info should prevent None hashes
         img_hash = info.get("hash")
         if img_hash:
             if img_hash not in grouped_images:
                 grouped_images[img_hash] = []
-            grouped_images[img_hash].append(info)
+            grouped_images[img_hash].append(image_path)
         else:
             logger.warning(f"Image missing hash during grouping: {image_path}")
         processed_files += 1
@@ -205,8 +193,8 @@ def generate_grouping_image(enriched_meta_dict):
         logger.warning("No image information provided to generate grouping file.")
         return
     try:
-        grouped_by_name_and_size = group_images_by_name_and_size(image_records)
-        grouped_by_hash = group_images_by_hash(image_records)
+        grouped_by_name_and_size = group_images_by_name_and_size(enriched_meta_dict, image_records)
+        grouped_by_hash = group_images_by_hash(enriched_meta_dict, image_records)
         grouping_info = {
             "grouped_by_name_and_size": grouped_by_name_and_size,
             "grouped_by_hash": grouped_by_hash

@@ -22,7 +22,7 @@ DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'WARNING')
 CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
 
 # Initialize the logger with the project root, script name, and logging levels
-logger = utils.setup_logging(PROJECT_ROOT, "Step" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+logger = utils.setup_logging(PROJECT_ROOT, "Step_" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
 
 # --- Define Constants ---
 ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
@@ -85,25 +85,6 @@ def get_video_length(video_path):
     finally:
         if video is not None and video.isOpened():
             video.release()
-
-def load_and_flatten_consolidated_metadata(file_path):
-    """Loads the consolidated metadata report and flattens its structure if necessary."""
-    if os.path.exists(file_path):
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # Handle the unusual [[{...}]] structure by flattening it.
-                if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                    logger.debug("Detected nested list structure in JSON, flattening.")
-                    return [item for sublist in data for item in sublist]
-                return data # Assume it's already a flat list or empty
-        except json.JSONDecodeError:
-            logger.error(f"Error decoding JSON from {file_path}. Returning empty list.")
-            return []
-        except Exception as e:
-            logger.error(f"Error loading {file_path}: {e}")
-            return []
-    return []
 
 def discover_and_add_new_files(directory, meta_dict, supported_extensions, media_type, logger):
     """Scans a directory for media files and adds records for any not already in the list."""
@@ -169,15 +150,12 @@ def enrich_video_metadata(meta_dict):
             logger.warning(f"Skipping malformed record (not a dictionary): {record}")
             continue
         # Enrich with name, size, hash, and length if they don't exist
-        if 'name' not in record: record['name'] = os.path.basename(video_path)
-        if 'size' not in record: record['size'] = os.path.getsize(video_path)
-        if 'hash' not in record:
-            record['hash'] = generate_video_hash(video_path)
-            if record['hash']: changes_made = True
-        if 'length' not in record:
-            record['length'] = get_video_length(video_path)
-            if record['length'] is not None: changes_made = True
+        if 'name'   not in record or record['name']   is None: record['name']   = os.path.basename(video_path); changes_made = True
+        if 'size'   not in record or record['size']   is None: record["size"]   = os.path.getsize(video_path); changes_made = True
+        if 'hash'   not in record or record['hash']   is None: record['hash']   = generate_video_hash(video_path);  changes_made = True
+        if 'length' not in record or record['length'] is None: record['length'] = get_video_length(video_path); changes_made = True
         enriched_meta_dict_out[video_path] = record  # Update the copy with the enriched record
+        logger.warning(f"processing video {record['hash']} ")
     return enriched_meta_dict_out, changes_made
 
 def group_videos_by_name_and_size(meta_dict, video_path_list):
@@ -198,7 +176,7 @@ def group_videos_by_name_and_size(meta_dict, video_path_list):
         key = f"{name}_{size}"
         if key not in grouped_videos:
             grouped_videos[key] = []
-        grouped_videos[key].append(info)
+        grouped_videos[key].append(video_path)
         processed_files += 1
         status = f"Grouping by name/size {processed_files}/{total_files}"
         report_progress(processed_files, total_files, status)
@@ -219,7 +197,7 @@ def group_videos_by_hash(meta_dict, video_path_list):
         if vid_hash:
             if vid_hash not in grouped_videos:
                 grouped_videos[vid_hash] = []
-            grouped_videos[vid_hash].append(info)
+            grouped_videos[vid_hash].append(video_path)
         else:
             logger.warning(f"Video missing hash during grouping: {video_path}")
         processed_files += 1

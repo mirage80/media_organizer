@@ -164,9 +164,11 @@ $threadScript = {
             if ($isVideo) {
                 $timestamp_from_ffprobe = Get-FFprobeTimestamp -File $file
                 $geotag_from_ffprobe    = Get-FFprobeGeotag    -File $file
+                $rotation_from_ffprobe  = Get-FfprobeRotation  -File $file
             } else {
                 $timestamp_from_ffprobe = $null
                 $geotag_from_ffprobe    = $null
+                $rotation_from_ffprobe  = $null
             }
 
             # Ensure the node for this path exists before adding properties.
@@ -175,7 +177,7 @@ $threadScript = {
             }
 
             $jsonData[$normalizedPath].exif += @{ timestamp = $timestamp_from_exif; geotag = $geotag_from_exif }
-            $jsonData[$normalizedPath].ffprobe += @{ timestamp = $timestamp_from_ffprobe; geotag = $geotag_from_ffprobe }
+            $jsonData[$normalizedPath].ffprobe += @{ timestamp = $timestamp_from_ffprobe; geotag = $geotag_from_ffprobe; rotation = $rotation_from_ffprobe }
             $jsonData[$normalizedPath].filename += @{ timestamp = $timestamp_from_filename; geotag = $geotag_from_filename }
 
             # Increment the shared progress counter.
