@@ -1,4 +1,7 @@
 import os
+import re
+import json
+import subprocess
 import logging
 import cv2
 from PIL import Image, ImageTk, ImageDraw, ImageFont
@@ -7,9 +10,15 @@ import hashlib
 import math
 import tkinter as tk
 from tkinter import ttk
-import logging
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Tuple, Union
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
+import threading
+from collections import defaultdict
+
 logger = logging.getLogger(__name__)
-import Utils.utils as utils
+import Utils.utilities as utils
 
 def _calculate_ui_constants():
     """
@@ -176,8 +185,15 @@ def _calculate_ui_constants():
     return results
 
 # --- Global UI Constants ---
-# Calculate the constants once when the module is imported.
-UI_CONSTANTS = _calculate_ui_constants()
+# Calculate the constants only when needed (lazy loading)
+UI_CONSTANTS = None
+
+def get_ui_constants():
+    """Get UI constants, calculating them if needed."""
+    global UI_CONSTANTS
+    if UI_CONSTANTS is None:
+        UI_CONSTANTS = _calculate_ui_constants()
+    return UI_CONSTANTS
 
 def move_file_to_delete_folder(file_path, delete_dir, logger):
     """Moves a single file to the DELETE_DIR, handling name conflicts.
@@ -257,3 +273,248 @@ def generate_thumbnail(path, cell_size, thumbnail_dir):
     thumb = img.resize((cell_size, cell_size), Image.LANCZOS)
     thumb.save(thumb_path, "JPEG")
     return thumb
+
+
+# =============================================================================
+# METADATA EXTRACTION FUNCTIONALITY
+# Replaces the PowerShell MediaTools.psm1 metadata extraction functions
+# =============================================================================
+
+class MediaMetadataExtractor:
+    """
+    Handles metadata extraction from media files using ExifTool and FFprobe.
+    Thread-safe with caching for improved performance.
+    Replaces PowerShell MediaTools.psm1 functionality.
+    """
+    
+    def __init__(self):
+        self.exif_cache = {}
+        self.ffprobe_cache = {}
+        self.cache_lock = threading.Lock()
+        
+        # Get tool paths from environment
+        self.exiftool_path = os.environ.get('EXIFTOOL_PATH', 'exiftool')
+        self.ffprobe_path = os.environ.get('FFPROBE_PATH', 'ffprobe')
+        
+        # File extension mappings
+        self.image_extensions = {'.jpg', '.jpeg', '.heic', '.png', '.tiff', '.tif', '.bmp', '.gif'}
+        self.video_extensions = {'.mov', '.mp4', '.avi', '.mkv', '.wmv', '.flv', '.webm', '.m4v'}
+        
+        # Timestamp field priorities by extension (from PowerShell version)
+        self.timestamp_fields = {
+            '.jpeg': ['DateTimeOriginal', 'CreateDate', 'DateAcquired'],
+            '.jpg': ['DateTimeOriginal', 'CreateDate', 'DateAcquired'],
+            '.heic': ['DateTimeOriginal', 'DateCreated', 'DateTime'],
+            '.mov': ['TrackCreateDate', 'CreateDate', 'MediaCreateDate'],
+            '.mp4': ['TrackCreateDate', 'MediaModifyDate', 'MediaCreateDate', 'TrackModifyDate']
+        }
+        
+        # GPS field mappings (from PowerShell version)
+        self.gps_fields = {
+            '.jpeg': ['GPSLatitudeRef', 'GPSLatitude', 'GPSLongitudeRef', 'GPSLongitude', 'GPSPosition'],
+            '.jpg': ['GPSLatitudeRef', 'GPSLatitude', 'GPSLongitudeRef', 'GPSLongitude', 'GPSPosition'],
+            '.heic': ['GPSLatitudeRef', 'GPSLatitude', 'GPSLongitudeRef', 'GPSLongitude', 'GPSPosition'],
+            '.mov': ['GPSLatitudeRef', 'GPSLatitude', 'GPSLongitudeRef', 'GPSLongitude', 'GPSPosition'],
+            '.mp4': ['GPSLatitudeRef', 'GPSLatitude', 'GPSLongitudeRef', 'GPSLongitude', 'GPSPosition']
+        }
+    
+    def is_image_file(self, file_path: Union[str, Path]) -> bool:
+        """Check if file is an image."""
+        return Path(file_path).suffix.lower() in self.image_extensions
+    
+    def is_video_file(self, file_path: Union[str, Path]) -> bool:
+        """Check if file is a video."""
+        return Path(file_path).suffix.lower() in self.video_extensions
+    
+    def invoke_exiftool(self, file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+        """
+        Extract EXIF metadata using ExifTool.
+        Replaces PowerShell Invoke-ExifTool function.
+        """
+        file_path = str(file_path)
+        
+        # Check cache first
+        with self.cache_lock:
+            if file_path in self.exif_cache:
+                return self.exif_cache[file_path]
+        
+        try:
+            cmd = [
+                self.exiftool_path,
+                '-json',
+                '-charset', 'utf8',
+                file_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"ExifTool failed for {file_path}: {result.stderr}")
+                return None
+            
+            # Parse JSON output
+            data = json.loads(result.stdout)
+            if data and isinstance(data, list) and len(data) > 0:
+                metadata = data[0]
+                
+                # Cache the result
+                with self.cache_lock:
+                    self.exif_cache[file_path] = metadata
+                
+                return metadata
+            
+            return None
+            
+        except subprocess.TimeoutExpired:
+            logger.warning(f"ExifTool timeout for {file_path}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse ExifTool JSON output for {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error running ExifTool for {file_path}: {e}")
+            return None
+    
+    def invoke_ffprobe(self, file_path: Union[str, Path]) -> Optional[Dict[str, Any]]:
+        """
+        Extract metadata using FFprobe.
+        Replaces PowerShell Invoke-FFProbe function.
+        """
+        file_path = str(file_path)
+        
+        # Check cache first
+        with self.cache_lock:
+            if file_path in self.ffprobe_cache:
+                return self.ffprobe_cache[file_path]
+        
+        try:
+            cmd = [
+                self.ffprobe_path,
+                '-v', 'quiet',
+                '-print_format', 'json',
+                '-show_format',
+                '-show_streams',
+                file_path
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"FFprobe failed for {file_path}: {result.stderr}")
+                return None
+            
+            # Parse JSON output
+            data = json.loads(result.stdout)
+            
+            # Cache the result
+            with self.cache_lock:
+                self.ffprobe_cache[file_path] = data
+            
+            return data
+            
+        except subprocess.TimeoutExpired:
+            logger.warning(f"FFprobe timeout for {file_path}")
+            return None
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse FFprobe JSON output for {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error running FFprobe for {file_path}: {e}")
+            return None
+    
+    def extract_timestamp_from_exif(self, metadata: Dict[str, Any], file_extension: str) -> Optional[str]:
+        """
+        Extract timestamp from EXIF metadata.
+        Replaces PowerShell Get-ExifTimestamp functionality.
+        """
+        fields = self.timestamp_fields.get(file_extension.lower(), [])
+        
+        for field in fields:
+            if field in metadata and metadata[field]:
+                timestamp = metadata[field]
+                if self.validate_timestamp(timestamp):
+                    return timestamp
+        
+        return None
+    
+    def validate_timestamp(self, timestamp: str) -> bool:
+        """Validate if timestamp string is in a recognized format."""
+        if not timestamp or not isinstance(timestamp, str):
+            return False
+        
+        # Common timestamp formats
+        formats = [
+            '%Y:%m:%d %H:%M:%S',
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%SZ',
+            '%Y:%m:%d %H:%M:%S%z',
+            '%Y-%m-%d %H:%M:%S%z',
+            '%Y-%m-%dT%H:%M:%S%z',
+            '%Y:%m:%d %H:%M:%S.%f',
+            '%Y-%m-%d %H:%M:%S.%f'
+        ]
+        
+        for fmt in formats:
+            try:
+                datetime.strptime(timestamp.replace('Z', '+0000'), fmt)
+                return True
+            except ValueError:
+                continue
+        
+        return False
+    
+    def clear_cache(self) -> None:
+        """Clear all cached metadata."""
+        with self.cache_lock:
+            self.exif_cache.clear()
+            self.ffprobe_cache.clear()
+        logger.info("Metadata cache cleared")
+
+
+# Global instance for easy access (replaces PowerShell module-level variables)
+_media_extractor = None
+
+
+def get_media_extractor() -> MediaMetadataExtractor:
+    """Get the global MediaMetadataExtractor instance."""
+    global _media_extractor
+    if _media_extractor is None:
+        _media_extractor = MediaMetadataExtractor()
+    return _media_extractor
+
+
+def extract_metadata(file_path: Union[str, Path]) -> Dict[str, Any]:
+    """
+    Convenience function to extract metadata from a single file.
+    Replaces PowerShell Resolve-FileMetadata functionality.
+    """
+    extractor = get_media_extractor()
+    metadata = {}
+    
+    if extractor.is_image_file(file_path):
+        exif_data = extractor.invoke_exiftool(file_path)
+        if exif_data:
+            metadata['exif'] = exif_data
+            timestamp = extractor.extract_timestamp_from_exif(exif_data, Path(file_path).suffix)
+            if timestamp:
+                metadata['timestamp'] = timestamp
+    
+    elif extractor.is_video_file(file_path):
+        ffprobe_data = extractor.invoke_ffprobe(file_path)
+        if ffprobe_data:
+            metadata['ffprobe'] = ffprobe_data
+    
+    return metadata

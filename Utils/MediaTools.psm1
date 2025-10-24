@@ -1219,8 +1219,12 @@ function Get-JsonGeotag {
     }
 
     # Extract latitude and longitude
-    $latitude = $jsonContent.geoData?.latitude
-    $longitude = $jsonContent.geoData?.longitude
+    $latitude = $null
+    $longitude = $null
+    if ($jsonContent.geoData) {
+        $latitude = $jsonContent.geoData.latitude
+        $longitude = $jsonContent.geoData.longitude
+    }
 
     if ($latitude -and $longitude) {
         # Standardize and return the geotag

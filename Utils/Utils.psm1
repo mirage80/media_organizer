@@ -191,25 +191,25 @@ function Show-GraphicalProgressBar {
     $overallBar.Maximum = 100
     $overallBar.Value = 0
 
-    $stepLabel = New-Object System.Windows.Forms.Label
-    $stepLabel.Width = 460
-    $stepLabel.Height = 20
-    $stepLabel.Top = 55
-    $stepLabel.Left = 15
-    $stepLabel.Text = "Step: Not started"
+    $phaseLabel = New-Object System.Windows.Forms.Label
+    $phaseLabel.Width = 460
+    $phaseLabel.Height = 20
+    $phaseLabel.Top = 55
+    $phaseLabel.Left = 15
+    $phaseLabel.Text = "Phase: Not started"
 
-    $form.Controls.AddRange(@($overallBar, $stepLabel))
+    $form.Controls.AddRange(@($overallBar, $phaseLabel))
 
     # Optional second-level progress bar and label
     if ($EnableSecondLevel) {
-        $stepBar = New-Object System.Windows.Forms.ProgressBar
-        $stepBar.Width = 460
-        $stepBar.Height = 25
-        $stepBar.Top = 80
-        $stepBar.Left = 15
-        $stepBar.Style = 'Continuous'
-        $stepBar.Maximum = 100
-        $stepBar.Value = 0
+        $phaseBar = New-Object System.Windows.Forms.ProgressBar
+        $phaseBar.Width = 460
+        $phaseBar.Height = 25
+        $phaseBar.Top = 80
+        $phaseBar.Left = 15
+        $phaseBar.Style = 'Continuous'
+        $phaseBar.Maximum = 100
+        $phaseBar.Value = 0
 
         $subTaskLabel = New-Object System.Windows.Forms.Label
         $subTaskLabel.Width = 460
@@ -218,21 +218,21 @@ function Show-GraphicalProgressBar {
         $subTaskLabel.Left = 15
         $subTaskLabel.Text = "Subtask: Not started"
 
-        $form.Controls.AddRange(@($stepBar, $subTaskLabel))
+        $form.Controls.AddRange(@($phaseBar, $subTaskLabel))
 
         # Store second-level controls in global vars
-        $global:StepProgressBar = $stepBar
+        $global:PhaseProgressBar = $phaseBar
         $global:SubTaskLabel = $subTaskLabel
     }
     else {
-        $global:StepProgressBar = $null
+        $global:PhaseProgressBar = $null
         $global:SubTaskLabel = $null
     }
 
     # Store first-level controls
     $global:ProgressForm = $form
     $global:OverallProgressBar = $overallBar
-    $global:StepLabel = $stepLabel
+    $global:PhaseLabel = $phaseLabel
 
     $form.Show()
     [System.Windows.Forms.Application]::DoEvents()
@@ -256,6 +256,25 @@ function Write-JsonAtomic {
     try {
         $tempPath = "$normalizedPath.tmp"
         $json = $Data | ConvertTo-Json -Depth 10
+        # Clean up PowerShell's excessive alignment-based indentation
+        # Split into lines and fix each line's indentation
+        $lines = $json -split "`r`n|`n"
+        $fixedLines = @()
+        foreach ($line in $lines) {
+            if ($line -match '^(\s*)"([^"]+)":\s*(.+)$') {
+                # Extract indentation level by counting opening braces before this line
+                $indentLevel = ([regex]::Matches(($fixedLines -join "`n"), '\{').Count - [regex]::Matches(($fixedLines -join "`n"), '\}').Count)
+                $indent = "    " * $indentLevel
+                $fixedLines += "$indent`"$($matches[2])`":  $($matches[3])"
+            } elseif ($line -match '^(\s*)(.+)$' -and $line.Trim() -ne '') {
+                $indentLevel = ([regex]::Matches(($fixedLines -join "`n"), '\{').Count - [regex]::Matches(($fixedLines -join "`n"), '\}').Count)
+                $indent = "    " * $indentLevel
+                $fixedLines += "$indent$($line.Trim())"
+            } else {
+                $fixedLines += $line
+            }
+        }
+        $json = $fixedLines -join "`r`n"
         $json | Out-File -FilePath $tempPath -Encoding UTF8 -Force
 
         # Validate JSON before replacing
@@ -292,12 +311,12 @@ function Update-GraphicalProgressBar {
         # Only update the Activity label if the -Activity parameter was explicitly passed in the call.
         # This prevents the label from being cleared when other parameters (like for the sub-task) are updated.
         if ($PSBoundParameters.ContainsKey('Activity')) {
-            $global:StepLabel.Text = $Activity
+            $global:PhaseLabel.Text = $Activity
         }
 
-        if ($null -ne $global:StepProgressBar) {
+        if ($null -ne $global:PhaseProgressBar) {
             if ($SubTaskPercent -ge 0) {
-                $global:StepProgressBar.Value = [Math]::Min($SubTaskPercent, 100)
+                $global:PhaseProgressBar.Value = [Math]::Min($SubTaskPercent, 100)
             }
             if ($null -ne $SubTaskMessage) {
                 $global:SubTaskLabel.Text = $SubTaskMessage
@@ -317,8 +336,8 @@ function Stop-GraphicalProgressBar {
     # Clear all global variables related to progress bars and labels
     $global:ProgressForm = $null
     $global:OverallProgressBar = $null
-    $global:StepLabel = $null
-    $global:StepProgressBar = $null
+    $global:PhaseLabel = $null
+    $global:PhaseProgressBar = $null
     $global:SubTaskLabel = $null
 }
 
@@ -329,25 +348,35 @@ function Initialize-ScriptLogger {
         [string]$LogDirectory,
         [Parameter(Mandatory=$true)]
         [string]$ScriptName,
+        [Parameter(Mandatory=$false)]
+        [string]$Step = "",
         [Parameter(Mandatory=$true)]
-        [string]$Step
+        $Config
     )
 
     # 1. Define the log file path using the absolute log directory provided.
     $logDir = ConvertTo-StandardPath -Path $LogDirectory
-    $logFileName = "Step_{0}_{1}.log" -f $Step, $ScriptName
+    if ([string]::IsNullOrEmpty($Step)) {
+        $logFileName = "$ScriptName.log"
+    } else {
+        $logFileName = "Step_{0}_{1}.log" -f $Step, $ScriptName
+    }
     $childLogFilePath = Join-Path $logDir -ChildPath $logFileName
 
-    # 2. Get logging configuration from environment variables
-    try {
-        $logLevelMap = $env:LOG_LEVEL_MAP_JSON | ConvertFrom-Json -AsHashtable
-        $consoleLogLevel = $logLevelMap[$env:DEDUPLICATOR_CONSOLE_LOG_LEVEL.ToUpper()]
-        $fileLogLevel    = $logLevelMap[$env:DEDUPLICATOR_FILE_LOG_LEVEL.ToUpper()]
-    } catch {
-        Write-Error "Failed to initialize logger: Could not parse logging environment variables. Ensure top.ps1 has run."
-        # Return a no-op logger to prevent crashes in case of misconfiguration
-        return { param([string]$Level, [string]$Message) }
+    # 2. Get logging configuration from config
+    $logLevelMap = @{
+        "DEBUG" = 0
+        "INFO" = 1
+        "WARNING" = 2
+        "ERROR" = 3
+        "CRITICAL" = 4
     }
+    
+    $consoleLevel = if ($Config.settings.logging.defaultConsoleLevel) { $Config.settings.logging.defaultConsoleLevel } else { "INFO" }
+    $fileLevel = if ($Config.settings.logging.defaultFileLevel) { $Config.settings.logging.defaultFileLevel } else { "DEBUG" }
+    
+    $consoleLogLevel = $logLevelMap[$consoleLevel.ToUpper()]
+    $fileLogLevel = $logLevelMap[$fileLevel.ToUpper()]
 
     # 3. Ensure the log directory exists
     if (-not (Test-Path -Path $logDir)) {
@@ -419,11 +448,11 @@ function Send-ProgressBarToBack {
     }
 }
 
-function Bring-ProgressBarToFront {
+function Show-ProgressBarInFront {
     if ($global:ProgressForm -and -not $global:ProgressForm.IsDisposed) {
         $global:ProgressForm.TopMost = $true
     }
 }
 
 # Export all public functions from this module.
-Export-ModuleMember -Function Write-Log, Show-ProgressBar, Stop-GraphicalProgressBar, Show-GraphicalProgressBar, Update-GraphicalProgressBar, Write-JsonAtomic, Set-UtilsLogger, ConvertTo-StandardPath, Initialize-ScriptLogger, Convert-HashtableToStringKey, Send-ProgressBarToBack, Bring-ProgressBarToFront
+Export-ModuleMember -Function Write-Log, Show-ProgressBar, Stop-GraphicalProgressBar, Show-GraphicalProgressBar, Update-GraphicalProgressBar, Write-JsonAtomic, Set-UtilsLogger, ConvertTo-StandardPath, Initialize-ScriptLogger, Convert-HashtableToStringKey, Send-ProgressBarToBack, Show-ProgressBarInFront

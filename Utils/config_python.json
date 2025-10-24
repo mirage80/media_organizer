@@ -1,0 +1,62 @@
+{
+  "settings": {
+    "enablePythonDebugging": true,
+    "logging": {
+      "defaultConsoleLevel": "INFO",
+      "defaultFileLevel": "DEBUG"
+    },
+    "progressBar": {
+      "defaultPrefixLength": 15
+    }
+  },
+  "paths": {
+    "rawDirectory": "C:/Users/sawye/Downloads/test/input",
+    "processedDirectory": "C:/Users/sawye/Downloads/test/Processed_py",
+    "logDirectory": "C:/Users/sawye/Codes/media_organizer/Logs_py",
+    "resultsDirectory": "C:/Users/sawye/Codes/media_organizer/Results_py",
+    "tools": {
+      "python": "python"
+    }
+  },
+  "pipelineSteps": [
+    { "Name": "Initial File Count", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Extract Zip Files", "Type": "Python", "Path": "step1 - Extract/Extract.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Extract", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Sanitize Names", "Type": "Python", "Path": "step3 - SanitizeNames/SanitizeNames.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Sanitize", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Map Google Photos JSON Data", "Type": "Python", "Path": "step5 - MapGoogleJson/MapGoogleJson.py", "Interactive": false, "Enabled": true },
+    { "Name": "File Count After JSON-Mapping", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Convert Media to Standard Formats", "Type": "Python", "Path": "step7 - Converter/converter.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Conversion", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Expand Metadata with EXIF/FFprobe", "Type": "Python", "Path": "step9 - ExpandMetaData/ExpandMetadata.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Metadata Expansion", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Remove Recycle Bin", "Type": "PowerShell", "Path": "step11 - RemoveRecycleBin/RemoveRecycleBin.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Recycle-Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Hash/Group Video Duplicates", "Type": "Python", "Path": "step13 - HashAndGroupVideos/HashANDGroupPossibleVideoDuplicates.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Video Hashing", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Hash/Group Image Duplicates", "Type": "Python", "Path": "step15 - HashAndGroupImages/HashANDGroupPossibleImageDuplicates.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Image Hashing", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Remove Exact Video Duplicates", "Type": "Python", "Path": "step17 - RemoveExactVideoDuplicates/RemoveExactVideoDuplicate.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Exact Video Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Remove Exact Image Duplicates", "Type": "Python", "Path": "step19 - RemoveExactImageDuplicates/RemoveExactImageDuplicate.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Exact Image Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Review/Remove Potential Video Duplicates", "Type": "Python", "Path": "step21 - ShowAndRemoveVideoDuplicate/ShowANDRemoveDuplicateVideo.py", "Interactive": true, "Enabled": false },
+    { "Name": "File Count After Potential Video Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Review/Remove Potential Image Duplicates", "Type": "Python", "Path": "step23 - ShowAndRemoveImageDuplicate/ShowANDRemoveDuplicateImage.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Potential Image Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Consolidate Best Metadata", "Type": "PowerShell", "Path": "step25 - ConsolidateMeta/Consolidate_Meta.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Meta Consolidation", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Remove Junk Videos", "Type": "Python", "Path": "step27 - RemoveJunkVideos/RemoveJunkVideo.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Junk Video Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Remove Junk Images", "Type": "Python", "Path": "step29 - RemoveJunkImages/RemoveJunkImage.py", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Junk Image Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Reconstruct Corrupt Videos", "Type": "PowerShell", "Path": "step31 - ReconstructVideos/VideoReconstruction.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Video Reconstruction", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Reconstruct Corrupt Images", "Type": "PowerShell", "Path": "step33 - ReconstructImages/ImageReconstruction.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Image Reconstruction", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Categorize Files", "Type": "PowerShell", "Path": "step35 - Categorization/Categorize.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "File Count After Categorization", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
+    { "Name": "Estimate Location By Time", "Type": "PowerShell", "Path": "step37 - EstimateByTime/EstimateByTime.ps1", "Interactive": false, "Enabled": false },
+    { "Name": "Final File Count", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false }
+  ]
+}
