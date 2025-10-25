@@ -2,8 +2,8 @@ import os
 import json
 import sys
 import argparse
-import subprocess
 from pathlib import Path
+from PIL import Image
 
 # --- Determine Project Root and Add to Path ---
 SCRIPT_PATH = os.path.abspath(__file__)
@@ -23,64 +23,53 @@ def report_progress(current, total, status):
         percent = min(int((current / total) * 100), 100)
         print(f"PROGRESS:{percent}|{status}", flush=True)
 
-def run_imagemagick_convert(input_path, output_path, magick_path, logger):
+def reconstruct_image_with_pillow(input_path, output_path, logger):
     """
-    Attempt to repair image using ImageMagick convert.
+    Attempt to repair/reconstruct image using Pillow (PIL).
+    This works by reading and re-saving the image, which fixes many corruption issues.
 
     Returns:
-        dict: {'success': bool, 'output': str, 'exit_code': int}
+        dict: {'success': bool, 'error': str}
     """
-    logger.debug(f"Calling ImageMagick for '{os.path.basename(input_path)}'")
-
     try:
-        cmd = [magick_path, input_path, output_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        # Open and re-save the image
+        with Image.open(input_path) as img:
+            # Convert RGBA to RGB if saving as JPEG
+            if img.mode in ('RGBA', 'LA', 'P'):
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P':
+                    img = img.convert('RGBA')
+                rgb_img.paste(img, mask=img.split()[-1] if img.mode in ('RGBA', 'LA') else None)
+                rgb_img.save(output_path, 'JPEG', quality=95)
+            else:
+                img.save(output_path, 'JPEG', quality=95)
 
-        success = result.returncode == 0 and os.path.exists(output_path)
+        logger.info(f"Pillow reconstruction succeeded for '{os.path.basename(input_path)}'")
+        return {'success': True, 'error': None}
 
-        if success:
-            logger.info(f"ImageMagick conversion succeeded for '{os.path.basename(input_path)}'")
-        else:
-            logger.warning(f"ImageMagick failed with exit code {result.returncode}")
-            logger.debug(f"ImageMagick output: {result.stderr}")
-
-        return {
-            'success': success,
-            'output': result.stderr + result.stdout,
-            'exit_code': result.returncode
-        }
-    except subprocess.TimeoutExpired:
-        logger.error(f"ImageMagick timed out for '{input_path}'")
-        return {'success': False, 'output': 'Timeout', 'exit_code': -1}
     except Exception as e:
-        logger.error(f"Exception during ImageMagick: {e}")
-        return {'success': False, 'output': str(e), 'exit_code': -1}
+        logger.warning(f"Pillow reconstruction failed: {e}")
+        return {'success': False, 'error': str(e)}
 
-def verify_image_with_identify(image_path, magick_path, logger):
+def verify_image_with_pillow(image_path, logger):
     """
-    Verify image file integrity using ImageMagick identify.
+    Verify image file integrity using Pillow.
 
     Returns:
         bool: True if valid, False otherwise
     """
     try:
-        cmd = [magick_path, 'identify', image_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-        if result.returncode == 0:
-            logger.debug(f"ImageMagick identify verification successful for '{os.path.basename(image_path)}'")
-            return True
-        else:
-            logger.warning(f"ImageMagick identify verification failed for '{os.path.basename(image_path)}'")
-            logger.debug(f"Identify output: {result.stderr}")
-            return False
+        with Image.open(image_path) as img:
+            img.verify()
+        logger.debug(f"Pillow verification successful for '{os.path.basename(image_path)}'")
+        return True
     except Exception as e:
-        logger.warning(f"Error during ImageMagick identify verification: {e}")
+        logger.warning(f"Pillow verification failed: {e}")
         return False
 
 def reconstruct_images(config_data: dict, logger) -> bool:
     """
-    Reconstruct corrupt images using ImageMagick.
+    Reconstruct corrupt images using Pillow (PIL).
 
     Args:
         config_data: Full configuration dictionary
@@ -91,10 +80,6 @@ def reconstruct_images(config_data: dict, logger) -> bool:
     """
     results_directory = config_data['paths']['resultsDirectory']
     reconstruct_list_path = os.path.join(results_directory, "images_to_reconstruct.json")
-
-    # Get tool path from config (with default)
-    tools = config_data.get('paths', {}).get('tools', {})
-    magick_path = tools.get('magick', 'magick')
 
     logger.info(f"--- Script Started: {SCRIPT_NAME} ---")
     logger.info(f"Reconstruction list: {reconstruct_list_path}")
@@ -138,12 +123,12 @@ def reconstruct_images(config_data: dict, logger) -> bool:
         # Define temporary output path
         temp_output_path = f"{image_path}.repaired.jpg"
 
-        # Attempt reconstruction
-        result = run_imagemagick_convert(image_path, temp_output_path, magick_path, logger)
+        # Attempt reconstruction using Pillow
+        result = reconstruct_image_with_pillow(image_path, temp_output_path, logger)
 
         if result['success']:
             # Verify the repaired file
-            is_valid = verify_image_with_identify(temp_output_path, magick_path, logger)
+            is_valid = verify_image_with_pillow(temp_output_path, logger)
 
             if is_valid and os.path.exists(temp_output_path) and os.path.getsize(temp_output_path) > 0:
                 logger.info(f"Successfully repaired '{base_name}'")
@@ -183,8 +168,7 @@ def reconstruct_images(config_data: dict, logger) -> bool:
                     os.remove(temp_output_path)
                 fail_count += 1
         else:
-            logger.error(f"Failed to reconstruct '{base_name}'")
-            logger.debug(f"Final error: {result['output']}")
+            logger.error(f"Failed to reconstruct '{base_name}': {result['error']}")
             if os.path.exists(temp_output_path):
                 os.remove(temp_output_path)
             fail_count += 1
@@ -206,13 +190,19 @@ def reconstruct_images(config_data: dict, logger) -> bool:
     return True
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Reconstruct corrupt images using ImageMagick.")
+    parser = argparse.ArgumentParser(description="Reconstruct corrupt images using Pillow (PIL).")
     parser.add_argument("--config-json", required=True, help="Configuration as JSON string")
     args = parser.parse_args()
 
     try:
         config_data = json.loads(args.config_json)
-        step = os.environ.get('CURRENT_STEP', '23')
+
+        # Get progress info from config (PipelineState fields)
+        progress_info = config_data.get('_progress', {})
+        current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+
+        # Use for logging
+        step = str(current_enabled_real_step)
         logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
         result = reconstruct_images(config_data, logger)
         if not result:

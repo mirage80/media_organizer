@@ -21,6 +21,9 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+# Global progress manager instance for scripts to access
+_global_progress_manager = None
+
 
 # =============================================================================
 # CONFIGURATION FUNCTIONALITY
@@ -133,14 +136,22 @@ class MediaOrganizerConfig:
     def get_pipeline_steps(self) -> List[Dict[str, Any]]:
         """Get pipeline steps configuration."""
         return self.config_data.get('pipelineSteps', [])
-    
+
+    def get_steps(self) -> List[Dict[str, Any]]:
+        """Get all pipeline steps (enabled + disabled, including counters)."""
+        return self.get_pipeline_steps()
+
+    def get_real_steps(self) -> List[Dict[str, Any]]:
+        """Get all real steps (enabled + disabled, excluding counters)."""
+        return [step for step in self.get_pipeline_steps() if not self._is_counter_script(step)]
+
     def get_enabled_steps(self) -> List[Dict[str, Any]]:
-        """Get only enabled pipeline steps."""
+        """Get all enabled pipeline steps (including counters)."""
         return [step for step in self.get_pipeline_steps() if step.get('Enabled', False)]
-    
-    def get_enabled_phases(self) -> List[Dict[str, Any]]:
-        """Get only enabled pipeline phases (excluding counter scripts)."""
-        return [phase for phase in self.get_pipeline_steps() if phase.get('Enabled', False) and not self._is_counter_script(phase)]
+
+    def get_enabled_real_steps(self) -> List[Dict[str, Any]]:
+        """Get enabled real steps (excluding counter scripts)."""
+        return [step for step in self.get_pipeline_steps() if step.get('Enabled', False) and not self._is_counter_script(step)]
     
     def _is_counter_script(self, step: Dict[str, Any]) -> bool:
         """Check if a step is a counter script."""
@@ -1336,14 +1347,16 @@ class ProgressBarManager:
     Supports both overall pipeline progress and individual step progress.
     """
     
-    def __init__(self, enable_gui: bool = True):
+    def __init__(self, enable_gui: bool = True, use_main_thread: bool = False):
         """
         Initialize the progress bar manager.
-        
+
         Args:
             enable_gui: Whether to use GUI progress bar (True) or console only (False)
+            use_main_thread: If True, create GUI in current thread (for main.py). If False, use background thread.
         """
         self.enable_gui = enable_gui and GUI_AVAILABLE
+        self.use_main_thread = use_main_thread
         self.root = None
         self.form = None
         self.overall_bar = None
@@ -1353,12 +1366,29 @@ class ProgressBarManager:
         self.command_queue = queue.Queue()
         self.gui_thread = None
         self.running = False
+
+        # Fine-tuned progress tracking
+        self.total_steps = 0
+        self.current_step_index = 0
+        self.current_step_base_percent = 0.0  # Where this step starts in overall progress
+        self.current_step_weight = 0.0  # How much of overall this step contributes
         
     def start(self) -> None:
         """Start the progress bar system."""
+        global _global_progress_manager
+        _global_progress_manager = self
         if self.enable_gui:
-            self._start_gui()
-        self.running = True
+            if self.use_main_thread:
+                # Create GUI directly in current thread (main thread)
+                self._create_progress_form()
+                self.running = True
+                # Don't call mainloop() - main.py will handle event processing
+            else:
+                # Create GUI in background thread (for subprocesses)
+                self._start_gui()
+                self.running = True
+        else:
+            self.running = True
         
     def stop(self) -> None:
         """Stop the progress bar system."""
@@ -1391,19 +1421,69 @@ class ProgressBarManager:
         else:
             print(f"Progress: {percent}% - {activity}")
             
+    def update_progress(self, total_steps: int, current_step: int, step_name: str,
+                        subtask_percent: int, subtask_message: str = "") -> None:
+        """
+        Update the fine-tuned progress bar - single unified function.
+
+        This automatically calculates overall progress based on step position and subtask completion.
+
+        Args:
+            total_steps: Total number of steps in the pipeline (e.g., 5)
+            current_step: Current step number, 1-based (e.g., 1 for first step)
+            step_name: Name of the current step (e.g., "Extract Zip Files")
+            subtask_percent: Progress within current step, 0-100
+            subtask_message: Description of current subtask (e.g., "Extracting: file_003.zip")
+
+        Example:
+            # Pipeline has 5 steps, currently on step 1 (Extract)
+            # Extracting zip file 3 of 10 (30% through extraction)
+            progress_mgr.update_progress(5, 1, "Extract Zip Files", 30, "Extracting: file_003.zip")
+            # Overall bar shows: 0% + (20% × 30%) = 6%
+            # Top: "Step 1/5: Extract Zip Files" - 6%
+            # Bottom: "Extracting: file_003.zip" - 30%
+        """
+        # Calculate step weight and base
+        step_weight = 100.0 / total_steps if total_steps > 0 else 100.0
+        step_base = (current_step - 1) * step_weight
+
+        # Calculate fine-tuned overall progress
+        overall_percent = step_base + (step_weight * subtask_percent / 100.0)
+        overall_percent = min(100.0, max(0.0, overall_percent))
+
+        # Create overall label: "Step X/Y: Step Name"
+        overall_label = f"Step {current_step}/{total_steps}: {step_name}"
+
+        # Update GUI
+        if self.enable_gui:
+            if self.use_main_thread:
+                # Direct update (no queue needed - already in main thread)
+                self._update_overall_direct(int(overall_percent), overall_label)
+                self._update_subtask_direct(subtask_percent, subtask_message)
+            else:
+                # Queue-based update (for background thread)
+                self._send_command('update_overall', percent=int(overall_percent), activity=overall_label)
+                self._send_command('update_subtask', percent=subtask_percent, message=subtask_message)
+        else:
+            # Console output
+            print(f"Progress: {overall_percent:.1f}% - {overall_label}")
+            if subtask_message:
+                print(f"  {subtask_message} ({subtask_percent}%)")
+
     def update_subtask(self, percent: int, message: str) -> None:
         """
-        Update current step/subtask progress.
-        
+        Legacy method: Update subtask progress only.
+        Kept for backward compatibility with main.py.
+
         Args:
-            percent: Progress percentage (0-100)
+            percent: Subtask progress percentage (0-100)
             message: Description of current subtask
         """
         if self.enable_gui:
             self._send_command('update_subtask', percent=percent, message=message)
         else:
             print(f"  Subtask: {percent}% - {message}")
-            
+
     def send_to_back(self) -> None:
         """Send progress bar to background (for interactive steps)."""
         if self.enable_gui:
@@ -1429,80 +1509,176 @@ class ProgressBarManager:
     def _send_command(self, command: str, **kwargs) -> None:
         """Send a command to the GUI thread."""
         self.command_queue.put((command, kwargs))
+
+    def _update_overall_direct(self, percent: int, activity: str) -> None:
+        """Directly update overall progress (for main thread mode)."""
+        if self.overall_bar:
+            percent = max(0, min(100, percent))
+            if hasattr(self.overall_bar, 'set'):
+                self.overall_bar.set(percent / 100.0)  # CustomTkinter uses 0.0-1.0
+            else:
+                self.overall_bar['value'] = percent  # Standard tkinter uses 0-100
+
+        if self.step_label:
+            self.step_label.configure(text=activity)
+
+    def _update_subtask_direct(self, percent: int, message: str) -> None:
+        """Directly update subtask progress (for main thread mode)."""
+        if self.step_bar:
+            percent = max(0, min(100, percent))
+            if hasattr(self.step_bar, 'set'):
+                self.step_bar.set(percent / 100.0)  # CustomTkinter uses 0.0-1.0
+            else:
+                self.step_bar['value'] = percent  # Standard tkinter uses 0-100
+
+        if self.subtask_label:
+            self.subtask_label.configure(text=message)
         
     def _gui_worker(self) -> None:
         """GUI worker thread that handles the tkinter interface."""
         try:
-            # Create root window
-            self.root = tk.Tk()
-            self.root.withdraw()  # Hide initially
-            
-            # Create progress form
-            self._create_progress_form()
-            
+            # Check if CustomTkinter is available
+            try:
+                from customtkinter import CTk
+                use_customtkinter = True
+            except ImportError:
+                use_customtkinter = False
+
+            if use_customtkinter:
+                # CustomTkinter: CTk is the root, no need for separate tk.Tk()
+                self.root = None
+                self._create_progress_form()  # Creates CTk directly
+            else:
+                # Standard tkinter: Create root window
+                self.root = tk.Tk()
+                self.root.withdraw()  # Hide initially
+                self._create_progress_form()
+
             # Process commands
-            self.root.after(50, self._process_commands)
-            
+            if self.root:
+                self.root.after(50, self._process_commands)
+            else:
+                self.form.after(50, self._process_commands)
+
             # Start GUI loop
-            self.root.mainloop()
-            
+            if self.root:
+                self.root.mainloop()
+            else:
+                self.form.mainloop()
+
         except Exception as e:
             logger.error(f"Error in GUI worker: {e}")
         finally:
             self._cleanup_gui()
             
     def _create_progress_form(self) -> None:
-        """Create the progress bar form."""
-        self.form = tk.Toplevel(self.root)
-        self.form.title("Media Organizer Progress")
-        self.form.geometry("500x180")
+        """Create the progress bar form with modern CustomTkinter design."""
+        try:
+            from customtkinter import CTk, CTkFrame, CTkProgressBar, CTkLabel, set_appearance_mode
+            use_customtkinter = True
+        except ImportError:
+            use_customtkinter = False
+            logger.warning("CustomTkinter not available, using standard tkinter")
+
+        # Calculate window size: 1/4 screen width × 1/5 screen height
+        if use_customtkinter:
+            temp_window = CTk()
+            temp_window.withdraw()
+            temp_window.update_idletasks()
+            screen_w = temp_window.winfo_screenwidth()
+            screen_h = temp_window.winfo_screenheight()
+            temp_window.destroy()
+        else:
+            screen_w = self.root.winfo_screenwidth()
+            screen_h = self.root.winfo_screenheight()
+
+        window_width = int(screen_w / 4)
+        window_height = int(screen_h / 5)
+
+        if use_customtkinter:
+            # Use CustomTkinter for modern look
+            self.form = CTk()
+            self.form.title("Media Organizer Progress")
+            self.form.geometry(f"{window_width}x{window_height}")
+            set_appearance_mode("system")  # Use system theme (light/dark)
+        else:
+            # Fallback to standard tkinter
+            self.form = tk.Toplevel(self.root)
+            self.form.title("Media Organizer Progress")
+            self.form.geometry(f"{window_width}x{window_height}")
+
         self.form.resizable(False, False)
         self.form.protocol("WM_DELETE_WINDOW", lambda: None)  # Disable close button
-        
+
         try:
             self.form.attributes("-topmost", True)
         except tk.TclError:
             pass  # Not all platforms support this
-            
-        # Configure grid
-        self.form.grid_rowconfigure(1, weight=1)
-        self.form.grid_rowconfigure(3, weight=1)
-        self.form.grid_columnconfigure(0, weight=1)
-        
-        # Overall progress bar
-        self.overall_bar = ttk.Progressbar(
-            self.form,
-            mode='determinate',
-            maximum=100,
-            value=0
-        )
-        self.overall_bar.grid(row=0, column=0, sticky="ew", padx=15, pady=(20, 5))
-        
-        # Step label
-        self.step_label = tk.Label(
-            self.form,
-            text="Step: Not started",
-            anchor="w"
-        )
-        self.step_label.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
-        
-        # Subtask progress bar
-        self.step_bar = ttk.Progressbar(
-            self.form,
-            mode='determinate',
-            maximum=100,
-            value=0
-        )
-        self.step_bar.grid(row=2, column=0, sticky="ew", padx=15, pady=5)
-        
-        # Subtask label
-        self.subtask_label = tk.Label(
-            self.form,
-            text="Subtask: Not started",
-            anchor="w"
-        )
-        self.subtask_label.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 20))
-        
+
+        if use_customtkinter:
+            # Top section (overall progress)
+            top_frame = CTkFrame(master=self.form, fg_color="#e8f5e9", corner_radius=8)
+            top_frame.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+
+            CTkLabel(master=top_frame, text="Overall Progress",
+                    font=("Segoe UI", 14, "bold"),
+                    text_color="#2e7d32").pack(pady=(10, 5), padx=15, anchor="w")
+
+            self.overall_bar = CTkProgressBar(master=top_frame,
+                                             mode='determinate',
+                                             progress_color="#4CAF50",
+                                             fg_color="#C8E6C9",
+                                             height=20)
+            self.overall_bar.set(0)
+            self.overall_bar.pack(fill="x", padx=15, pady=5)
+
+            self.step_label = CTkLabel(master=top_frame,
+                                      text="Step: Not started",
+                                      font=("Segoe UI", 11),
+                                      text_color="#2e7d32",
+                                      anchor="w")
+            self.step_label.pack(fill="x", padx=15, pady=(5, 10))
+
+            # Bottom section (subtask progress)
+            bottom_frame = CTkFrame(master=self.form, fg_color="#fff3e0", corner_radius=8)
+            bottom_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+
+            CTkLabel(master=bottom_frame, text="Current Task",
+                    font=("Segoe UI", 14, "bold"),
+                    text_color="#e65100").pack(pady=(10, 5), padx=15, anchor="w")
+
+            self.step_bar = CTkProgressBar(master=bottom_frame,
+                                          mode='determinate',
+                                          progress_color="#FF9800",
+                                          fg_color="#FFE0B2",
+                                          height=20)
+            self.step_bar.set(0)
+            self.step_bar.pack(fill="x", padx=15, pady=5)
+
+            self.subtask_label = CTkLabel(master=bottom_frame,
+                                         text="Subtask: Not started",
+                                         font=("Segoe UI", 11),
+                                         text_color="#e65100",
+                                         anchor="w")
+            self.subtask_label.pack(fill="x", padx=15, pady=(5, 10))
+        else:
+            # Standard tkinter fallback
+            self.form.grid_rowconfigure(1, weight=1)
+            self.form.grid_rowconfigure(3, weight=1)
+            self.form.grid_columnconfigure(0, weight=1)
+
+            self.overall_bar = ttk.Progressbar(self.form, mode='determinate', maximum=100, value=0)
+            self.overall_bar.grid(row=0, column=0, sticky="ew", padx=15, pady=(20, 5))
+
+            self.step_label = tk.Label(self.form, text="Step: Not started", anchor="w")
+            self.step_label.grid(row=1, column=0, sticky="ew", padx=15, pady=5)
+
+            self.step_bar = ttk.Progressbar(self.form, mode='determinate', maximum=100, value=0)
+            self.step_bar.grid(row=2, column=0, sticky="ew", padx=15, pady=5)
+
+            self.subtask_label = tk.Label(self.form, text="Subtask: Not started", anchor="w")
+            self.subtask_label.grid(row=3, column=0, sticky="ew", padx=15, pady=(5, 20))
+
         # Center the window
         self.form.update_idletasks()
         width = self.form.winfo_width()
@@ -1510,9 +1686,12 @@ class ProgressBarManager:
         x = (self.form.winfo_screenwidth() // 2) - (width // 2)
         y = (self.form.winfo_screenheight() // 2) - (height // 2)
         self.form.geometry(f"{width}x{height}+{x}+{y}")
-        
+
         # Show the form
-        self.form.deiconify()
+        if use_customtkinter:
+            self.form.deiconify()
+        else:
+            self.form.deiconify()
         
     def _process_commands(self) -> None:
         """Process commands from the command queue."""
@@ -1527,8 +1706,11 @@ class ProgressBarManager:
             logger.error(f"Error processing commands: {e}")
             
         # Schedule next check if still running
-        if self.running and self.root:
-            self.root.after(50, self._process_commands)
+        if self.running:
+            if self.root:
+                self.root.after(50, self._process_commands)
+            elif self.form:
+                self.form.after(50, self._process_commands)
             
     def _handle_command(self, command: str, **kwargs) -> None:
         """Handle a specific command."""
@@ -1537,24 +1719,42 @@ class ProgressBarManager:
                 self._cleanup_gui()
                 if self.root:
                     self.root.quit()
-                    
+
             elif command == 'update_overall':
                 if self.overall_bar:
                     percent = max(0, min(100, kwargs.get('percent', 0)))
-                    self.overall_bar['value'] = percent
-                    
+                    # Handle both CustomTkinter and standard tkinter
+                    if hasattr(self.overall_bar, 'set'):
+                        self.overall_bar.set(percent / 100.0)  # CustomTkinter uses 0.0-1.0
+                    else:
+                        self.overall_bar['value'] = percent  # Standard tkinter uses 0-100
+
                 if self.step_label:
                     activity = kwargs.get('activity', 'Unknown')
-                    self.step_label.config(text=activity)
-                    
+                    self.step_label.configure(text=activity)
+
+            elif command == 'update_overall_silent':
+                # Update overall bar without changing the step label (for fine-tuning)
+                if self.overall_bar:
+                    percent = max(0, min(100, kwargs.get('percent', 0)))
+                    # Handle both CustomTkinter and standard tkinter
+                    if hasattr(self.overall_bar, 'set'):
+                        self.overall_bar.set(percent / 100.0)  # CustomTkinter uses 0.0-1.0
+                    else:
+                        self.overall_bar['value'] = percent  # Standard tkinter uses 0-100
+
             elif command == 'update_subtask':
                 if self.step_bar:
                     percent = max(0, min(100, kwargs.get('percent', 0)))
-                    self.step_bar['value'] = percent
-                    
+                    # Handle both CustomTkinter and standard tkinter
+                    if hasattr(self.step_bar, 'set'):
+                        self.step_bar.set(percent / 100.0)  # CustomTkinter uses 0.0-1.0
+                    else:
+                        self.step_bar['value'] = percent  # Standard tkinter uses 0-100
+
                 if self.subtask_label:
                     message = kwargs.get('message', 'Unknown')
-                    self.subtask_label.config(text=message)
+                    self.subtask_label.configure(text=message)
                     
             elif command == 'send_to_back':
                 if self.form:
@@ -1589,10 +1789,50 @@ class ProgressBarManager:
             logger.error(f"Error cleaning up GUI: {e}")
 
 
+def update_pipeline_progress(total_steps: int, current_step: int, step_name: str,
+                             subtask_percent: int, subtask_message: str = "") -> None:
+    """
+    Global helper function for updating the fine-tuned progress bar.
+
+    This is a convenience function that uses the global progress bar manager.
+    Use this in your pipeline steps instead of report_progress().
+
+    Args:
+        total_steps: Total number of steps in the pipeline (e.g., 5)
+        current_step: Current step number, 1-based (e.g., 1 for first step)
+        step_name: Name of the current step (e.g., "Extract Zip Files")
+        subtask_percent: Progress within current step, 0-100
+        subtask_message: Description of current subtask (e.g., "Extracting: file_003.zip")
+
+    Example:
+        # In Extract.py, extracting file 3 of 10:
+        update_pipeline_progress(5, 1, "Extract Zip Files", 30, "Extracting: file_003.zip")
+    """
+    # Always print to console (works in both main process and subprocesses)
+    step_weight = 100.0 / total_steps if total_steps > 0 else 100.0
+    overall = ((current_step - 1) * step_weight) + (step_weight * subtask_percent / 100.0)
+    print(f"PROGRESS:{int(overall)}|Step {current_step}/{total_steps}: {step_name} - {subtask_message}", flush=True)
+
+    # Try to update GUI if available (only in main process)
+    global _global_progress_manager
+    if _global_progress_manager is not None:
+        try:
+            _global_progress_manager.update_progress(
+                total_steps, current_step, step_name, subtask_percent, subtask_message
+            )
+        except Exception as e:
+            # If GUI update fails (e.g., threading issues), print error for debugging
+            print(f"DEBUG: GUI update failed: {e}", flush=True)
+    else:
+        print(f"DEBUG: _global_progress_manager is None", flush=True)
+
+
 def report_progress(current: int, total: int, status: str) -> None:
     """
-    Report progress in the format expected by the pipeline.
-    
+    Legacy function: Report progress in the old format.
+
+    DEPRECATED: Use update_pipeline_progress() instead for fine-tuned progress.
+
     Args:
         current: Current item number
         total: Total number of items

@@ -252,7 +252,13 @@ if __name__ == "__main__":
 
     try:
         config_data = json.loads(args.config_json)
-        step = os.environ.get('CURRENT_STEP', '31')
+
+        # Get progress info from config (PipelineState fields)
+        progress_info = config_data.get('_progress', {})
+        current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+
+        # Use for logging
+        step = str(current_enabled_real_step)
         logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
         result = reconstruct_videos(config_data, logger)
         if not result:

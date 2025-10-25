@@ -10,9 +10,21 @@ import subprocess
 import signal
 from pathlib import Path
 import re
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, NamedTuple
 import argparse
 import re
+
+
+class PipelineState(NamedTuple):
+    """Holds all step counts and current positions for the pipeline."""
+    number_of_steps: int
+    number_of_real_steps: int
+    number_of_enabled_steps: int
+    number_of_enabled_real_steps: int
+    current_step: int
+    current_real_step: int
+    current_enabled_step: int
+    current_enabled_real_step: int
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.absolute()
@@ -24,21 +36,21 @@ from Utils.utilities import get_config, MediaOrganizerConfig, setup_pipeline_log
 class PipelineOrchestrator:
     """
     Main pipeline orchestrator for the Media Organizer.
-    Manages phase execution, progress tracking, and error handling.
+    Manages step execution, progress tracking, and error handling.
     """
-    
+
     def __init__(self, config_file: Optional[str] = None):
         """
         Initialize the pipeline orchestrator.
-        
+
         Args:
             config_file: Optional path to config file
         """
         self.config = get_config(config_file)
         self.logger = None
         self.progress_manager = None
-        self.current_phase_index = 0
-        self.total_phases = 0
+        self.current_step_index = 0
+        self.total_real_steps = 0
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -85,22 +97,25 @@ class PipelineOrchestrator:
         
         return True
     
-    def _execute_python_script(self, script_path: str, step_name: str) -> bool:
+    def _execute_python_script(self, script_path: str, step_name: str, current_state: PipelineState) -> bool:
         """
         Execute a Python script with progress tracking.
-        
+
         Args:
             script_path: Path to the Python script
-            phase_name: Name of the phase for logging
-            
+            step_name: Name of the step for logging
+            current_state: Current pipeline state with all counters
+
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Prepare command - pass config object as JSON
+            # Prepare command - pass config object as JSON with progress info
             python_exe = sys.executable
             import json
-            config_json = json.dumps(self.config.config_data, indent=None)
+            config_with_progress = self.config.config_data.copy()
+            config_with_progress['_progress'] = current_state._asdict()
+            config_json = json.dumps(config_with_progress, indent=None)
             cmd = [python_exe, script_path, "--config-json", config_json]
             
             self.log("DEBUG", f"Executing: {' '.join(cmd)}")
@@ -118,23 +133,56 @@ class PipelineOrchestrator:
             
             # Monitor output for progress updates
             while True:
+                # Update GUI to keep it responsive
+                if self.progress_manager and self.progress_manager.enable_gui and self.progress_manager.form:
+                    self.progress_manager.form.update()
+
                 output = process.stdout.readline()
                 if output == '' and process.poll() is not None:
                     break
-                
+
                 if output:
                     output = output.strip()
                     
                     # Check for progress updates
                     if output.startswith('PROGRESS:'):
                         try:
-                            # Format: PROGRESS:percentage|status
+                            # Format: PROGRESS:overall_percent|Step X/Y: StepName - SubtaskMessage
                             parts = output[9:].split('|', 1)
                             if len(parts) == 2:
-                                percent = int(parts[0])
-                                status = parts[1]
-                                self.progress_manager.update_subtask(percent, status)
-                        except (ValueError, IndexError):
+                                overall_percent = int(parts[0])
+                                status_message = parts[1]
+
+                                # Parse step info: "Step X/Y: StepName - SubtaskMessage"
+                                if status_message.startswith('Step '):
+                                    # Extract step numbers and details
+                                    step_part, rest = status_message.split(':', 1)
+                                    step_numbers = step_part.replace('Step ', '').strip()
+                                    current_step, total_steps = map(int, step_numbers.split('/'))
+
+                                    # Split step name and subtask message
+                                    if ' - ' in rest:
+                                        step_name, subtask_message = rest.split(' - ', 1)
+                                        step_name = step_name.strip()
+                                        subtask_message = subtask_message.strip()
+                                    else:
+                                        step_name = rest.strip()
+                                        subtask_message = ""
+
+                                    # Calculate subtask percent from overall percent
+                                    step_weight = 100.0 / total_steps
+                                    step_base = (current_step - 1) * step_weight
+                                    subtask_percent = int(((overall_percent - step_base) / step_weight) * 100) if step_weight > 0 else 0
+                                    subtask_percent = max(0, min(100, subtask_percent))
+
+                                    # Update using the full progress method
+                                    self.progress_manager.update_progress(
+                                        total_steps, current_step, step_name, subtask_percent, subtask_message
+                                    )
+                                else:
+                                    # Fallback: just update overall
+                                    self.progress_manager.update_overall(overall_percent, status_message)
+                        except (ValueError, IndexError) as e:
                             pass
                     elif output.startswith(('DEBUG:', 'INFO:', 'WARNING:', 'ERROR:', 'CRITICAL:')):
                         # Forward log messages
@@ -164,26 +212,37 @@ class PipelineOrchestrator:
             self.log("ERROR", f"Error running Python script '{script_path}': {e}")
             return False
     
-    def _execute_powershell_script(self, script_path: str, args: Dict[str, Any], step_name: str) -> bool:
+    def _execute_powershell_script(self, script_path: str, args: Dict[str, Any], step_name: str, current_state: PipelineState) -> bool:
         """
         Execute a PowerShell script (for backward compatibility during transition).
-        
+
         Args:
             script_path: Path to the PowerShell script
             args: Arguments to pass to the script
-            phase_name: Name of the phase for logging
-            
+            step_name: Name of the step for logging
+            current_state: Current pipeline state with all counters
+
         Returns:
             True if successful, False otherwise
         """
         try:
             # Build PowerShell command
             cmd = ['pwsh', '-ExecutionPolicy', 'Bypass', '-File', script_path]
-            
-            # Add arguments
+
+            # Add arguments (including state info)
             for key, value in args.items():
                 cmd.extend([f'-{key}', str(value)])
-            
+
+            # Add pipeline state as separate arguments
+            cmd.extend(['-NumberOfSteps', str(current_state.number_of_steps)])
+            cmd.extend(['-NumberOfRealSteps', str(current_state.number_of_real_steps)])
+            cmd.extend(['-NumberOfEnabledSteps', str(current_state.number_of_enabled_steps)])
+            cmd.extend(['-NumberOfEnabledRealSteps', str(current_state.number_of_enabled_real_steps)])
+            cmd.extend(['-CurrentStep', str(current_state.current_step)])
+            cmd.extend(['-CurrentRealStep', str(current_state.current_real_step)])
+            cmd.extend(['-CurrentEnabledStep', str(current_state.current_enabled_step)])
+            cmd.extend(['-CurrentEnabledRealStep', str(current_state.current_enabled_real_step)])
+
             self.log("DEBUG", f"Executing PowerShell: {' '.join(cmd)}")
             
             # Execute
@@ -215,14 +274,14 @@ class PipelineOrchestrator:
             self.log("ERROR", f"Error running PowerShell script '{script_path}': {e}")
             return False
     
-    def _execute_step(self, step: Dict[str, Any], phase_number: int = 0, step_index: int = 0) -> bool:
+    def _execute_step(self, step: Dict[str, Any], current_state: PipelineState) -> bool:
         """
         Execute a single pipeline step.
-        
+
         Args:
             step: Step configuration dictionary
-            phase_number: Current phase number (0 for non-phase steps like counter)
-            
+            current_state: Current pipeline state with all counters
+
         Returns:
             True if successful, False otherwise
         """
@@ -242,59 +301,56 @@ class PipelineOrchestrator:
         
         if is_counter:
             self.log("INFO", f"Running utility: {step_name}")
-            # For counter scripts, use the step_index which represents which step we're counting
-            os.environ['CURRENT_STEP'] = str(step_index)
         else:
-            self.log("INFO", f"Starting Phase {phase_number}/{self.total_phases}: {step_name}")
-            os.environ['CURRENT_STEP'] = str(step_number_from_path)
-        
+            self.log("INFO", f"Starting Step {current_state.current_enabled_real_step}/{current_state.number_of_enabled_real_steps}: {step_name}")
+
         # Resolve arguments
         resolved_args = self.config.resolve_step_arguments(step_args)
-        
+
         # Set environment variables for Python scripts
         os.environ['CONFIG_FILE_PATH'] = str(self.config.config_file)
-        
+
         # Handle interactive steps
         if is_interactive:
             self.progress_manager.send_to_back()
-        
+
         # Execute based on type
         success = False
         if step_type == 'Python':
             script_path = PROJECT_ROOT / step_path
-            success = self._execute_python_script(str(script_path), step_name)
+            success = self._execute_python_script(str(script_path), step_name, current_state)
         elif step_type == 'PowerShell':
             script_path = PROJECT_ROOT / step_path
             args_dict = resolved_args if isinstance(resolved_args, dict) else {}
-            success = self._execute_powershell_script(str(script_path), args_dict, step_name)
+            success = self._execute_powershell_script(str(script_path), args_dict, step_name, current_state)
         else:
             self.log("ERROR", f"Unknown step type: {step_type}")
             return False
-        
+
         # Restore progress bar for interactive steps
         if is_interactive:
             self.progress_manager.bring_to_front()
-        
+
         if success:
             if is_counter:
                 self.log("INFO", f"Completed utility: {step_name}")
             else:
-                self.log("INFO", f"Completed Phase {phase_number}/{self.total_phases}: {step_name}")
+                self.log("INFO", f"Completed Step {current_state.current_enabled_real_step}/{current_state.number_of_enabled_real_steps}: {step_name}")
         else:
             if is_counter:
                 self.log("ERROR", f"Failed utility: {step_name}")
             else:
-                self.log("ERROR", f"Failed Phase {phase_number}/{self.total_phases}: {step_name}")
+                self.log("ERROR", f"Failed Step {current_state.current_enabled_real_step}/{current_state.number_of_enabled_real_steps}: {step_name}")
         
         return success
     
     def run(self, resume_from: Optional[int] = None) -> bool:
         """
         Run the entire pipeline.
-        
+
         Args:
-            resume_from: Optional phase number to resume from
-            
+            resume_from: Optional step number to resume from
+
         Returns:
             True if pipeline completed successfully, False otherwise
         """
@@ -306,74 +362,90 @@ class PipelineOrchestrator:
             if not self._validate_environment():
                 return False
             
-            # Get all enabled steps and count actual phases (excluding counter)
-            all_enabled_steps = self.config.get_enabled_steps()
-            pipeline_phases = self.config.get_enabled_phases()
-            self.total_phases = len(pipeline_phases)
-            
-            if len(all_enabled_steps) == 0:
+            # Calculate step counts using standard naming
+            # Pattern: all_X = config.get_X(), number_of_X = len(all_X)
+
+            all_steps = self.config.get_steps()  # All steps (enabled + disabled, including counters)
+            number_of_steps = len(all_steps)
+
+            all_real_steps = self.config.get_real_steps()  # All real steps (enabled + disabled, excluding counters)
+            number_of_real_steps = len(all_real_steps)
+
+            all_enabled_steps = self.config.get_enabled_steps()  # All enabled steps (including counters)
+            number_of_enabled_steps = len(all_enabled_steps)
+
+            all_enabled_real_steps = self.config.get_enabled_real_steps()  # Enabled real steps (excluding counters)
+            number_of_enabled_real_steps = len(all_enabled_real_steps)
+
+            if number_of_enabled_steps == 0:
                 self.log("WARNING", "No enabled steps found in configuration")
                 return True
-            
-            # Setup progress bar with GUI
-            self.progress_manager = ProgressBarManager(enable_gui=True)
+
+            # Setup progress bar with GUI in main thread (prettier CustomTkinter GUI)
+            self.progress_manager = ProgressBarManager(enable_gui=True, use_main_thread=True)
             self.progress_manager.start()
-            
-            # Resume from specific phase if requested
-            start_index = 0
+
+            # Resume from specific step if requested
             if resume_from:
-                start_index = max(0, resume_from - 1)
-                self.log("INFO", f"Resuming pipeline from phase {resume_from}")
-            
-            # Execute steps with proper phase numbering
-            current_phase_number = 0
+                self.log("INFO", f"Resuming pipeline from step {resume_from}")
 
-            # Get all steps to find actual indices
-            all_steps = self.config.config_data.get('pipelineSteps', [])
+            # Initialize all 4 current step counters
+            current_step = 0  # Position in all_steps (all steps including disabled and counters)
+            current_real_step = 0  # Position in all_real_steps (all real steps including disabled, excluding counters)
+            current_enabled_step = 0  # Position in all_enabled_steps (enabled steps including counters)
+            current_enabled_real_step = 0  # Position in all_enabled_real_steps (enabled real steps - for progress bar)
 
-            for step_index, step in enumerate(all_enabled_steps):
-                # Skip disabled steps
-                if not step.get('Enabled', False):
-                    self.log("INFO", f"Skipping disabled step: {step.get('Name', 'Unknown')}")
-                    continue
-
-                # Find actual index in full pipelineSteps array
-                actual_step_index = 0
-                for i, full_step in enumerate(all_steps):
-                    if full_step.get('Name') == step.get('Name') and full_step.get('Path') == step.get('Path'):
-                        actual_step_index = i
-                        break
+            # Iterate through ALL steps (not just enabled) to track all 4 counters accurately
+            for step_index, step in enumerate(all_steps):
+                # Increment current_step for every step
+                current_step += 1
 
                 # Determine if this is a counter script
                 is_counter = 'counter.py' in step.get('Path', '')
 
-                # Increment phase number only for non-counter scripts
+                # Increment current_real_step for non-counter steps
                 if not is_counter:
-                    current_phase_number += 1
+                    current_real_step += 1
 
-                # Skip if we haven't reached the resume point
-                if resume_from and current_phase_number < resume_from and not is_counter:
+                # Check if step is enabled
+                is_enabled = step.get('Enabled', False)
+
+                # Skip disabled steps (don't execute, but we counted them)
+                if not is_enabled:
                     continue
 
-                # Update overall progress
-                if is_counter:
-                    activity = f"Utility: {step.get('Name', 'Unknown')}"
-                    percent_complete = int((current_phase_number / self.total_phases) * 100) if self.total_phases > 0 else 0
-                else:
-                    percent_complete = int((current_phase_number / self.total_phases) * 100)
-                    activity = f"Phase {current_phase_number}: {step.get('Name', 'Unknown')}"
+                # Increment current_enabled_step for enabled steps
+                current_enabled_step += 1
 
-                self.progress_manager.update_overall(percent_complete, activity)
-                self.progress_manager.update_subtask(0, "Starting...")
+                # Increment current_enabled_real_step for enabled real steps
+                if not is_counter:
+                    current_enabled_real_step += 1
 
-                # Execute step with actual step index
-                success = self._execute_step(step, current_phase_number if not is_counter else 0, actual_step_index)
-                
+                # Skip if we haven't reached the resume point
+                if resume_from and current_enabled_real_step < resume_from and not is_counter:
+                    continue
+
+                # Create current state snapshot
+                current_state = PipelineState(
+                    number_of_steps=number_of_steps,
+                    number_of_real_steps=number_of_real_steps,
+                    number_of_enabled_steps=number_of_enabled_steps,
+                    number_of_enabled_real_steps=number_of_enabled_real_steps,
+                    current_step=current_step,
+                    current_real_step=current_real_step,
+                    current_enabled_step=current_enabled_step,
+                    current_enabled_real_step=current_enabled_real_step
+                )
+
+                # Execute step with progress info
+                # Note: Scripts receive all state info through config._progress
+                success = self._execute_step(step, current_state)
+
                 if not success:
                     if is_counter:
                         self.log("CRITICAL", f"Pipeline failed at utility: {step.get('Name', 'Unknown')}. Aborting.")
                     else:
-                        self.log("CRITICAL", f"Pipeline failed at phase {current_phase_number}. Aborting.")
+                        self.log("CRITICAL", f"Pipeline failed at step {current_enabled_real_step}/{number_of_enabled_real_steps}. Aborting.")
                     return False
             
             self.log("INFO", "Media Organizer pipeline completed successfully.")
@@ -399,29 +471,29 @@ def main():
         help='Path to configuration file'
     )
     parser.add_argument(
-        '--resume', 
-        type=int, 
-        metavar='PHASE', 
-        help='Resume from specific phase number'
+        '--resume',
+        type=int,
+        metavar='STEP',
+        help='Resume from specific step number'
     )
     parser.add_argument(
-        '--list-phases', 
-        action='store_true', 
-        help='List all pipeline phases and exit'
+        '--list-steps',
+        action='store_true',
+        help='List all pipeline steps and exit'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Create orchestrator
     orchestrator = PipelineOrchestrator(args.config)
-    
-    # List phases if requested
-    if args.list_phases:
-        phases = orchestrator.config.get_pipeline_phases()
-        print("Pipeline Phases:")
-        for i, phase in enumerate(phases, 1):
-            enabled = "[X]" if phase.get('Enabled', False) else "[ ]"
-            print(f"  {i:2d}. {enabled} {phase.get('Name', 'Unknown')} ({phase.get('Type', 'Unknown')})")
+
+    # List steps if requested
+    if args.list_steps:
+        steps = orchestrator.config.get_enabled_real_steps()
+        print("Pipeline Steps:")
+        for i, step in enumerate(steps, 1):
+            enabled = "[X]" if step.get('Enabled', False) else "[ ]"
+            print(f"  {i:2d}. {enabled} {step.get('Name', 'Unknown')} ({step.get('Type', 'Unknown')})")
         return 0
     
     # Run pipeline

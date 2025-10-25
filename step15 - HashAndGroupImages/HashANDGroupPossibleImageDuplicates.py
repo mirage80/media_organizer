@@ -206,9 +206,6 @@ def hash_and_group_images(config_data: dict, logger) -> bool:
     processed_directory = config_data['paths']['processedDirectory']
     results_directory = config_data['paths']['resultsDirectory']
 
-    # Get step number from environment for file naming
-    step = os.environ.get('CURRENT_STEP', '15')
-
     consolidated_meta_file = os.path.join(results_directory, "Consolidate_Meta_Results.json")
     image_duplicates_file = os.path.join(results_directory, "image_grouping_info.json")
 
@@ -264,7 +261,13 @@ if __name__ == "__main__":
 
     try:
         config_data = json.loads(args.config_json)
-        step = os.environ.get('CURRENT_STEP', '15')
+
+        # Get progress info from config (PipelineState fields)
+        progress_info = config_data.get('_progress', {})
+        current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+
+        # Use for logging
+        step = str(current_enabled_real_step)
         logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
         result = hash_and_group_images(config_data, logger)
         if not result:

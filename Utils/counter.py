@@ -68,10 +68,11 @@ def count_files_by_extension_with_config(config_data: dict, logger) -> dict:
     # Extract paths from config
     root_dir = config_data['paths']['processedDirectory']
     log_directory = config_data['paths']['logDirectory']
-    
-    # Get phase number from environment for file naming
-    step = os.environ.get('CURRENT_STEP', '0')
-    output_file_path = os.path.join(log_directory, f"Step_{step}_filereport.txt")
+
+    # Get step number from config progress info for file naming
+    progress_info = config_data.get('_progress', {})
+    current_step = progress_info.get('current_step', 0)
+    output_file_path = os.path.join(log_directory, f"Step_{current_step}_filereport.txt")
     
     # Count files
     counts = count_file_types_in_directory(root_dir, logger)
@@ -98,7 +99,9 @@ if __name__ == "__main__":
 
     try:
         config_data = json.loads(args.config_json)
-        step = os.environ.get('CURRENT_STEP', '0')
+        # Get step from config progress info
+        progress_info = config_data.get('_progress', {})
+        step = str(progress_info.get('current_step', 0))
         # Request a console-only logger because the main orchestrator handles file logging.
         logger = utils.get_script_logger_with_config(config_data, SCRIPT_NAME, step)
         result = count_files_by_extension_with_config(config_data, logger)

@@ -251,8 +251,12 @@ def main():
     # Parse config from JSON
     config_data = json.loads(args.config_json)
     
-    # Setup logging using config per standards
-    step = os.environ.get('CURRENT_STEP', '5')
+    # Get progress info from config (PipelineState fields)
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+
+    # Use for logging
+    step = str(current_enabled_real_step)
     logger_instance = get_script_logger_with_config(config_data, 'map_google_json', step)
     log = create_logger_function(logger_instance)
     

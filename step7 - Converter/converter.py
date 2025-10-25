@@ -441,8 +441,12 @@ def main():
         print(f"Error parsing config JSON: {e}")
         return 1
     
-    # Setup logging using config per standards
-    step = os.environ.get('CURRENT_STEP', '7')
+    # Get progress info from config (PipelineState fields)
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+
+    # Use for logging
+    step = str(current_enabled_real_step)
     logger_instance = get_script_logger_with_config(config_data, 'converter', step)
     
     # Execute conversion - pass only config and logger per standards
