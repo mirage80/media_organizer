@@ -215,7 +215,7 @@ class PipelineOrchestrator:
             self.log("ERROR", f"Error running PowerShell script '{script_path}': {e}")
             return False
     
-    def _execute_step(self, step: Dict[str, Any], phase_number: int = 0) -> bool:
+    def _execute_step(self, step: Dict[str, Any], phase_number: int = 0, step_index: int = 0) -> bool:
         """
         Execute a single pipeline step.
         
@@ -242,7 +242,8 @@ class PipelineOrchestrator:
         
         if is_counter:
             self.log("INFO", f"Running utility: {step_name}")
-            os.environ['CURRENT_STEP'] = '0'
+            # For counter scripts, use the step_index which represents which step we're counting
+            os.environ['CURRENT_STEP'] = str(step_index)
         else:
             self.log("INFO", f"Starting Phase {phase_number}/{self.total_phases}: {step_name}")
             os.environ['CURRENT_STEP'] = str(step_number_from_path)
@@ -326,24 +327,34 @@ class PipelineOrchestrator:
             
             # Execute steps with proper phase numbering
             current_phase_number = 0
-            
+
+            # Get all steps to find actual indices
+            all_steps = self.config.config_data.get('pipelineSteps', [])
+
             for step_index, step in enumerate(all_enabled_steps):
                 # Skip disabled steps
                 if not step.get('Enabled', False):
                     self.log("INFO", f"Skipping disabled step: {step.get('Name', 'Unknown')}")
                     continue
-                
+
+                # Find actual index in full pipelineSteps array
+                actual_step_index = 0
+                for i, full_step in enumerate(all_steps):
+                    if full_step.get('Name') == step.get('Name') and full_step.get('Path') == step.get('Path'):
+                        actual_step_index = i
+                        break
+
                 # Determine if this is a counter script
                 is_counter = 'counter.py' in step.get('Path', '')
-                
+
                 # Increment phase number only for non-counter scripts
                 if not is_counter:
                     current_phase_number += 1
-                
+
                 # Skip if we haven't reached the resume point
                 if resume_from and current_phase_number < resume_from and not is_counter:
                     continue
-                
+
                 # Update overall progress
                 if is_counter:
                     activity = f"Utility: {step.get('Name', 'Unknown')}"
@@ -351,12 +362,12 @@ class PipelineOrchestrator:
                 else:
                     percent_complete = int((current_phase_number / self.total_phases) * 100)
                     activity = f"Phase {current_phase_number}: {step.get('Name', 'Unknown')}"
-                    
+
                 self.progress_manager.update_overall(percent_complete, activity)
                 self.progress_manager.update_subtask(0, "Starting...")
-                
-                # Execute step
-                success = self._execute_step(step, current_phase_number if not is_counter else 0)
+
+                # Execute step with actual step index
+                success = self._execute_step(step, current_phase_number if not is_counter else 0, actual_step_index)
                 
                 if not success:
                     if is_counter:

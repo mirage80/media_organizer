@@ -14,7 +14,7 @@ High-level step-by-step process flow
 ============================================================================
 
 Normal Flow:
-run X.0: Enable current step
+run X.0: Enable Only current step
 run X.1: Check standards
 run X.2: Run Python pipeline
 run X.3: Run PowerShell pipeline
@@ -141,6 +141,25 @@ debug X.7: Evaluate results
 - If comparison passes: go to `run X.6` (delete old backup and continue)
 - If comparison fails: loop back to debug X.1 (repeat debug process)
 
+FAILURE RECOVERY STEPS:
+failure X.0: Clean Environment
+- Delete all output Directories
+- Delete all Result Directoires
+- Delete all Log Directories
+- Delete all Scripts and Extra File You Added for Debug Purpose
+failure X.1: Rerun For Backup 
+- Enable steps 0..X-1
+- Run both pipelines
+- Compare outputs
+failure X.2: Check Outputs Match 
+- reaching steps X means all steps upto X-1 is already verified
+- If they are not it is critical issue
+failure X.3: Create a back up for step X-1
+failure X.4: Enable only step X
+failure X.5: Run both pathes
+failure X.6: Wait At Step run X.4
+
+
 === SECTION 3: COMMANDS ===
 ============================================================================
 Exact commands to execute for each step
@@ -148,7 +167,7 @@ Exact commands to execute for each step
 
 NORMAL EXECUTION COMMANDS:
 
-run X.0: Enable current step
+run X.0: Enable current stepstep
 [In both config files, disable all steps, then enable the step at index `X`]
 
 run X.4: Compare outputs

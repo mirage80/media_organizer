@@ -252,8 +252,8 @@ def main():
     config_data = json.loads(args.config_json)
     
     # Setup logging using config per standards
-    phase = os.environ.get('CURRENT_PHASE', '3')
-    logger_instance = get_script_logger_with_config(config_data, 'map_google_json', phase)
+    step = os.environ.get('CURRENT_STEP', '5')
+    logger_instance = get_script_logger_with_config(config_data, 'map_google_json', step)
     log = create_logger_function(logger_instance)
     
     # Execute JSON mapping - pass only config and logger per standards

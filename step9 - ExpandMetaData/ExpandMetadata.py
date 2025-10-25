@@ -474,8 +474,8 @@ def main():
     config_data = json.loads(args.config_json)
     
     # Setup logging using config per standards
-    phase = os.environ.get('CURRENT_PHASE', '5')
-    logger_instance = get_script_logger_with_config(config_data, 'expand_metadata', phase)
+    step = os.environ.get('CURRENT_STEP', '9')
+    logger_instance = get_script_logger_with_config(config_data, 'expand_metadata', step)
     log = create_logger_function(logger_instance)
     
     # Execute metadata expansion - pass only config and logger per standards

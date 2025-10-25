@@ -966,7 +966,7 @@ class MediaOrganizerLogger:
         if step == "" or step is None:
             self.log_file_path = self.log_directory / f"{script_name}.log"
         else:
-            self.log_file_path = self.log_directory / f"Phase_{step}_{script_name}.log"
+            self.log_file_path = self.log_directory / f"Step_{step}_{script_name}.log"
         
         # Thread-safe logging
         self._lock = threading.Lock()
@@ -987,7 +987,7 @@ class MediaOrganizerLogger:
                 # If we can't delete it, use a timestamped name
                 import time
                 timestamp = int(time.time())
-                self.log_file_path = self.log_directory / f"Phase_{self.step}_{self.script_name}_{timestamp}.log"
+                self.log_file_path = self.log_directory / f"Step_{self.step}_{self.script_name}_{timestamp}.log"
         
         # Get logging levels from environment
         console_level = self._get_log_level_from_env('DEDUPLICATOR_CONSOLE_LOG_LEVEL', 'ERROR')

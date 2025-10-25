@@ -442,8 +442,8 @@ def main():
         return 1
     
     # Setup logging using config per standards
-    phase = os.environ.get('CURRENT_PHASE', '4')
-    logger_instance = get_script_logger_with_config(config_data, 'converter', phase)
+    step = os.environ.get('CURRENT_STEP', '7')
+    logger_instance = get_script_logger_with_config(config_data, 'converter', step)
     
     # Execute conversion - pass only config and logger per standards
     success = convert_media_files(config_data, logger_instance)
