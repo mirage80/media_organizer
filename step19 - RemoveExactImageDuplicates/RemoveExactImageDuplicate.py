@@ -1,63 +1,68 @@
 import os
 import json
 import sys
+import argparse
 
 # --- Determine Project Root and Add to Path ---
-# Assumes the script is in 'stepX' directory directly under the project root
 SCRIPT_PATH = os.path.abspath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
-PROJECT_ROOT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
 
-# Add project root to path if not already there (needed for 'import utils')
-if PROJECT_ROOT_DIR not in sys.path:
-     sys.path.append(PROJECT_ROOT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
 from Utils import utilities as utils
-
-# --- Setup Logging using utils ---
-# Pass PROJECT_ROOT_DIR as base_dir for logs to go into media_organizer/Logs
-DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'WARNING')
-DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'DEBUG')
-CURRENT_STEP = os.getenv('CURRENT_STEP', '0')
-logger = utils.setup_logging(PROJECT_ROOT_DIR, "Step_" + CURRENT_STEP + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR, default_file_level_str=DEFAULT_FILE_LEVEL_STR)
-
-# --- Define Constants ---
-OUTPUT_DIR = os.path.join(PROJECT_ROOT_DIR, "Outputs")
-DELETE_DIR = os.path.join(OUTPUT_DIR, ".deleted")
-MEDIA_INFO_FILE = os.path.join(OUTPUT_DIR, "Consolidate_Meta_Results.json")
-IMAGE_GROUPING_INFO_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
+from Utils.utilities import get_script_logger_with_config
 
 def report_progress(current, total, status):
-    """Reports progress to PowerShell in the expected format."""
+    """Reports progress to the main orchestrator in the expected format."""
     if total > 0:
         # Ensure percent doesn't exceed 100
         percent = min(int((current / total) * 100), 100)
         print(f"PROGRESS:{percent}|{status}", flush=True)
 
-def remove_duplicate_images(group_json_file_path):
+def remove_duplicate_images(config_data: dict, logger) -> bool:
+    """
+    Remove exact image duplicates by keeping one file and merging metadata.
+
+    Args:
+        config_data: Full configuration dictionary
+        logger: An initialized logger instance.
+
+    Returns:
+        True if successful, False otherwise
+    """
+    results_directory = config_data['paths']['resultsDirectory']
+
+    image_grouping_file = os.path.join(results_directory, "image_grouping_info.json")
+    consolidated_meta_file = os.path.join(results_directory, "Consolidate_Meta_Results.json")
+    delete_dir = os.path.join(results_directory, ".deleted")
+
+    logger.info(f"--- Script Started: {SCRIPT_NAME} ---")
     logger.info(f"--- Starting Duplicate Image Removal Process ---")
 
     try:
-        with open(group_json_file_path, 'r') as f:
+        with open(image_grouping_file, 'r') as f:
             data = json.load(f)
     except FileNotFoundError:
-        logger.error(f"Error: Grouping file not found at {group_json_file_path}")
-        return
+        logger.error(f"Error: Grouping file not found at {image_grouping_file}")
+        return False
     except json.JSONDecodeError:
-        logger.error(f"Error: Invalid JSON format in {group_json_file_path}")
-        return
+        logger.error(f"Error: Invalid JSON format in {image_grouping_file}")
+        return False
 
     # Load metadata file as dict
     try:
-        with open(MEDIA_INFO_FILE, 'r') as f:
+        with open(consolidated_meta_file, 'r') as f:
             meta_dict = json.load(f)
     except Exception as e:
-        logger.error(f"Could not load {MEDIA_INFO_FILE}: {e}")
-        return
+        logger.error(f"Could not load {consolidated_meta_file}: {e}")
+        return False
 
     if "grouped_by_name_and_size" not in data:
         logger.info("Missing 'grouped_by_name_and_size' in JSON.")
-        return
+        return True
 
     groups = data["grouped_by_name_and_size"]
     total_groups = len(groups)
@@ -79,7 +84,7 @@ def remove_duplicate_images(group_json_file_path):
         # Filter for existing files and split into a keeper and discards
         existing_files = [path for path in group_members if os.path.exists(path)]
         if len(existing_files) < 2:
-            logger.warning(f"All files missing for group {group_key}. Removing group.")
+            logger.info(f"Only {len(existing_files)} file(s) exist for group {group_key}. No duplicates to remove.")
             if group_key in groups: del groups[group_key]
             continue
 
@@ -97,7 +102,7 @@ def remove_duplicate_images(group_json_file_path):
         logger.debug(f"Merged metadata into keeper: {keeper_path}")
 
         # 2. Move discarded files to the delete folder and update the counter
-        moved_map = utils.move_to_delete_folder(discarded_paths, DELETE_DIR, logger)
+        moved_map = utils.move_to_delete_folder(discarded_paths, delete_dir, logger)
         overall_files_deleted += len(moved_map)
 
         # 3. Remove metadata entries for the files that were successfully moved
@@ -111,23 +116,37 @@ def remove_duplicate_images(group_json_file_path):
         logger.info(f"Removed group {group_key} after processing. Kept: {os.path.basename(keeper_path)}")
 
     # Save updated grouping data
-    if utils.write_json_atomic(data, group_json_file_path, logger=logger):
-        logger.info(f"Grouping JSON saved: {group_json_file_path}")
+    if utils.write_json_atomic(data, image_grouping_file, logger=logger):
+        logger.info(f"Grouping JSON saved: {image_grouping_file}")
     else:
-        logger.error(f"Failed to save updated grouping JSON: {group_json_file_path}")
+        logger.error(f"Failed to save updated grouping JSON: {image_grouping_file}")
+        return False
 
-    if utils.write_json_atomic(meta_dict, MEDIA_INFO_FILE, logger=logger):
-        logger.info(f"{MEDIA_INFO_FILE} updated with merged metadata.")
+    if utils.write_json_atomic(meta_dict, consolidated_meta_file, logger=logger):
+        logger.info(f"{consolidated_meta_file} updated with merged metadata.")
     else:
-        logger.error(f"Failed to update {MEDIA_INFO_FILE}")
+        logger.error(f"Failed to update {consolidated_meta_file}")
+        return False
 
     logger.info(f"--- Duplicate Removal Complete ---")
     logger.info(f"Processed {total_groups} initial groups.")
     logger.info(f"Total files deleted: {overall_files_deleted}")
     logger.info(f"Total groups remaining: {len(groups)}")
 
-# --- Main Execution Block (Adapted for Images) ---
+    return True
+
 if __name__ == "__main__":
-    logger.info("Step 2: Processing duplicate groups...")        
-    remove_duplicate_images(IMAGE_GROUPING_INFO_FILE) 
-    logger.info("--- Script Finished ---")
+    parser = argparse.ArgumentParser(description="Remove exact image duplicates and merge their metadata.")
+    parser.add_argument("--config-json", required=True, help="Configuration as JSON string")
+    args = parser.parse_args()
+
+    try:
+        config_data = json.loads(args.config_json)
+        step = os.environ.get('CURRENT_STEP', '19')
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        result = remove_duplicate_images(config_data, logger)
+        if not result:
+            sys.exit(1)
+    except Exception as e:
+        print(f"CRITICAL: Error in standalone execution: {e}", file=sys.stderr)
+        sys.exit(1)
