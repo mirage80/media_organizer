@@ -2,9 +2,7 @@ import os
 import hashlib
 import json
 import argparse
-import cv2
 import sys
-import contextlib # Import contextlib for redirection
 
 # --- Determine Project Root and Add to Path ---
 SCRIPT_PATH = os.path.abspath(__file__)
@@ -12,36 +10,25 @@ SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SCRIPT_NAME = os.path.splitext(os.path.basename(SCRIPT_PATH))[0]
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_ROOT not in sys.path:
-     sys.path.append(PROJECT_ROOT)
+    sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-
-# --- Setup Logging using utils ---
-DEFAULT_CONSOLE_LEVEL_STR = os.getenv('DEFAULT_CONSOLE_LEVEL_STR', 'WARNING')
-DEFAULT_FILE_LEVEL_STR = os.getenv('DEFAULT_FILE_LEVEL_STR', 'WARNING')
-CURRENT_PHASE = os.getenv('CURRENT_PHASE', '0')
-
-# Initialize the logger with the project root, script name, and logging levels
-logger = utils.setup_logging(PROJECT_ROOT, "Phase_" + CURRENT_PHASE + "_" + SCRIPT_NAME, default_console_level_str=DEFAULT_CONSOLE_LEVEL_STR , default_file_level_str=DEFAULT_FILE_LEVEL_STR )
+from Utils.utilities import get_script_logger_with_config
 
 # --- Define Constants ---
-ASSET_DIR = os.path.join(PROJECT_ROOT, "assets")
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "Outputs")
-CONSOLIDATED_META_FILE = os.path.join(OUTPUT_DIR, "Consolidate_Meta_Results.json")
-IMAGE_DUPLICATES_FILE = os.path.join(OUTPUT_DIR, "image_grouping_info.json")
 SUPPORTED_EXTENSIONS = (".jpg")
 HASH_ALGORITHM = "sha256"
 CHUNK_SIZE = 4096
 
 def report_progress(current, total, status):
-    """Reports progress to PowerShell in the expected format."""
+    """Reports progress to the main orchestrator in the expected format."""
     if total > 0:
         # Ensure percent doesn't exceed 100
         percent = min(int((current / total) * 100), 100)
         print(f"PROGRESS:{percent}|{status}", flush=True)
 
 def generate_image_hash(image_path):
-    """Generate a hash for a image using the specified algorithm."""
+    """Generate a hash for an image using the specified algorithm."""
     try:
         hasher = hashlib.new(HASH_ALGORITHM)
         with open(image_path, 'rb') as img:
@@ -52,13 +39,12 @@ def generate_image_hash(image_path):
                 hasher.update(chunk)
         return hasher.hexdigest()
     except OSError as e:
-        logger.error(f"Error processing {image_path}: {e}")
         return None
-    except Exception as e: # Catch any other unexpected errors during hashing
-        logger.error(f"Unexpected error hashing {image_path}: {e}")
+    except Exception as e:
         return None
 
 def get_image_length(image_path):
+    """Images don't have a duration, return 0."""
     return 0
 
 def discover_and_add_new_files(directory, meta_dict, supported_extensions, media_type, logger):
@@ -70,7 +56,7 @@ def discover_and_add_new_files(directory, meta_dict, supported_extensions, media
         record = meta_dict[path]
         # Ensure we are working with a dictionary and that it has a 'path' key
         if isinstance(record, dict) and os.path.exists(path):
-            existing_paths.add(os.path.normpath(path))    
+            existing_paths.add(os.path.normpath(path))
         else:
             logger.warning(f"Skipping malformed (non-dictionary) entry in metadata records: {record}")
     new_files_found = 0
@@ -92,25 +78,25 @@ def discover_and_add_new_files(directory, meta_dict, supported_extensions, media
                         "json": []
                     }
                     meta_dict[normalized_path] = new_record
-                    existing_paths.add(normalized_path) # Add normalized path to set to avoid re-adding
+                    existing_paths.add(normalized_path)
                     new_files_found += 1
-                    logger.debug(f" file {normalized_path} added to metadata records.")
+                    logger.debug(f"File {normalized_path} added to metadata records.")
                 else:
                     logger.debug(f"Skipping existing {media_type} file: {normalized_path}")
-                    
+
     if new_files_found > 0:
         logger.info(f"Added {new_files_found} new {media_type} records to be processed.")
-    
+
     return meta_dict, new_files_found > 0
 
-def enrich_image_metadata(meta_dict):
+def enrich_image_metadata(meta_dict, logger):
     """Iterates through records, finds images, and adds hash if missing."""
     changes_made = False
     image_paths = [r for r in meta_dict.keys() if r.lower().endswith(SUPPORTED_EXTENSIONS)]
     total_images = len(image_paths)
     processed_count = 0
     logger.info(f"Found {total_images} image records in the consolidated data to process.")
-    enriched_meta_dict_out = meta_dict.copy()  # Create a copy to avoid modifying the original during iteration
+    enriched_meta_dict_out = meta_dict.copy()
 
     for image_path in image_paths:
         processed_count += 1
@@ -129,18 +115,18 @@ def enrich_image_metadata(meta_dict):
         if 'size'   not in record or record['size']   is None: record["size"]   = os.path.getsize(image_path); changes_made = True
         if 'hash'   not in record or record['hash']   is None: record['hash']   = generate_image_hash(image_path);  changes_made = True
         if 'length' not in record or record['length'] is None: record['length'] = get_image_length(image_path); changes_made = True
-        enriched_meta_dict_out[image_path] = record  # Update the copy with the enriched record
-        logger.warning(f"processing image {record['hash']} ")
+        enriched_meta_dict_out[image_path] = record
+        logger.debug(f"Processing image {record['hash']}")
     return enriched_meta_dict_out, changes_made
 
-def group_images_by_name_and_size(meta_dict, image_path_list):
+def group_images_by_name_and_size(meta_dict, image_path_list, logger):
     """Group images by name and size."""
     processed_files = 0
     total_files = len(image_path_list)
     grouped_images = {}
     logger.info("Grouping images by name and size...")
     for image_path in image_path_list:
-        logger.warning("Grouping by name and size for image: %s ", image_path)
+        logger.debug(f"Grouping by name and size for image: {image_path}")
         info = meta_dict[image_path] if isinstance(image_path, str) else info
         name = info.get("name")
         size = info.get("size")
@@ -158,8 +144,7 @@ def group_images_by_name_and_size(meta_dict, image_path_list):
     logger.info(f"Finished grouping by name and size. Found {len(grouped_images)} groups.")
     return grouped_images
 
-# --- group_images_by_hash remains the same ---
-def group_images_by_hash(meta_dict, image_path_list):
+def group_images_by_hash(meta_dict, image_path_list, logger):
     """Group images by hash."""
     processed_files = 0
     total_files = len(image_path_list)
@@ -167,7 +152,6 @@ def group_images_by_hash(meta_dict, image_path_list):
     logger.info("Grouping images by hash...")
     for image_path in image_path_list:
         info = meta_dict[image_path] if isinstance(image_path, str) else info
-        # Ensure hash exists, though get_image_info should prevent None hashes
         img_hash = info.get("hash")
         if img_hash:
             if img_hash not in grouped_images:
@@ -181,7 +165,7 @@ def group_images_by_hash(meta_dict, image_path_list):
     logger.info(f"Finished grouping by hash. Found {len(grouped_images)} groups.")
     return grouped_images
 
-def generate_grouping_image(enriched_meta_dict):
+def generate_grouping_image(enriched_meta_dict, image_duplicates_file, logger):
     """Generate a grouping file for images based on name & size or hash."""
     # Filter for just the image records that have the necessary info for grouping
     image_records = [
@@ -193,53 +177,98 @@ def generate_grouping_image(enriched_meta_dict):
         logger.warning("No image information provided to generate grouping file.")
         return
     try:
-        grouped_by_name_and_size = group_images_by_name_and_size(enriched_meta_dict, image_records)
-        grouped_by_hash = group_images_by_hash(enriched_meta_dict, image_records)
+        grouped_by_name_and_size = group_images_by_name_and_size(enriched_meta_dict, image_records, logger)
+        grouped_by_hash = group_images_by_hash(enriched_meta_dict, image_records, logger)
         grouping_info = {
             "grouped_by_name_and_size": grouped_by_name_and_size,
             "grouped_by_hash": grouped_by_hash
         }
-        logger.info(f"Saving grouping information ({len(grouped_by_name_and_size)} name/size groups, {len(grouped_by_hash)} groups)...")
-        if utils.write_json_atomic(grouping_info, IMAGE_DUPLICATES_FILE, logger=logger):
-            logger.info(f"Successfully generated and saved grouping info to {IMAGE_DUPLICATES_FILE}")
+        logger.info(f"Saving grouping information ({len(grouped_by_name_and_size)} name/size groups, {len(grouped_by_hash)} hash groups)...")
+        if utils.write_json_atomic(grouping_info, image_duplicates_file, logger=logger):
+            logger.info(f"Successfully generated and saved grouping info to {image_duplicates_file}")
         else:
             logger.error(f"Failed to save grouping info (see previous error from write_json_atomic).")
     except Exception as e:
         logger.error(f"An unexpected error occurred during grouping generation: {e}")
 
-parser = argparse.ArgumentParser(description="Enrich consolidated metadata with image hashes and find duplicates.")
-parser.add_argument("directory", help="The directory to scan for new media files.")
-args = parser.parse_args()
+def hash_and_group_images(config_data: dict, logger) -> bool:
+    """
+    Config-aware function to hash images and group by duplicates.
 
-directory = args.directory
-if not os.path.isdir(directory):
-    logger.critical(f"Error: Provided directory does not exist: {directory}")
-    sys.exit(1)
+    Args:
+        config_data: Full configuration dictionary
+        logger: An initialized logger instance.
 
-try:
+    Returns:
+        True if successful, False otherwise
+    """
+    # Extract paths from config
+    processed_directory = config_data['paths']['processedDirectory']
+    results_directory = config_data['paths']['resultsDirectory']
 
-    # Load the consolidated metadata which serves as our primary data source.
-    with open(CONSOLIDATED_META_FILE, 'r', encoding='utf-8') as f:
-        meta_dict = json.load(f)
+    # Get step number from environment for file naming
+    step = os.environ.get('CURRENT_STEP', '15')
 
-    logger.info(f"Loaded {len(meta_dict)} records from the consolidated metadata file.")
+    consolidated_meta_file = os.path.join(results_directory, "Consolidate_Meta_Results.json")
+    image_duplicates_file = os.path.join(results_directory, "image_grouping_info.json")
 
-    # Discover any new image files on disk that aren't in the JSON file yet.
-    meta_dict, new_files_added = discover_and_add_new_files(directory, meta_dict, SUPPORTED_EXTENSIONS, "image", logger)
+    logger.info(f"--- Script Started: {SCRIPT_NAME} ---")
+    logger.info(f"Processing directory: {processed_directory}")
 
-    # Enrich the loaded records with hashes if they are missing.
-    enriched_meta_dict, changes_made = enrich_image_metadata(meta_dict)
+    if not os.path.isdir(processed_directory):
+        logger.critical(f"Error: Provided directory does not exist: {processed_directory}")
+        return False
 
-    # Save back to the consolidated file if any new files were added or any existing records were changed.
-    if new_files_added or changes_made:
-        logger.info("Hash changes were made, saving updated consolidated metadata file...")
-        utils.write_json_atomic(enriched_meta_dict, CONSOLIDATED_META_FILE, logger=logger)
-    else:
-        logger.info("No new image hashes were generated; consolidated file is up to date.")
+    try:
+        # Load the consolidated metadata which serves as our primary data source
+        if not os.path.exists(consolidated_meta_file):
+            logger.critical(f"Consolidated metadata file not found: {consolidated_meta_file}")
+            return False
 
-    # Generate grouping based on the enriched data
-    generate_grouping_image(enriched_meta_dict)
+        with open(consolidated_meta_file, 'r', encoding='utf-8') as f:
+            meta_dict = json.load(f)
 
-    logger.info(f"✅ Finished processing image hashes and duplicates.")
-finally:
-    pass # PowerShell now handles progress bar closure
+        logger.info(f"Loaded {len(meta_dict)} records from the consolidated metadata file.")
+
+        # Discover any new image files on disk that aren't in the JSON file yet
+        meta_dict, new_files_added = discover_and_add_new_files(
+            processed_directory, meta_dict, SUPPORTED_EXTENSIONS, "image", logger
+        )
+
+        # Enrich the loaded records with hashes if they are missing
+        enriched_meta_dict, changes_made = enrich_image_metadata(meta_dict, logger)
+
+        # Save back to the consolidated file if any new files were added or any existing records were changed
+        if new_files_added or changes_made:
+            logger.info("Hash changes were made, saving updated consolidated metadata file...")
+            if not utils.write_json_atomic(enriched_meta_dict, consolidated_meta_file, logger=logger):
+                logger.error("Failed to save consolidated metadata file")
+                return False
+        else:
+            logger.info("No new image hashes were generated; consolidated file is up to date.")
+
+        # Generate grouping based on the enriched data
+        generate_grouping_image(enriched_meta_dict, image_duplicates_file, logger)
+
+        logger.info(f"Finished processing image hashes and duplicates.")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error processing images: {e}", exc_info=True)
+        return False
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Enrich consolidated metadata with image hashes and find duplicates.")
+    parser.add_argument("--config-json", required=True, help="Configuration as JSON string")
+    args = parser.parse_args()
+
+    try:
+        config_data = json.loads(args.config_json)
+        step = os.environ.get('CURRENT_STEP', '15')
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        result = hash_and_group_images(config_data, logger)
+        if not result:
+            sys.exit(1)
+    except Exception as e:
+        print(f"CRITICAL: Error in standalone execution: {e}", file=sys.stderr)
+        sys.exit(1)
