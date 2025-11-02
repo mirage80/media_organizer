@@ -15,7 +15,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-from Utils.utilities import get_script_logger_with_config
+from Utils.utilities import get_script_logger_with_config, update_pipeline_progress
 
 # Thumbnail settings (matching RemoveJunkVideo size)
 THUMBNAIL_SIZE = (200, 200)  # Width x Height for thumbnails
@@ -95,6 +95,11 @@ def create_image_thumbnail(image_path, output_path, logger):
 def create_thumbnails(config_data: dict, logger) -> bool:
     """Generate thumbnails for all media files in the processed directory"""
 
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     processed_dir = config_data['paths']['processedDirectory']
     results_dir = config_data['paths']['resultsDirectory']
 
@@ -139,10 +144,17 @@ def create_thumbnails(config_data: dict, logger) -> bool:
     processed = 0
 
     for idx, media_path in enumerate(media_files, 1):
-        # Show progress every 10 files
-        if idx % 10 == 0 or idx == 1:
-            progress_pct = (idx / total_files) * 100
-            logger.info(f"Progress: {idx}/{total_files} ({progress_pct:.1f}%) - Processed: {processed}, Skipped: {skipped}")
+        # Update progress every 50 files
+        if idx % 50 == 0 or idx == total_files:
+            percent = int((idx / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Create Thumbnails",
+                percent,
+                f"Processing: {idx}/{total_files}"
+            )
+
         # Create a unique filename for the thumbnail based on the file path
         # Use hash of the full path to avoid collisions
         import hashlib
@@ -211,10 +223,10 @@ if __name__ == "__main__":
         # Get progress info from config (PipelineState fields)
         progress_info = config_data.get('_progress', {})
         current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+        number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
         # Use for logging
-        step = str(current_enabled_real_step)
-        logger = get_script_logger_with_config(config_data, 'CreateThumbnails', step)
+        logger = get_script_logger_with_config(config_data, 'CreateThumbnails')
 
         result = create_thumbnails(config_data, logger)
 

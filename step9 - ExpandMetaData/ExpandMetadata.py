@@ -476,10 +476,10 @@ def main():
     # Get progress info from config (PipelineState fields)
     progress_info = config_data.get('_progress', {})
     current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
     # Use for logging
-    step = str(current_enabled_real_step)
-    logger_instance = get_script_logger_with_config(config_data, 'expand_metadata', step)
+    logger_instance = get_script_logger_with_config(config_data, 'expand_metadata')
     log = create_logger_function(logger_instance)
     
     # Execute metadata expansion - pass only config and logger per standards

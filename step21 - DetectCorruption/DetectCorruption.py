@@ -17,17 +17,11 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-from Utils.utilities import get_script_logger_with_config
+from Utils.utilities import get_script_logger_with_config, update_pipeline_progress
 
 # Supported file extensions
 VIDEO_EXTENSIONS = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.m4v')
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.tiff', '.webp')
-
-def report_progress(current, total, status):
-    """Reports progress to the main orchestrator in the expected format."""
-    if total > 0:
-        percent = min(int((current / total) * 100), 100)
-        print(f"PROGRESS:{percent}|{status}", flush=True)
 
 def check_video_corruption(video_path, logger):
     """
@@ -99,6 +93,11 @@ def detect_corruption(config_data: dict, logger) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     processed_directory = config_data['paths']['processedDirectory']
     results_directory = config_data['paths']['resultsDirectory']
 
@@ -143,7 +142,17 @@ def detect_corruption(config_data: dict, logger) -> bool:
     for video_path in all_videos:
         current_file += 1
         base_name = os.path.basename(video_path)
-        report_progress(current_file, total_files, f"Checking: {base_name}")
+
+        # Update progress every 50 files
+        if current_file % 50 == 0 or current_file == total_files:
+            percent = int((current_file / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Detect Corruption",
+                percent,
+                f"Checking: {current_file}/{total_files}"
+            )
 
         if check_video_corruption(video_path, logger):
             logger.warning(f"Corrupt video detected: {video_path}")
@@ -154,7 +163,17 @@ def detect_corruption(config_data: dict, logger) -> bool:
     for image_path in all_images:
         current_file += 1
         base_name = os.path.basename(image_path)
-        report_progress(current_file, total_files, f"Checking: {base_name}")
+
+        # Update progress every 50 files
+        if current_file % 50 == 0 or current_file == total_files:
+            percent = int((current_file / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Detect Corruption",
+                percent,
+                f"Checking: {current_file}/{total_files}"
+            )
 
         if check_image_corruption(image_path, logger):
             logger.warning(f"Corrupt image detected: {image_path}")
@@ -208,10 +227,10 @@ if __name__ == "__main__":
         # Get progress info from config (PipelineState fields)
         progress_info = config_data.get('_progress', {})
         current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+        number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
         # Use for logging
-        step = str(current_enabled_real_step)
-        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME)
         result = detect_corruption(config_data, logger)
         if not result:
             sys.exit(1)

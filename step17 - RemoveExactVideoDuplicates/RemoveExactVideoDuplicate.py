@@ -13,14 +13,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-from Utils.utilities import get_script_logger_with_config
-
-def report_progress(current, total, status):
-    """Reports progress to the main orchestrator in the expected format."""
-    if total > 0:
-        # Ensure percent doesn't exceed 100
-        percent = min(int((current / total) * 100), 100)
-        print(f"PROGRESS:{percent}|{status}", flush=True)
+from Utils.utilities import get_script_logger_with_config, update_pipeline_progress
 
 def remove_duplicate_videos(config_data: dict, logger) -> bool:
     """
@@ -33,6 +26,11 @@ def remove_duplicate_videos(config_data: dict, logger) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     results_directory = config_data['paths']['resultsDirectory']
 
     video_grouping_file = os.path.join(results_directory, "video_grouping_info.json")
@@ -73,8 +71,18 @@ def remove_duplicate_videos(config_data: dict, logger) -> bool:
     for group_key in list(groups.keys()):
         group_members = groups[group_key]
         processed_group += 1
-        status = f"Processing group {processed_group}/{total_groups}"
-        report_progress(processed_group, total_groups, status)
+
+        # Update progress every group or every 50 groups
+        if processed_group % 50 == 0 or processed_group == total_groups:
+            percent = int((processed_group / total_groups) * 100) if total_groups > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Remove Video Duplicates",
+                percent,
+                f"Processing: {processed_group}/{total_groups} groups"
+            )
+
         logger.info(f"Group {processed_group}/{total_groups}: {group_key} ({len(group_members)} files)")
         if not group_members:
             logger.warning(f"Group {group_key} is empty. Removing.")
@@ -146,10 +154,10 @@ if __name__ == "__main__":
         # Get progress info from config (PipelineState fields)
         progress_info = config_data.get('_progress', {})
         current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+        number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
         # Use for logging
-        step = str(current_enabled_real_step)
-        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME)
         result = remove_duplicate_videos(config_data, logger)
         if not result:
             sys.exit(1)

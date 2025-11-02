@@ -381,29 +381,32 @@ class PipelineOrchestrator:
                 self.log("WARNING", "No enabled steps found in configuration")
                 return True
 
+            # Check if all enabled steps are interactive - if so, don't show progress bar
+            all_interactive = all(step.get('Interactive', False) for step in all_enabled_steps)
+
             # Setup progress bar with GUI in main thread (prettier CustomTkinter GUI)
-            self.progress_manager = ProgressBarManager(enable_gui=True, use_main_thread=True)
+            # Don't show GUI if all steps are interactive
+            enable_gui = not all_interactive
+            self.progress_manager = ProgressBarManager(enable_gui=enable_gui, use_main_thread=True)
             self.progress_manager.start()
 
             # Resume from specific step if requested
             if resume_from:
                 self.log("INFO", f"Resuming pipeline from step {resume_from}")
 
-            # Initialize all 4 current step counters
-            current_step = 0  # Position in all_steps (all steps including disabled and counters)
+            # Initialize all current step counters
             current_real_step = 0  # Position in all_real_steps (all real steps including disabled, excluding counters)
             current_enabled_step = 0  # Position in all_enabled_steps (enabled steps including counters)
             current_enabled_real_step = 0  # Position in all_enabled_real_steps (enabled real steps - for progress bar)
 
-            # Iterate through ALL steps (not just enabled) to track all 4 counters accurately
-            for step_index, step in enumerate(all_steps):
-                # Increment current_step for every step
-                current_step += 1
+            # Iterate through ALL steps (not just enabled) to track all counters accurately
+            # enumerate gives us current_step starting at 0
+            for current_step, step in enumerate(all_steps):
 
                 # Determine if this is a counter script
                 is_counter = 'counter.py' in step.get('Path', '')
 
-                # Increment current_real_step for non-counter steps
+                # Increment current_real_step for non-counter steps (all steps, enabled or not)
                 if not is_counter:
                     current_real_step += 1
 

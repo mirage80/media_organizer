@@ -15,19 +15,12 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-from Utils.utilities import get_script_logger_with_config
+from Utils.utilities import get_script_logger_with_config, update_pipeline_progress
 
 # --- Define Constants ---
 SUPPORTED_EXTENSIONS = (".mp4")
 HASH_ALGORITHM = "sha256"
 CHUNK_SIZE = 4096
-
-def report_progress(current, total, status):
-    """Reports progress to the main orchestrator in the expected format."""
-    if total > 0:
-        # Ensure percent doesn't exceed 100
-        percent = min(int((current / total) * 100), 100)
-        print(f"PROGRESS:{percent}|{status}", flush=True)
 
 def generate_video_hash(video_path):
     """Generate a hash for a video using the specified algorithm."""
@@ -115,7 +108,7 @@ def discover_and_add_new_files(directory, meta_dict, supported_extensions, media
 
     return meta_dict, new_files_found > 0
 
-def enrich_video_metadata(meta_dict, logger):
+def enrich_video_metadata(meta_dict, logger, number_of_enabled_real_steps, current_enabled_real_step):
     """Iterates through records, finds videos, and adds hash/length if missing."""
     changes_made = False
     video_paths = [r for r in meta_dict.keys() if r.lower().endswith(SUPPORTED_EXTENSIONS)]
@@ -127,8 +120,17 @@ def enrich_video_metadata(meta_dict, logger):
     for video_path in video_paths:
         processed_count += 1
         record = meta_dict[video_path]
-        status = f"Hashing video {processed_count}/{total_videos}"
-        report_progress(processed_count, total_videos, status)
+
+        # Update progress every 50 items
+        if processed_count % 50 == 0 or processed_count == total_videos:
+            percent = int((processed_count / total_videos) * 100) if total_videos > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Hash Videos",
+                percent,
+                f"Hashing: {processed_count}/{total_videos}"
+            )
 
         if not video_path or not os.path.exists(video_path):
             logger.warning(f"File path not found or missing for record, cannot process: {video_path}")
@@ -145,7 +147,7 @@ def enrich_video_metadata(meta_dict, logger):
         logger.debug(f"Processing video {record['hash']}")
     return enriched_meta_dict_out, changes_made
 
-def group_videos_by_name_and_size(meta_dict, video_path_list, logger):
+def group_videos_by_name_and_size(meta_dict, video_path_list, logger, number_of_enabled_real_steps, current_enabled_real_step):
     """Group videos by name and size."""
     processed_files = 0
     total_files = len(video_path_list)
@@ -165,12 +167,21 @@ def group_videos_by_name_and_size(meta_dict, video_path_list, logger):
             grouped_videos[key] = []
         grouped_videos[key].append(video_path)
         processed_files += 1
-        status = f"Grouping by name/size {processed_files}/{total_files}"
-        report_progress(processed_files, total_files, status)
+
+        # Update progress every 50 items
+        if processed_files % 50 == 0 or processed_files == total_files:
+            percent = int((processed_files / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Group Videos",
+                percent,
+                f"Grouping: {processed_files}/{total_files}"
+            )
     logger.info(f"Finished grouping by name and size. Found {len(grouped_videos)} groups.")
     return grouped_videos
 
-def group_videos_by_hash(meta_dict, video_path_list, logger):
+def group_videos_by_hash(meta_dict, video_path_list, logger, number_of_enabled_real_steps, current_enabled_real_step):
     """Group videos by hash."""
     processed_files = 0
     total_files = len(video_path_list)
@@ -186,12 +197,21 @@ def group_videos_by_hash(meta_dict, video_path_list, logger):
         else:
             logger.warning(f"Video missing hash during grouping: {video_path}")
         processed_files += 1
-        status = f"Grouping by hash {processed_files}/{total_files}"
-        report_progress(processed_files, total_files, status)
+
+        # Update progress every 50 items
+        if processed_files % 50 == 0 or processed_files == total_files:
+            percent = int((processed_files / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Group Videos",
+                percent,
+                f"Grouping: {processed_files}/{total_files}"
+            )
     logger.info(f"Finished grouping by hash. Found {len(grouped_videos)} groups.")
     return grouped_videos
 
-def generate_grouping_video(enriched_meta_dict, video_duplicates_file, logger):
+def generate_grouping_video(enriched_meta_dict, video_duplicates_file, logger, number_of_enabled_real_steps, current_enabled_real_step):
     """Generate a grouping file for videos based on name & size or hash."""
     # Filter for just the video records that have the necessary info for grouping
     video_records = [
@@ -203,8 +223,8 @@ def generate_grouping_video(enriched_meta_dict, video_duplicates_file, logger):
         logger.warning("No video information provided to generate grouping file.")
         return
     try:
-        grouped_by_name_and_size = group_videos_by_name_and_size(enriched_meta_dict, video_records, logger)
-        grouped_by_hash = group_videos_by_hash(enriched_meta_dict, video_records, logger)
+        grouped_by_name_and_size = group_videos_by_name_and_size(enriched_meta_dict, video_records, logger, number_of_enabled_real_steps, current_enabled_real_step)
+        grouped_by_hash = group_videos_by_hash(enriched_meta_dict, video_records, logger, number_of_enabled_real_steps, current_enabled_real_step)
         grouping_info = {
             "grouped_by_name_and_size": grouped_by_name_and_size,
             "grouped_by_hash": grouped_by_hash
@@ -228,6 +248,11 @@ def hash_and_group_videos(config_data: dict, logger) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     # Extract paths from config
     processed_directory = config_data['paths']['processedDirectory']
     results_directory = config_data['paths']['resultsDirectory']
@@ -259,7 +284,7 @@ def hash_and_group_videos(config_data: dict, logger) -> bool:
         )
 
         # Enrich the loaded records with hashes if they are missing
-        enriched_meta_dict, changes_made = enrich_video_metadata(meta_dict, logger)
+        enriched_meta_dict, changes_made = enrich_video_metadata(meta_dict, logger, number_of_enabled_real_steps, current_enabled_real_step)
 
         # Save back to the consolidated file if any new files were added or any existing records were changed
         if new_files_added or changes_made:
@@ -271,7 +296,7 @@ def hash_and_group_videos(config_data: dict, logger) -> bool:
             logger.info("No new video hashes or lengths were generated; consolidated file is up to date.")
 
         # Generate grouping based on the enriched data
-        generate_grouping_video(enriched_meta_dict, video_duplicates_file, logger)
+        generate_grouping_video(enriched_meta_dict, video_duplicates_file, logger, number_of_enabled_real_steps, current_enabled_real_step)
 
         logger.info(f"Finished processing video hashes and duplicates.")
         return True
@@ -291,10 +316,10 @@ if __name__ == "__main__":
         # Get progress info from config (PipelineState fields)
         progress_info = config_data.get('_progress', {})
         current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+        number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
         # Use for logging
-        step = str(current_enabled_real_step)
-        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME)
         result = hash_and_group_videos(config_data, logger)
         if not result:
             sys.exit(1)

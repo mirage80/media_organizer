@@ -99,11 +99,8 @@ if __name__ == "__main__":
 
     try:
         config_data = json.loads(args.config_json)
-        # Get step from config progress info
-        progress_info = config_data.get('_progress', {})
-        step = str(progress_info.get('current_step', 0))
-        # Request a console-only logger because the main orchestrator handles file logging.
-        logger = utils.get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        # Get logger - step number is automatically extracted from config
+        logger = utils.get_script_logger_with_config(config_data, SCRIPT_NAME)
         result = count_files_by_extension_with_config(config_data, logger)
         # Exit with a non-zero code if the function failed (returned None)
         if result is None:

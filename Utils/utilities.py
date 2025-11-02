@@ -21,6 +21,97 @@ import threading
 
 logger = logging.getLogger(__name__)
 
+
+# =============================================================================
+# GUI STYLE CLASS
+# Shared styling for progress bar and interactive GUIs
+# =============================================================================
+
+class GUIStyle:
+    """Shared styling constants for consistent GUI appearance"""
+
+    # Frame colors
+    FRAME_BG_PRIMARY = "#e8f5e9"      # Light green background
+    FRAME_BG_SECONDARY = "#fff3e0"    # Light orange background
+
+    # Corner radius
+    CORNER_RADIUS = 8
+    CORNER_RADIUS_LARGE = 15
+
+    # Progress bar colors
+    PROGRESS_COLOR_PRIMARY = "#4CAF50"    # Green
+    PROGRESS_BG_PRIMARY = "#C8E6C9"       # Light green
+    PROGRESS_COLOR_SECONDARY = "#FF9800"  # Orange
+    PROGRESS_BG_SECONDARY = "#FFE0B2"     # Light orange
+
+    # Text colors
+    TEXT_COLOR_PRIMARY = "#2e7d32"    # Dark green
+    TEXT_COLOR_SECONDARY = "#e65100"  # Dark orange
+
+    # Padding
+    PADDING_OUTER = 10
+    PADDING_INNER = 5
+    PADDING_CONTENT = 15  # Content padding inside frames
+    PADDING_WIDGET = 5    # Small padding between widgets
+
+    # Progress bar height
+    PROGRESS_HEIGHT = 20
+
+    # Fonts
+    FONT_FAMILY = "Segoe UI"
+    FONT_SIZE_HEADING = 14
+    FONT_SIZE_NORMAL = 11
+
+    # Grid layout
+    GRID_SCREEN_DIVISOR = 7  # WBM = max{screen width / GRID_SCREEN_DIVISOR, 200}
+    GRID_MIN_THUMBNAIL_SIZE = 200  # Minimum thumbnail width
+    GRID_SCROLLBAR_WIDTH = 20  # Scrollbar width to account for
+    GRID_MIN_USABLE_WIDTH = 100  # Minimum usable width
+    GRID_SCREEN_BORDER = 20  # Screen border that cannot be used (left/right/top/bottom)
+    GRID_TITLEBAR_HEIGHT = 40  # Approximate title bar height (minimize/close buttons)
+    GRID_FRAME_SEPARATOR = 10  # Border/spacing between top and bottom frames
+
+    # Window frame design parameters (centralized for consistency across all windows)
+    WINDOW_FRAME_CORNER_RADIUS = 0        # Square corners for main window frames (0 = no rounding)
+    WINDOW_FRAME_BORDER_WIDTH = 0         # No borders on main window frames
+    WINDOW_FRAME_PADX = PADDING_OUTER     # Horizontal padding between frames - MUST match dimension calculations!
+    WINDOW_FRAME_PADY_TOP = PADDING_OUTER  # Top frame vertical padding (top edge)
+    WINDOW_FRAME_PADY_BOTTOM_TOP = PADDING_INNER  # Vertical padding between top and bottom frames
+    WINDOW_FRAME_PADY_BOTTOM_BOTTOM = PADDING_OUTER  # Bottom frame vertical padding (bottom edge)
+
+    @staticmethod
+    def create_styled_frame(parent, use_ctk=True, secondary=False, corner_radius=None, border_width=0):
+        """
+        Create a styled frame with consistent appearance
+
+        Args:
+            parent: Parent widget
+            use_ctk: Use CustomTkinter if True, fallback to tk.Frame if False
+            secondary: Use secondary color scheme if True
+            corner_radius: Override corner radius (default: GUIStyle.CORNER_RADIUS). Use 0 for square corners.
+            border_width: Border width for frame (default: 0 for no border)
+
+        Returns:
+            Frame widget (CTkFrame or tk.Frame)
+        """
+        bg_color = GUIStyle.FRAME_BG_SECONDARY if secondary else GUIStyle.FRAME_BG_PRIMARY
+        if corner_radius is None:
+            corner_radius = GUIStyle.CORNER_RADIUS
+
+        if use_ctk:
+            try:
+                from customtkinter import CTkFrame
+                return CTkFrame(parent, fg_color=bg_color, corner_radius=corner_radius, border_width=border_width)
+            except ImportError:
+                pass
+
+        # Fallback to standard tkinter
+        import tkinter as tk
+        if border_width > 0:
+            return tk.Frame(parent, bg=bg_color, relief="solid", borderwidth=border_width)
+        else:
+            return tk.Frame(parent, bg=bg_color)
+
 # Global progress manager instance for scripts to access
 _global_progress_manager = None
 
@@ -1253,19 +1344,20 @@ class PipelineLogger:
             self._handlers['console'] = console_handler
 
 
-def get_script_logger_with_config(config_data: dict, script_name: str, step: str = "0") -> MediaOrganizerLogger:
+def get_script_logger_with_config(config_data: dict, script_name: str) -> MediaOrganizerLogger:
     """
     Config-aware function to get a logger for a script following standards.
-    
+
     Args:
-        config_data: Full configuration dictionary 
+        config_data: Full configuration dictionary
         script_name: Name of the script
-        step: Pipeline step number/identifier
-        
+
     Returns:
         MediaOrganizerLogger instance
     """
     log_directory = config_data['paths']['logDirectory']
+    # Extract current_step from progress info
+    step = str(config_data.get('_progress', {}).get('current_step', 0))
     return get_script_logger(log_directory, script_name, step)
 
 def get_script_logger(log_directory: str, script_name: str, step: str = "0") -> MediaOrganizerLogger:
@@ -1617,50 +1709,52 @@ class ProgressBarManager:
 
         if use_customtkinter:
             # Top section (overall progress)
-            top_frame = CTkFrame(master=self.form, fg_color="#e8f5e9", corner_radius=8)
-            top_frame.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+            top_frame = CTkFrame(master=self.form, fg_color=GUIStyle.FRAME_BG_PRIMARY, corner_radius=GUIStyle.CORNER_RADIUS)
+            top_frame.pack(fill="both", expand=True, padx=GUIStyle.PADDING_OUTER, pady=(GUIStyle.PADDING_OUTER, GUIStyle.PADDING_INNER))
 
             CTkLabel(master=top_frame, text="Overall Progress",
-                    font=("Segoe UI", 14, "bold"),
-                    text_color="#2e7d32").pack(pady=(10, 5), padx=15, anchor="w")
+                    font=(GUIStyle.FONT_FAMILY, GUIStyle.FONT_SIZE_HEADING, "bold"),
+                    text_color=GUIStyle.TEXT_COLOR_PRIMARY).pack(pady=(GUIStyle.PADDING_OUTER, GUIStyle.PADDING_WIDGET),
+                                                                 padx=GUIStyle.PADDING_CONTENT, anchor="w")
 
             self.overall_bar = CTkProgressBar(master=top_frame,
                                              mode='determinate',
-                                             progress_color="#4CAF50",
-                                             fg_color="#C8E6C9",
-                                             height=20)
+                                             progress_color=GUIStyle.PROGRESS_COLOR_PRIMARY,
+                                             fg_color=GUIStyle.PROGRESS_BG_PRIMARY,
+                                             height=GUIStyle.PROGRESS_HEIGHT)
             self.overall_bar.set(0)
-            self.overall_bar.pack(fill="x", padx=15, pady=5)
+            self.overall_bar.pack(fill="x", padx=GUIStyle.PADDING_CONTENT, pady=GUIStyle.PADDING_WIDGET)
 
             self.step_label = CTkLabel(master=top_frame,
                                       text="Step: Not started",
-                                      font=("Segoe UI", 11),
-                                      text_color="#2e7d32",
+                                      font=(GUIStyle.FONT_FAMILY, GUIStyle.FONT_SIZE_NORMAL),
+                                      text_color=GUIStyle.TEXT_COLOR_PRIMARY,
                                       anchor="w")
-            self.step_label.pack(fill="x", padx=15, pady=(5, 10))
+            self.step_label.pack(fill="x", padx=GUIStyle.PADDING_CONTENT, pady=(GUIStyle.PADDING_WIDGET, GUIStyle.PADDING_OUTER))
 
             # Bottom section (subtask progress)
-            bottom_frame = CTkFrame(master=self.form, fg_color="#fff3e0", corner_radius=8)
-            bottom_frame.pack(fill="both", expand=True, padx=10, pady=(5, 10))
+            bottom_frame = CTkFrame(master=self.form, fg_color=GUIStyle.FRAME_BG_SECONDARY, corner_radius=GUIStyle.CORNER_RADIUS)
+            bottom_frame.pack(fill="both", expand=True, padx=GUIStyle.PADDING_OUTER, pady=(GUIStyle.PADDING_INNER, GUIStyle.PADDING_OUTER))
 
             CTkLabel(master=bottom_frame, text="Current Task",
-                    font=("Segoe UI", 14, "bold"),
-                    text_color="#e65100").pack(pady=(10, 5), padx=15, anchor="w")
+                    font=(GUIStyle.FONT_FAMILY, GUIStyle.FONT_SIZE_HEADING, "bold"),
+                    text_color=GUIStyle.TEXT_COLOR_SECONDARY).pack(pady=(GUIStyle.PADDING_OUTER, GUIStyle.PADDING_WIDGET),
+                                                                   padx=GUIStyle.PADDING_CONTENT, anchor="w")
 
             self.step_bar = CTkProgressBar(master=bottom_frame,
                                           mode='determinate',
-                                          progress_color="#FF9800",
-                                          fg_color="#FFE0B2",
-                                          height=20)
+                                          progress_color=GUIStyle.PROGRESS_COLOR_SECONDARY,
+                                          fg_color=GUIStyle.PROGRESS_BG_SECONDARY,
+                                          height=GUIStyle.PROGRESS_HEIGHT)
             self.step_bar.set(0)
-            self.step_bar.pack(fill="x", padx=15, pady=5)
+            self.step_bar.pack(fill="x", padx=GUIStyle.PADDING_CONTENT, pady=GUIStyle.PADDING_WIDGET)
 
             self.subtask_label = CTkLabel(master=bottom_frame,
                                          text="Subtask: Not started",
-                                         font=("Segoe UI", 11),
-                                         text_color="#e65100",
+                                         font=(GUIStyle.FONT_FAMILY, GUIStyle.FONT_SIZE_NORMAL),
+                                         text_color=GUIStyle.TEXT_COLOR_SECONDARY,
                                          anchor="w")
-            self.subtask_label.pack(fill="x", padx=15, pady=(5, 10))
+            self.subtask_label.pack(fill="x", padx=GUIStyle.PADDING_CONTENT, pady=(GUIStyle.PADDING_WIDGET, GUIStyle.PADDING_OUTER))
         else:
             # Standard tkinter fallback
             self.form.grid_rowconfigure(1, weight=1)
@@ -1759,13 +1853,14 @@ class ProgressBarManager:
             elif command == 'send_to_back':
                 if self.form:
                     try:
-                        self.form.attributes("-topmost", False)
+                        self.form.withdraw()  # Hide the progress bar for interactive steps
                     except tk.TclError:
                         pass
-                        
+
             elif command == 'bring_to_front':
                 if self.form:
                     try:
+                        self.form.deiconify()  # Show the progress bar again
                         self.form.attributes("-topmost", True)
                         self.form.lift()
                     except tk.TclError:

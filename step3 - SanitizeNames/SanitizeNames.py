@@ -17,7 +17,7 @@ if __name__ == "__main__":
     PROJECT_ROOT = Path(__file__).parent.parent.absolute()
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from Utils.utilities import get_config, get_script_logger_with_config, create_logger_function, report_progress
+from Utils.utilities import get_config, get_script_logger_with_config, create_logger_function, update_pipeline_progress
 
 
 # Windows reserved names
@@ -157,16 +157,21 @@ def sanitize_directory_name(dir_path: Path, logger) -> Tuple[bool, Path]:
 def sanitize_names_recursively(config_data: dict, logger) -> bool:
     """
     Recursively sanitize all file and directory names in the given directory.
-    
+
     Args:
         config_data: Full config data dictionary
         logger: Logger instance
-        
+
     Returns:
         True if successful, False otherwise
     """
     logger.info("--- Sanitize Names Step Started ---")
-    
+
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     # Extract path from config
     processed_directory = config_data['paths']['processedDirectory']
     root_path = Path(processed_directory)
@@ -204,10 +209,17 @@ def sanitize_names_recursively(config_data: dict, logger) -> bool:
     
     # Process each item
     for i, item in enumerate(all_items):
-        # Report progress every 100 items to avoid blocking
-        if i % 100 == 0:
-            report_progress(i + 1, len(all_items), f"Sanitizing: {item.name}")
-        
+        # Report progress every 50 items to avoid blocking
+        if (i + 1) % 50 == 0 or (i + 1) == len(all_items):
+            percent = int(((i + 1) / len(all_items)) * 100) if len(all_items) > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Sanitize Names",
+                percent,
+                f"Sanitizing: {i + 1}/{len(all_items)}"
+            )
+
         try:
             # Skip if item no longer exists (parent may have been renamed)
             if not item.exists():
@@ -237,10 +249,7 @@ def sanitize_names_recursively(config_data: dict, logger) -> bool:
         except Exception as e:
             logger.error(f"Unexpected error processing '{item}': {e}")
             errors += 1
-    
-    # Final progress report
-    report_progress(len(all_items), len(all_items), "Sanitization completed")
-    
+
     # Report results
     logger.info(f"Sanitization completed:")
     logger.info(f"  Files renamed: {files_renamed}")
@@ -265,10 +274,10 @@ def main():
     # Get progress info from config (PipelineState fields)
     progress_info = config_data.get('_progress', {})
     current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
     # Use for logging
-    step = str(current_enabled_real_step)
-    logger_instance = get_script_logger_with_config(config_data, 'sanitize_names', step)
+    logger_instance = get_script_logger_with_config(config_data, 'sanitize_names')
     log = create_logger_function(logger_instance)
     
     # Execute sanitization - pass only config and logger per standards

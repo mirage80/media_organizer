@@ -127,19 +127,27 @@ def extract_zip_files(config_data: dict, logger) -> bool:
         try:
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 # Define progress callback for within-zip progress tracking
+                last_percent = [0]  # Use list to allow modification in nested function
+
                 def zip_progress_callback(current_file, total_files_in_zip):
                     # Calculate fine-grained progress within this zip file
                     zip_progress = (current_file / total_files_in_zip) if total_files_in_zip > 0 else 1.0
                     current_file_progress = processed_size + (file_size * zip_progress)
                     subtask_percent = int((current_file_progress / total_size) * 100) if total_size > 0 else 0
 
-                    update_pipeline_progress(
-                        number_of_enabled_real_steps,
-                        current_enabled_real_step,
-                        "Extract Zip Files",
-                        subtask_percent,
-                        f"Extracting: {zip_path.name} ({zip_index}/{len(zip_files)}) - File {current_file}/{total_files_in_zip}"
-                    )
+                    # Throttle updates: only update every 50 files or when percent changes by 2% or at end
+                    if (current_file % 50 == 0 or
+                        abs(subtask_percent - last_percent[0]) >= 2 or
+                        current_file == total_files_in_zip):
+
+                        last_percent[0] = subtask_percent
+                        update_pipeline_progress(
+                            number_of_enabled_real_steps,
+                            current_enabled_real_step,
+                            "Extract Zip Files",
+                            subtask_percent,
+                            f"Extracting: {zip_path.name} ({zip_index}/{len(zip_files)}) - File {current_file}/{total_files_in_zip}"
+                        )
 
                 # Use custom extraction function with progress callback
                 extract_with_overwrite(zip_ref, processed_path, logger, zip_progress_callback)
@@ -213,8 +221,7 @@ def main():
     current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
 
     # Setup logging using config per standards
-    step = str(current_enabled_real_step)  # Use current_enabled_real_step from progress info
-    logger_instance = get_script_logger_with_config(config_data, 'extract', step)
+    logger_instance = get_script_logger_with_config(config_data, 'extract')
 
     # Execute extraction
     success = extract_zip_files(config_data, logger_instance)

@@ -15,13 +15,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from Utils import utilities as utils
-from Utils.utilities import get_script_logger_with_config
-
-def report_progress(current, total, status):
-    """Reports progress to the main orchestrator in the expected format."""
-    if total > 0:
-        percent = min(int((current / total) * 100), 100)
-        print(f"PROGRESS:{percent}|{status}", flush=True)
+from Utils.utilities import get_script_logger_with_config, update_pipeline_progress
 
 def reconstruct_image_with_pillow(input_path, output_path, logger):
     """
@@ -78,6 +72,11 @@ def reconstruct_images(config_data: dict, logger) -> bool:
     Returns:
         True if successful, False otherwise
     """
+    # Get progress info for progress reporting
+    progress_info = config_data.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     results_directory = config_data['paths']['resultsDirectory']
     reconstruct_list_path = os.path.join(results_directory, "images_to_reconstruct.json")
 
@@ -113,7 +112,17 @@ def reconstruct_images(config_data: dict, logger) -> bool:
     # Process each image
     for idx, image_path in enumerate(images_to_reconstruct, 1):
         base_name = os.path.basename(image_path)
-        report_progress(idx, total_items, f"Reconstructing: {base_name}")
+
+        # Update progress every item
+        if idx % 5 == 0 or idx == total_items:
+            percent = int((idx / total_items) * 100) if total_items > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Reconstruct Images",
+                percent,
+                f"Processing: {idx}/{total_items}"
+            )
 
         if not os.path.exists(image_path):
             logger.warning(f"Missing: '{image_path}'. Skipping.")
@@ -200,10 +209,10 @@ if __name__ == "__main__":
         # Get progress info from config (PipelineState fields)
         progress_info = config_data.get('_progress', {})
         current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+        number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
         # Use for logging
-        step = str(current_enabled_real_step)
-        logger = get_script_logger_with_config(config_data, SCRIPT_NAME, step)
+        logger = get_script_logger_with_config(config_data, SCRIPT_NAME)
         result = reconstruct_images(config_data, logger)
         if not result:
             sys.exit(1)

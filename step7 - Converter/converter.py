@@ -444,10 +444,10 @@ def main():
     # Get progress info from config (PipelineState fields)
     progress_info = config_data.get('_progress', {})
     current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
-    # Use for logging
-    step = str(current_enabled_real_step)
-    logger_instance = get_script_logger_with_config(config_data, 'converter', step)
+    # Get logger - step number is automatically extracted from config
+    logger_instance = get_script_logger_with_config(config_data, 'converter')
     
     # Execute conversion - pass only config and logger per standards
     success = convert_media_files(config_data, logger_instance)

@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import argparse
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -17,7 +18,7 @@ if __name__ == "__main__":
     PROJECT_ROOT = Path(__file__).parent.parent.absolute()
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from Utils.utilities import get_config, get_script_logger_with_config, create_logger_function, report_progress
+from Utils.utilities import get_config, get_script_logger_with_config, create_logger_function, update_pipeline_progress
 
 
 def create_default_metadata_object(file_path: Path) -> Dict[str, Any]:
@@ -103,16 +104,21 @@ def save_metadata_atomic(metadata: Dict[str, Any], output_path: Path, logger) ->
 def map_google_json_metadata(config: Dict[str, Any], logger) -> bool:
     """
     Map Google Photos JSON metadata files to their corresponding media files.
-    
+
     Args:
         config: Configuration data
         logger: Logger instance
-        
+
     Returns:
         True if successful, False otherwise
     """
     logger.info("--- Map Google Photos JSON Data Step Started ---")
-    
+
+    # Get progress info for progress reporting
+    progress_info = config.get('_progress', {})
+    current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
+
     # Extract path from config
     processed_directory = config['paths']['processedDirectory']
     unzipped_path = Path(processed_directory)
@@ -145,10 +151,17 @@ def map_google_json_metadata(config: Dict[str, Any], logger) -> bool:
     error_count = 0
     
     for i, json_file in enumerate(json_files, 1):
-        # Report progress every 100 files to avoid blocking
-        if i % 100 == 0 or i == 1:
-            report_progress(i, total_files, f"Processing JSON: {json_file.name}")
-        
+        # Report progress every 50 files to avoid blocking
+        if (i % 50 == 0) or (i == total_files):
+            percent = int((i / total_files) * 100) if total_files > 0 else 0
+            update_pipeline_progress(
+                number_of_enabled_real_steps,
+                current_enabled_real_step,
+                "Map Google JSON",
+                percent,
+                f"Processing: {i}/{total_files}"
+            )
+
         try:
             logger.info(f"Processing JSON {i}/{total_files}: {json_file.name}")
             
@@ -226,10 +239,7 @@ def map_google_json_metadata(config: Dict[str, Any], logger) -> bool:
     # Save the final metadata map
     if not save_metadata_atomic(metadata_map, metadata_path, logger):
         return False
-    
-    # Final progress report
-    report_progress(total_files, total_files, "JSON mapping completed")
-    
+
     # Report results
     logger.info(f"JSON mapping completed:")
     logger.info(f"  JSON files processed: {processed_count}")
@@ -254,10 +264,10 @@ def main():
     # Get progress info from config (PipelineState fields)
     progress_info = config_data.get('_progress', {})
     current_enabled_real_step = progress_info.get('current_enabled_real_step', 1)
+    number_of_enabled_real_steps = progress_info.get('number_of_enabled_real_steps', 1)
 
     # Use for logging
-    step = str(current_enabled_real_step)
-    logger_instance = get_script_logger_with_config(config_data, 'map_google_json', step)
+    logger_instance = get_script_logger_with_config(config_data, 'map_google_json')
     log = create_logger_function(logger_instance)
     
     # Execute JSON mapping - pass only config and logger per standards
