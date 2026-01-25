@@ -30,7 +30,7 @@ class PipelineState(NamedTuple):
 PROJECT_ROOT = Path(__file__).parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from Utils.utilities import get_config, MediaOrganizerConfig, setup_pipeline_logging, get_script_logger, create_logger_function, ProgressBarManager, show_progress_bar, stop_graphical_progress_bar
+from Utils.utils import get_config, MediaOrganizerConfig, setup_pipeline_logging, get_script_logger, create_logger_function, ProgressBarManager, show_progress_bar, stop_graphical_progress_bar
 
 
 class PipelineOrchestrator:

@@ -1,50 +1,76 @@
 # Media Organizer - Pure Python Implementation
 
-A comprehensive media file organization pipeline converted from PowerShell/Python hybrid to pure Python.
+A comprehensive media file organization pipeline for processing, deduplicating, and organizing large media collections.
+
+## Overview
+
+The Media Organizer pipeline processes media files through three main stages:
+
+1. **Stage 1: Preparation** (`preparation.py`) - Automated processing of 14 steps
+2. **Stage 2: Auto Clustering** (`autoclustering.py`) - Relationship extraction based on time/location
+3. **Stage 3: Review** (steps 15-21) - Interactive review and final organization
+
+All operations are **NON-DESTRUCTIVE** - files are marked for deletion and moved to a `.deleted/` directory, allowing full recovery via rollback.
 
 ## Features
 
-- **Extract**: Unzip compressed archives using 7-Zip
-- **Sanitize**: Clean up file and directory names for cross-platform compatibility
-- **Metadata Extraction**: Extract EXIF data from images and metadata from videos
-- **Duplicate Detection**: Find and manage duplicate media files
-- **Organization**: Categorize and organize files by metadata
+- **Archive Extraction**: Unzip compressed archives with filename sanitization
+- **Format Conversion**: Convert videos to MP4, images to JPG (including HEIC/HEIF)
+- **Metadata Extraction**: EXIF data, FFprobe info, Google Photos JSON, filename parsing
+- **Duplicate Detection**: SHA256-based exact duplicate identification
+- **Corruption Detection & Repair**: Identify and attempt repair of corrupt media
+- **Thumbnail Generation**: Create thumbnails for all media files
+- **Multi-Drive Support**: Automatic drive switching when space is low
 - **Progress Tracking**: GUI and console progress indicators
-- **Logging**: Comprehensive logging system
-- **Error Handling**: Robust error handling and recovery
+- **Comprehensive Logging**: Structured logging with file and console outputs
 
 ## Requirements
 
 ### Python Dependencies
-Install with: `pip install -r requirements.txt`
+
+```bash
+pip install -r requirements.txt
+```
 
 - Python 3.8+
-- Pillow (image processing)
+- Pillow (image processing, HEIC support)
 - opencv-python (video processing)
 - numpy (numerical operations)
-- Other dependencies listed in requirements.txt
+- pillow-heif (HEIC/HEIF support)
 
 ### External Tools
-- **7-Zip**: For extracting archives
-- **ExifTool**: For metadata extraction from images
-- **FFmpeg/FFprobe**: For video metadata extraction
-- **ImageMagick**: For image processing (optional)
-- **VLC**: For video reconstruction (optional)
+
+| Tool | Purpose | Required |
+|------|---------|----------|
+| FFmpeg | Video conversion and repair | Yes |
+| FFprobe | Video metadata extraction | Yes |
+| 7-Zip | Archive extraction | Optional |
 
 ## Installation
 
 1. **Clone or download the repository**
-2. **Run the setup script**:
+
+2. **Install Python dependencies**:
    ```bash
-   python setup.py
+   pip install -r requirements.txt
    ```
-3. **Review and update configuration**:
-   - Edit `Utils/config.json` to match your system paths
-   - Update tool paths to match your installations
+
+3. **Configure paths** in `Utils/config.json`:
+   ```json
+   {
+     "paths": {
+       "rawDirectory": "path/to/input/files",
+       "processedDirectory": "path/to/output",
+       "resultsDirectory": "path/to/metadata",
+       "logDirectory": "path/to/logs",
+       "outputDrives": ["drive1", "drive2"]
+     }
+   }
+   ```
 
 ## Configuration
 
-The pipeline is configured via `Utils/config.json`:
+Configuration is managed via `Utils/config.json`:
 
 ```json
 {
@@ -55,142 +81,427 @@ The pipeline is configured via `Utils/config.json`:
       "defaultFileLevel": "DEBUG"
     },
     "progressBar": {
-      "enableGui": true
+      "defaultPrefixLength": 15
+    },
+    "gui": {
+      "style": {
+        "thumbnail": {"width": 200, "height": 200, "quality": 85}
+      }
+    },
+    "multiDrive": {
+      "minFreeSpaceGB": 10,
+      "autoSwitch": true
     }
   },
   "paths": {
-    "zipDirectory": "path/to/input/zips",
-    "unzippedDirectory": "path/to/output",
-    "logDirectory": "Logs",
-    "outputDirectory": "Outputs",
+    "rawDirectory": "...",
+    "processedDirectory": "...",
+    "logDirectory": "...",
+    "resultsDirectory": "...",
+    "outputDrives": ["..."],
     "tools": {
-      "sevenZip": "path/to/7z.exe",
-      "exifTool": "path/to/exiftool.exe",
-      // ... other tool paths
+      "python": "python",
+      "ffmpeg": "ffmpeg",
+      "ffprobe": "ffprobe"
     }
   },
-  "pipelineSteps": [
-    // Pipeline step definitions
-  ]
+  "pipelineSteps": [...]
 }
 ```
 
 ## Usage
 
-### Basic Usage
+### Run Complete Pipeline
+
 ```bash
-# Run the complete pipeline
 python main.py
+```
 
-# List all pipeline steps
+### List Pipeline Steps
+
+```bash
 python main.py --list-steps
+```
 
-# Resume from a specific step
-python main.py --resume 5
+### Resume from Specific Step
 
-# Use custom configuration
+```bash
+python main.py --resume 2
+```
+
+### Use Custom Configuration
+
+```bash
 python main.py --config custom_config.json
 ```
 
-### Individual Steps
-You can also run individual pipeline steps:
+## Pipeline Structure
 
-```bash
-# Extract zip files
-python "step1 - Extract/extract.py" output_dir input_dir 7z_path
+### Stage 1: Preparation (Automated)
 
-# Sanitize file names
-python "step2 - SanitizeNames/sanitize_names.py" directory_to_process
+`preparation.py` consolidates 14 processing steps:
 
-# Count files
-python "Step0 - Tools/counter/counter.py" output_file.txt directory_to_count
+| Step | Name | Description |
+|------|------|-------------|
+| 1 | Extract ZIP Files | Extract archives, clean filenames |
+| 2 | Sanitize Names | Remove special characters, handle reserved names |
+| 3 | Map Google JSON | Parse Google Photos sidecar metadata |
+| 4 | Convert Media | Convert to standard formats (MP4/JPG) |
+| 5 | Expand Metadata | Extract EXIF, FFprobe, parse filenames |
+| 6 | Remove Recycle Bin | Mark $RECYCLE.BIN contents for deletion |
+| 7 | Hash Videos | Generate SHA256 hashes, group by similarity |
+| 8 | Hash Images | Generate SHA256 hashes, group by similarity |
+| 9 | Mark Video Duplicates | Identify and mark exact duplicates |
+| 10 | Mark Image Duplicates | Identify and mark exact duplicates |
+| 11 | Detect Corruption | Check media file integrity |
+| 12 | Reconstruct Videos | Attempt FFmpeg repair of corrupt videos |
+| 13 | Reconstruct Images | Attempt Pillow repair of corrupt images |
+| 14 | Create Thumbnails | Generate thumbnails for all media |
+
+### Stage 2: Auto Clustering (Automated)
+
+`autoclustering.py` extracts potential relationships between media files based on time and location proximity.
+
+#### Relationship Types
+
+| Relationship | Name | Description | Detection |
+|--------------|------|-------------|-----------|
+| E | Event | Same time AND same location (confirmed) | Human review |
+| E' | Potential Event | Might have E relationship | Auto-detected |
+| T | Temporal | Same time (confirmed) | Human review |
+| T' | Potential Temporal | Might have T relationship | Auto-detected |
+| L | Location | Same location (confirmed) | Human review |
+| L' | Potential Location | Might have L relationship | Auto-detected |
+
+#### Inference Rules
+
+1. **Transitivity**: All relationships are transitive
+   - If A~B and B~C, then A~C (for any relationship type)
+
+2. **Composition**: L' AND T' → E'
+   - If two files share both potential location AND potential time, they have potential event relationship
+
+3. **Confirmation Hierarchy**:
+   - E implies both T and L
+   - E' implies both T' and L'
+
+#### Thresholds (Configurable)
+
+| Threshold | Default | Description |
+|-----------|---------|-------------|
+| Time | 300 seconds (5 min) | Maximum time difference for T' |
+| Location | 0.1 km (100 meters) | Maximum distance for L' |
+
+Configure in `Utils/config.json`:
+
+```json
+{
+  "settings": {
+    "clustering": {
+      "timeThresholdSeconds": 300,
+      "locationThresholdKm": 0.1
+    }
+  }
+}
 ```
 
-## Pipeline Steps
+#### Key Components
 
-1. **Initial File Count**: Count files before processing
-2. **Extract Zip Files**: Extract all zip archives
-3. **Sanitize Names**: Clean up file and directory names
-4. **Map Google Photos JSON**: Process Google Photos metadata
-5. **Convert Media**: Convert to standard formats
-6. **Expand Metadata**: Extract comprehensive metadata
-7. **Hash and Group**: Find potential duplicates
-8. **Remove Exact Duplicates**: Remove identical files
-9. **Review Duplicates**: Interactive duplicate review
-10. **Remove Junk**: Remove unwanted files
-11. **Reconstruct**: Attempt to repair corrupted files
-12. **Categorize**: Organize by metadata
-13. **Estimate Location**: GPS-based location inference
+**UnionFind Data Structure**
+- Efficient transitive closure computation
+- Path compression and union by rank optimization
+- O(α(n)) amortized time per operation
+
+**RelationshipExtractor Class**
+- Extracts timestamps and geotags from metadata
+- Computes pairwise relationships within thresholds
+- Uses Haversine formula for GPS distance calculation
+- Outputs integer-keyed relationship sets
+
+#### Output File
+
+`relationship_sets.json`:
+
+```json
+{
+  "file_index": {
+    "0": "C:/path/to/file1.jpg",
+    "1": "C:/path/to/file2.jpg"
+  },
+  "T_prime": [[0, 1, 2], [3, 4]],
+  "L_prime": [[0, 5], [1, 6]],
+  "E_prime": [[0, 1]],
+  "thresholds": {
+    "time_seconds": 300,
+    "location_km": 0.1
+  },
+  "statistics": {
+    "total_files": 1000,
+    "files_with_timestamp": 950,
+    "files_with_geotag": 200,
+    "T_prime_sets": 50,
+    "L_prime_sets": 30,
+    "E_prime_sets": 10
+  }
+}
+```
+
+### Stage 3: Review (Interactive)
+
+| Step | File | Description |
+|------|------|-------------|
+| 15 | ShowANDRemoveDuplicateVideo.py | Review potential video duplicates |
+| 16 | ShowANDRemoveDuplicateImage.py | Review potential image duplicates |
+| 17 | RemoveJunkVideo.py | Remove unwanted videos |
+| 18 | RemoveJunkImage.py | Remove unwanted images |
+| 19 | Categorization.py | Organize by metadata categories |
+| 20 | EstimateByTime.py | Time-based organization |
+| 21 | AssignEvent.py | Assign event labels |
+
+## Output Files
+
+### Processed Files (in processedDirectory)
+
+- Extracted archive contents
+- Sanitized file/directory names
+- Converted media files (MP4/JPG)
+- Repaired corrupt files
+
+### Metadata Files (in resultsDirectory)
+
+| File | Description |
+|------|-------------|
+| `Consolidate_Meta_Results.json` | Complete metadata for all files |
+| `deletion_manifest.json` | Files marked for deletion (with rollback) |
+| `video_grouping_info.json` | Video duplicate groups |
+| `image_grouping_info.json` | Image duplicate groups |
+| `thumbnail_map.json` | File-to-thumbnail mapping |
+| `videos_to_reconstruct.json` | List of corrupt videos |
+| `images_to_reconstruct.json` | List of corrupt images |
+| `relationship_sets.json` | T', L', E' relationship sets with file index |
+
+### Recovery Directory (in resultsDirectory/.deleted/)
+
+Files marked for deletion are moved here instead of permanent removal. Use the `rollback()` function to restore files.
+
+### Thumbnails (in resultsDirectory/.thumbnails/)
+
+JPEG thumbnails for all media, named by MD5 hash of source path.
+
+## Filename Patterns
+
+The pipeline recognizes 15 timestamp patterns in filenames:
+
+| Pattern | Example |
+|---------|---------|
+| `yyyy-MM-dd_HH-mm-ss_-N` | 2024-01-15_14-30-45_-1 |
+| `yyyy-MM-dd_HH-mm-ss` | 2024-01-15_14-30-45 |
+| `dd-MM-yyyy@HH-mm-ss` | 15-01-2024@14-30-45 |
+| `yyyy_MMdd_HHmmss` | 2024_0115_143045 |
+| `yyyyMMdd_HHmmss-suffix` | 20240115_143045-IMG |
+| `yyyyMMdd_HHmmss` | 20240115_143045 |
+| `yyyyMMdd` | 20240115 |
+| `yyyy-MM-dd(N)` | 2024-01-15(1) |
+| `MMM d, yyyy HH:mm:ssAM/PM` | Jan 15, 2024 2:30:45PM |
+| `yyyyMMdd HH:mm:ss` | 20240115 14:30:45 |
+| `yyyy-MM-dd HH:mm:ss.fff` | 2024-01-15 14:30:45.123 |
+| `@dd-MM-yyyy_HH-mm-ss` | @15-01-2024_14-30-45 |
+| `yyyy:MM:dd HH:mm:ss` | 2024:01:15 14:30:45 |
+| `prefix_yyyyMMdd_HHmmss` | IMG_20240115_143045 |
+| `_dd-MM-yyyy_HH-mm-ss` | _15-01-2024_14-30-45 |
+
+## Metadata Structure
+
+Each processed file has a metadata entry:
+
+```json
+{
+  "name": "filename.ext",
+  "hash": "sha256_hash_string",
+  "size": 12345678,
+  "duration": 120.5,
+  "original_source_path": "path/to/original",
+  "output_drive": "path/to/drive",
+  "output_path": "path/to/current/location",
+  "is_converted": false,
+  "original_format": ".mov",
+  "marked_for_deletion": false,
+  "deletion_reason": null,
+  "duplicate_of": null,
+  "is_corrupt": false,
+  "is_repaired": false,
+  "thumbnail_path": "path/to/thumbnail.jpg",
+  "exif": [{"timestamp": "...", "geotag": {...}}],
+  "filename": [{"timestamp": "..."}],
+  "ffprobe": [{"timestamp": "...", "rotation": 90}],
+  "json": [{"timestamp": "...", "geotag": {...}}],
+  "processing_history": [
+    {"step": "extract", "status": "success", "timestamp": "..."}
+  ]
+}
+```
+
+## Standards Compliance
+
+The codebase follows strict standards for consistency and maintainability:
+
+### 1. Configuration Standards
+- No re-reading config files - uses passed config_data
+- No hardcoded paths - all paths from config
+- Extracts all settings from passed config object
+
+### 2. Logging Standards
+- Uses `get_script_logger_with_config(config_data, script_name)`
+- Consistent MediaOrganizerLogger system
+- Log directory from config
+
+### 3. Code Structure Standards
+- Imports from Utils module
+- Proper project root path handling
+- Called by main orchestrator
+
+### 4. Error Handling Standards
+- All file operations wrapped in try/except
+- Proper logging of failures
+- Graceful failure handling
+
+### 5. Pipeline Standards
+- Uses `--config-json` parameter
+- Progress tracking with `update_pipeline_progress()`
+
+### 6. Integration Standards
+- Integrates with main orchestrator
+- UTF-8 encoding throughout
+
+### 7. Recovery & Undo Standards
+- Files moved to `.deleted/` directory (not permanent deletion)
+- Rollback function available for recovery
+- Deletion manifest tracks all marked files
+
+## Key Classes
+
+### DriveManager
+
+Handles multi-drive output with automatic switching:
+
+```python
+drive_manager = DriveManager(config_data)
+output_path = drive_manager.get_output_path(file_size)
+```
+
+- Monitors free space on configured drives
+- Automatically switches when space is low
+- Configurable minimum free space threshold
+
+### DeletionManifest
+
+Manages non-destructive file deletion:
+
+```python
+manifest = DeletionManifest(results_dir)
+manifest.mark_for_deletion(file_path, reason="duplicate")
+manifest.execute_deletions()  # Moves to .deleted/
+manifest.rollback()  # Restores all files
+```
+
+### RelationshipExtractor
+
+Extracts potential relationships between media files:
+
+```python
+from autoclustering import RelationshipExtractor
+
+extractor = RelationshipExtractor(config_data, logger)
+relationships = extractor.extract_relationships(metadata)
+# Returns: file_index, T_prime, L_prime, E_prime sets
+```
+
+### SelectableThumbnailGrid
+
+Reusable GUI component for displaying media with Windows-style selection:
+
+```python
+from Utils.ThumbnailGUI import SelectableThumbnailGrid, show_thumbnail_grid
+
+# Quick usage - returns dict with 'selected' and 'junk' lists
+result = show_thumbnail_grid(config_data, file_keys, logger, title="Review")
+selected_keys = result['selected']
+junk_keys = result['junk']
+
+# Full control
+root = tk.Tk()
+grid = SelectableThumbnailGrid(
+    root, config_data, file_keys, logger,
+    on_selection_change=callback,
+    title="Review Media"
+)
+root.mainloop()
+selected = grid.get_selected_keys()
+junk = grid.get_junk_keys()
+```
+
+Features:
+- Click: Select single item
+- Ctrl+Click: Toggle selection
+- Shift+Click: Range selection
+- Drag: Rubber band selection
+- Checkbox: Individual toggle
+- Hover: Preview popup (video plays with audio)
+- Junk button: Lower-right faded button to mark as junk (shows "JUNK" watermark)
 
 ## Architecture
 
-### Core Modules
-
-- **`main.py`**: Main pipeline orchestrator
-- **`Utils/config.py`**: Configuration management
-- **`Utils/logging_config.py`**: Logging system
-- **`Utils/progress_bar.py`**: Progress tracking
-- **`Utils/media_tools.py`**: Media metadata extraction
-- **`Utils/utilities.py`**: General utility functions
-
-### Key Features
-
-- **Thread-safe caching**: Metadata extraction results are cached
-- **Progress tracking**: Both GUI and console progress indicators
-- **Error recovery**: Robust error handling with detailed logging
-- **Atomic operations**: Safe file operations with rollback capability
-- **Cross-platform**: Works on Windows, macOS, and Linux
-
-## Migration from PowerShell
-
-This pure Python implementation replaces the original PowerShell/Python hybrid:
-
-### Converted Components
-
-- ✅ Main orchestrator (`top.ps1` → `main.py`)
-- ✅ Configuration system (PowerShell modules → Python classes)
-- ✅ Logging system (PowerShell → Python logging)
-- ✅ Progress tracking (PowerShell GUI → tkinter)
-- ✅ Extract step (`Extract.ps1` → `extract.py`)
-- ✅ Sanitize step (`SanitizeNames.ps1` → `sanitize_names.py`)
-- ✅ Media tools (PowerShell modules → unified Python module)
-
-### Backward Compatibility
-
-During transition, the pipeline can still execute PowerShell scripts:
-- Steps marked as `"Type": "PowerShell"` will use PowerShell execution
-- Steps marked as `"Type": "Python"` will use Python execution
-- Gradual migration is supported
-
-### Performance Improvements
-
-- **Faster startup**: No PowerShell module loading overhead
-- **Better caching**: In-memory metadata caching
-- **Parallel processing**: Multi-threaded operations where appropriate
-- **Memory efficiency**: Better memory management for large datasets
+```
+media_organizer/
+├── main.py                    # Pipeline orchestrator
+├── preparation.py             # Stage 1: Preparation steps (1-14)
+├── autoclustering.py          # Stage 2: Relationship extraction
+├── Utils/
+│   ├── config.json            # Configuration file
+│   ├── config.py              # Configuration management
+│   ├── logging_config.py      # Logging system
+│   ├── progress_bar.py        # Progress tracking
+│   ├── media_tools.py         # Media metadata extraction
+│   ├── ThumbnailGUI.py        # Reusable GUI components
+│   └── utilities.py           # General utilities
+├── step15 - ShowAndRemoveVideoDuplicate/
+├── step16 - ShowAndRemoveImageDuplicate/
+├── step17 - RemoveJunkVideos/
+├── step18 - RemoveJunkImages/
+├── step19 - Categorization/
+├── step20 - EstimateByTime/
+├── step21 - AssignEvent/
+├── Logs/                      # Log files
+└── Results/                   # Metadata and thumbnails
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Tool not found**: Ensure external tools are in PATH or update config paths
-2. **Permission errors**: Run with appropriate permissions for file operations
-3. **Memory issues**: Reduce `maxWorkers` in configuration for large datasets
-4. **GUI issues**: Set `"enableGui": false` in config for headless environments
+| Issue | Solution |
+|-------|----------|
+| Tool not found | Ensure FFmpeg/FFprobe in PATH or update config paths |
+| Permission errors | Run with appropriate permissions for file operations |
+| Memory issues | Reduce file batch sizes or process in chunks |
+| GUI issues | Set `"enableGui": false` in config for headless environments |
 
 ### Logging
 
-Logs are stored in the `Logs/` directory:
-- `pipeline.log`: Main pipeline log
-- `Phase_X_scriptname.log`: Individual phase logs
+Logs are stored in the configured `logDirectory`:
 
-Log levels can be configured in the settings:
-- Console: `INFO` (default)
-- File: `DEBUG` (default)
+- `pipeline.log`: Main pipeline log
+- `preparation.log`: Stage 1 preparation log
+- `autoclustering.log`: Stage 2 clustering log
+
+Log levels (configurable):
+- Console: INFO (default)
+- File: DEBUG (default)
 
 ### Debug Mode
 
-Enable debug mode in configuration:
+Enable in configuration:
+
 ```json
 {
   "settings": {
@@ -199,28 +510,22 @@ Enable debug mode in configuration:
 }
 ```
 
-## Development
+## Recovery
 
-### Adding New Steps
+### Restore Deleted Files
 
-1. Create a new Python script in the appropriate step directory
-2. Implement progress reporting using `report_progress(current, total, status)`
-3. Use the logging system for error reporting
-4. Add the step to the pipeline configuration
-5. Test the step individually before integration
+Files in `.deleted/` can be restored:
 
-### Testing
+```python
+from preparation import DeletionManifest
 
-```bash
-# Test individual components
-python -m pytest tests/
-
-# Test configuration
-python Utils/config.py
-
-# Test logging
-python Utils/logging_config.py
+manifest = DeletionManifest(results_dir)
+manifest.rollback()  # Restores all files
 ```
+
+### Manual Recovery
+
+Files in `resultsDirectory/.deleted/` maintain their original directory structure and can be manually copied back.
 
 ## License
 

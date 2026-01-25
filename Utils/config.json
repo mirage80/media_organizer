@@ -7,55 +7,78 @@
     },
     "progressBar": {
       "defaultPrefixLength": 15
+    },
+    "gui": {
+      "style": {
+        "frameColors": {
+          "primary": "#e8f5e9",
+          "secondary": "#fff3e0"
+        },
+        "progressColors": {
+          "primaryBar": "#4CAF50",
+          "primaryBackground": "#C8E6C9",
+          "secondaryBar": "#FF9800",
+          "secondaryBackground": "#FFE0B2"
+        },
+        "textColors": {
+          "primary": "#2e7d32",
+          "secondary": "#e65100"
+        },
+        "fonts": {
+          "family": "Segoe UI",
+          "sizeHeading": 14,
+          "sizeNormal": 11
+        },
+        "dimensions": {
+          "cornerRadius": 8,
+          "cornerRadiusLarge": 15,
+          "progressBarHeight": 20,
+          "paddingOuter": 10,
+          "paddingInner": 5,
+          "paddingContent": 15,
+          "paddingWidget": 5
+        },
+        "thumbnail": {
+          "width": 200,
+          "height": 200,
+          "quality": 85
+        },
+        "thumbnailGrid": {
+          "minSize": 200,
+          "maxSize": 300,
+          "defaultColumns": 4,
+          "popupScreenFraction": 0.33,
+          "hoverDelayMs": 500,
+          "cardPadding": 40,
+          "cardBorderPadding": 2
+        }
+      }
+    },
+    "multiDrive": {
+      "minFreeSpaceGB": 10,
+      "autoSwitch": true
+    },
+    "clustering": {
+      "timeThresholdSeconds": 300,
+      "locationThresholdKm": 0.1
     }
   },
   "paths": {
     "rawDirectory": "C:/Users/sawye/Downloads/test/input",
     "processedDirectory": "C:/Users/sawye/Downloads/test/Processed",
-    "logDirectory": "C:/Users/sawye/Codes/media_organizer/Logs",
-    "resultsDirectory": "C:/Users/sawye/Codes/media_organizer/Results",
+    "logDirectory": "C:/Users/sawye/Downloads/test/output/Logs",
+    "resultsDirectory": "C:/Users/sawye/Downloads/test/output/Results",
+    "outputDrives": [
+      "C:/Users/sawye/Downloads/test/Processed"
+    ],
     "tools": {
-      "python": "python"
+      "python": "python",
+      "ffmpeg": "ffmpeg",
+      "ffprobe": "ffprobe"
     }
   },
   "pipelineSteps": [
-    { "Name": "Initial File Count", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Extract Zip Files", "Type": "Python", "Path": "step1 - Extract/Extract.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Extract", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Sanitize Names", "Type": "Python", "Path": "step3 - SanitizeNames/SanitizeNames.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Sanitize", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Map Google Photos JSON Data", "Type": "Python", "Path": "step5 - MapGoogleJson/MapGoogleJson.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After JSON-Mapping", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Convert Media to Standard Formats", "Type": "Python", "Path": "step7 - Converter/converter.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Conversion", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Expand Metadata with EXIF/FFprobe", "Type": "Python", "Path": "step9 - ExpandMetaData/ExpandMetadata.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Metadata Expansion", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Remove Recycle Bin", "Type": "Python", "Path": "step11 - RemoveRecycleBin/RemoveRecycleBin.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Recycle-Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Hash/Group Video Duplicates", "Type": "Python", "Path": "step13 - HashAndGroupVideos/HashANDGroupPossibleVideoDuplicates.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Video Hashing", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Hash/Group Image Duplicates", "Type": "Python", "Path": "step15 - HashAndGroupImages/HashANDGroupPossibleImageDuplicates.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Image Hashing", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Remove Exact Video Duplicates", "Type": "Python", "Path": "step17 - RemoveExactVideoDuplicates/RemoveExactVideoDuplicate.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Exact Video Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Remove Exact Image Duplicates", "Type": "Python", "Path": "step19 - RemoveExactImageDuplicates/RemoveExactImageDuplicate.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Exact Image Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Detect Corrupt Media Files", "Type": "Python", "Path": "step21 - DetectCorruption/DetectCorruption.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Corruption Detection", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Reconstruct Corrupt Videos", "Type": "Python", "Path": "step23 - ReconstructVideos/VideoReconstruction.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Video Reconstruction", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Reconstruct Corrupt Images", "Type": "Python", "Path": "step25 - ReconstructImages/ImageReconstruction.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Image Reconstruction", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Create Thumbnails", "Type": "Python", "Path": "step27 - CreateThumbnails/CreateThumbnails.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Thumbnail Creation", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Review/Remove Potential Video Duplicates", "Type": "Python", "Path": "step29 - ShowAndRemoveVideoDuplicate/ShowANDRemoveDuplicateVideo.py", "Interactive": true, "Enabled": true },
-    { "Name": "File Count After Potential Video Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Review/Remove Potential Image Duplicates", "Type": "Python", "Path": "step31 - ShowAndRemoveImageDuplicate/ShowANDRemoveDuplicateImage.py", "Interactive": true, "Enabled": false },
-    { "Name": "File Count After Potential Image Dup Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Remove Junk Videos", "Type": "Python", "Path": "step41 - RemoveJunkVideos/RemoveJunkVideo.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Junk Video Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Remove Junk Images", "Type": "Python", "Path": "step43 - RemoveJunkImages/RemoveJunkImage.py", "Interactive": false, "Enabled": false },
-    { "Name": "File Count After Junk Image Removal", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false },
-    { "Name": "Final File Count", "Type": "Python", "Path": "Utils/counter.py", "Interactive": false, "Enabled": false }
+    { "Name": "Media Preparation", "Type": "Python", "Path": "preparation.py", "Interactive": false, "Enabled": true },
+    { "Name": "Auto Clustering", "Type": "Python", "Path": "autoclustering.py", "Interactive": false, "Enabled": true }
   ]
 }
