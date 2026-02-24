@@ -141,8 +141,56 @@ class MediaOrganizerConfig:
     def get_pipeline_steps(self) -> List[Dict[str, Any]]:
         return self.config_data.get('pipelineSteps', [])
 
-    def get_enabled_real_steps(self) -> List[Dict[str, Any]]:
+    def get_steps(self) -> List[Dict[str, Any]]:
+        """Get all pipeline steps (enabled and disabled)."""
+        return self.get_pipeline_steps()
+
+    def get_real_steps(self) -> List[Dict[str, Any]]:
+        """Get all real steps (excluding counters)."""
+        return [s for s in self.get_pipeline_steps() if 'counter.py' not in s.get('Path', '')]
+
+    def get_enabled_steps(self) -> List[Dict[str, Any]]:
+        """Get all enabled steps (including counters)."""
         return [s for s in self.get_pipeline_steps() if s.get('Enabled', False)]
+
+    def get_enabled_real_steps(self) -> List[Dict[str, Any]]:
+        """Get enabled real steps (excluding counters)."""
+        return [s for s in self.get_pipeline_steps()
+                if s.get('Enabled', False) and 'counter.py' not in s.get('Path', '')]
+
+    def validate_tools(self) -> List[str]:
+        """Validate required tools are available. Returns list of missing tools."""
+        import shutil
+        missing = []
+        tools = self.config_data.get('paths', {}).get('tools', {})
+        for name, cmd in tools.items():
+            if not shutil.which(cmd):
+                missing.append(f"{name} ({cmd})")
+        return missing
+
+    def ensure_directories(self) -> None:
+        """Ensure all required directories exist."""
+        for key in ['rawDirectory', 'processedDirectory', 'logDirectory', 'resultsDirectory']:
+            path = self.resolved_paths.get(key)
+            if path:
+                Path(path).mkdir(parents=True, exist_ok=True)
+
+    def setup_environment_variables(self) -> None:
+        """Setup environment variables for pipeline."""
+        os.environ['MEDIA_ORGANIZER_CONFIG'] = str(self.config_file)
+
+    def resolve_step_arguments(self, args: Any) -> Dict[str, Any]:
+        """Resolve step arguments with path variables."""
+        if isinstance(args, dict):
+            resolved = {}
+            for k, v in args.items():
+                if isinstance(v, str) and v.startswith('$'):
+                    var_name = v[1:]
+                    resolved[k] = self.resolved_paths.get(var_name, v)
+                else:
+                    resolved[k] = v
+            return resolved
+        return {}
 
 
 _config_instance = None
@@ -341,11 +389,42 @@ class ProgressBarManager:
 
     def send_to_back(self):
         if self.enable_gui:
-            self._send_command('send_to_back')
+            if self.use_main_thread and self.form:
+                try:
+                    self.form.withdraw()
+                except:
+                    pass
+            else:
+                self._send_command('send_to_back')
 
     def bring_to_front(self):
         if self.enable_gui:
-            self._send_command('bring_to_front')
+            if self.use_main_thread and self.form:
+                try:
+                    self.form.deiconify()
+                    self.form.lift()
+                except:
+                    pass
+            else:
+                self._send_command('bring_to_front')
+
+    def hide(self):
+        """Hide the progress bar window completely."""
+        if self.enable_gui and self.form:
+            try:
+                self.form.withdraw()
+            except:
+                pass
+
+    def show(self):
+        """Show the progress bar window."""
+        if self.enable_gui and self.form:
+            try:
+                self.form.deiconify()
+                self.form.lift()
+                self.form.focus_force()
+            except:
+                pass
 
     def _send_command(self, cmd, **kwargs):
         if self.command_queue:

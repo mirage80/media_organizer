@@ -73,12 +73,45 @@
     ],
     "tools": {
       "python": "python",
-      "ffmpeg": "ffmpeg",
-      "ffprobe": "ffprobe"
+      "ffmpeg": "c:/Users/sawye/Codes/media_organizer/tools/ffmpeg.exe",
+      "ffprobe": "c:/Users/sawye/Codes/media_organizer/tools/ffprobe.exe"
     }
   },
   "pipelineSteps": [
-    { "Name": "Media Preparation", "Type": "Python", "Path": "preparation.py", "Interactive": false, "Enabled": true },
-    { "Name": "Auto Clustering", "Type": "Python", "Path": "autoclustering.py", "Interactive": false, "Enabled": true }
+    {
+      "Name": "Media Preparation",
+      "Type": "Python",
+      "Path": "preparation.py",
+      "Interactive": false,
+      "Enabled": true
+    },
+    {
+      "Name": "Auto Clustering",
+      "Type": "Python",
+      "Path": "autoclustering.py",
+      "Interactive": false,
+      "Enabled": true
+    },
+    {
+      "Name": "Event Review",
+      "Type": "Python",
+      "Path": "event_review.py",
+      "Interactive": true,
+      "Enabled": true
+    },
+    {
+      "Name": "Relationship Review",
+      "Type": "Python",
+      "Path": "relationship_review.py",
+      "Interactive": true,
+      "Enabled": true
+    },
+    {
+      "Name": "Metadata Assignment",
+      "Type": "Python",
+      "Path": "metadata_assignment.py",
+      "Interactive": true,
+      "Enabled": true
+    }
   ]
 }

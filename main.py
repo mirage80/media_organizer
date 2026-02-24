@@ -72,29 +72,36 @@ class PipelineOrchestrator:
         self.logger = get_script_logger(log_directory, 'main', '')
         self.log = create_logger_function(self.logger)
         
-    def _validate_environment(self) -> bool:
+    def _validate_environment(self, skip_tool_check: bool = False) -> bool:
         """
         Validate the environment and required tools.
-        
+
+        Args:
+            skip_tool_check: If True, only warn about missing tools instead of aborting
+
         Returns:
             True if environment is valid, False otherwise
         """
         self.log("INFO", "--- Main Pipeline Started ---")
-        
+
         # Validate tools
         missing_tools = self.config.validate_tools()
         if missing_tools:
             for tool in missing_tools:
-                self.log("CRITICAL", f"Required tool not found: {tool}")
-            self.log("CRITICAL", "Aborting due to missing tools.")
-            return False
-        
+                if skip_tool_check:
+                    self.log("WARNING", f"Tool not found (may not be needed): {tool}")
+                else:
+                    self.log("CRITICAL", f"Required tool not found: {tool}")
+            if not skip_tool_check:
+                self.log("CRITICAL", "Aborting due to missing tools.")
+                return False
+
         # Ensure directories exist
         self.config.ensure_directories()
-        
+
         # Setup environment variables
         self.config.setup_environment_variables()
-        
+
         return True
     
     def _execute_python_script(self, script_path: str, step_name: str, current_state: PipelineState) -> bool:
@@ -310,9 +317,9 @@ class PipelineOrchestrator:
         # Set environment variables for Python scripts
         os.environ['CONFIG_FILE_PATH'] = str(self.config.config_file)
 
-        # Handle interactive steps
+        # Handle interactive steps - hide progress bar completely
         if is_interactive:
-            self.progress_manager.send_to_back()
+            self.progress_manager.hide()
 
         # Execute based on type
         success = False
@@ -327,9 +334,9 @@ class PipelineOrchestrator:
             self.log("ERROR", f"Unknown step type: {step_type}")
             return False
 
-        # Restore progress bar for interactive steps
+        # Restore progress bar after interactive steps
         if is_interactive:
-            self.progress_manager.bring_to_front()
+            self.progress_manager.show()
 
         if success:
             if is_counter:
@@ -344,12 +351,13 @@ class PipelineOrchestrator:
         
         return success
     
-    def run(self, resume_from: Optional[int] = None) -> bool:
+    def run(self, resume_from: Optional[int] = None, skip_tool_check: bool = False) -> bool:
         """
         Run the entire pipeline.
 
         Args:
             resume_from: Optional step number to resume from
+            skip_tool_check: If True, skip tool validation entirely
 
         Returns:
             True if pipeline completed successfully, False otherwise
@@ -357,9 +365,10 @@ class PipelineOrchestrator:
         try:
             # Setup logging
             self._setup_logging()
-            
-            # Validate environment
-            if not self._validate_environment():
+
+            # Validate environment (skip strict tool check if resuming or explicitly requested)
+            should_skip_tools = skip_tool_check or (resume_from is not None and resume_from > 1)
+            if not self._validate_environment(skip_tool_check=should_skip_tools):
                 return False
             
             # Calculate step counts using standard naming
@@ -484,6 +493,11 @@ def main():
         action='store_true',
         help='List all pipeline steps and exit'
     )
+    parser.add_argument(
+        '--skip-tool-check',
+        action='store_true',
+        help='Skip tool validation (for testing without ffmpeg/ffprobe)'
+    )
 
     args = parser.parse_args()
 
@@ -498,9 +512,9 @@ def main():
             enabled = "[X]" if step.get('Enabled', False) else "[ ]"
             print(f"  {i:2d}. {enabled} {step.get('Name', 'Unknown')} ({step.get('Type', 'Unknown')})")
         return 0
-    
+
     # Run pipeline
-    success = orchestrator.run(resume_from=args.resume)
+    success = orchestrator.run(resume_from=args.resume, skip_tool_check=args.skip_tool_check)
     return 0 if success else 1
 
 

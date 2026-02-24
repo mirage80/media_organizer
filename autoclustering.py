@@ -117,8 +117,7 @@ script_dir = Path(__file__).resolve().parent
 if str(script_dir) not in sys.path:
     sys.path.insert(0, str(script_dir))
 
-from Utils.logging_config import get_script_logger_with_config
-from Utils.progress_bar import update_pipeline_progress
+from Utils.utils import get_script_logger_with_config, update_pipeline_progress
 
 
 # =============================================================================
@@ -572,12 +571,12 @@ def run_autoclustering(config_data: Dict[str, Any], logger) -> bool:
         logger.info("=" * 60)
 
         # Update pipeline progress
-        update_pipeline_progress(1, 1, "Auto Clustering", "Complete")
+        update_pipeline_progress(1, 1, "Auto Clustering", 100, "Complete")
 
         return True
 
     except Exception as e:
-        logger.error(f"Auto clustering failed: {e}", exc_info=True)
+        logger.error(f"Auto clustering failed: {e}")
         return False
 
 

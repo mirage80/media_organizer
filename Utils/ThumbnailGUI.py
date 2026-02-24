@@ -213,7 +213,13 @@ class ThumbnailGridGUI:
 
             actual_path = image_path
             if not os.path.exists(image_path):
-                if hasattr(self, 'thumbnail_map'):
+                if hasattr(self, '_get_thumbnail_path'):
+                    thumb_path = self._get_thumbnail_path(image_path)
+                    if thumb_path:
+                        actual_path = thumb_path
+                    else:
+                        raise FileNotFoundError(f"File not found: {image_path}")
+                elif hasattr(self, 'thumbnail_map'):
                     norm_path = os.path.normpath(os.path.abspath(image_path))
                     thumb_path = self.thumbnail_map.get(norm_path)
                     if thumb_path and os.path.exists(thumb_path):
@@ -449,6 +455,10 @@ class SelectableThumbnailGrid(ThumbnailGridGUI):
         self.relationship_file = results_dir / 'relationship_sets.json'
         self.thumbnail_map_file = results_dir / 'thumbnail_map.json'
 
+        # Store input/processed directories for path translation
+        self.raw_dir = os.path.normpath(os.path.abspath(config_data['paths'].get('rawDirectory', '')))
+        self.processed_dir = os.path.normpath(os.path.abspath(config_data['paths'].get('processedDirectory', '')))
+
         self.file_index = self._load_file_index()
         self.thumbnail_map = self._load_thumbnail_map()
 
@@ -553,6 +563,42 @@ class SelectableThumbnailGrid(ThumbnailGridGUI):
         except Exception as e:
             self.logger.error(f"Error loading thumbnail map: {e}")
             return {}
+
+    def _get_thumbnail_path(self, file_path: str):
+        """
+        Get thumbnail path for a file, trying path translations if needed.
+
+        Handles cases where file_index points to input/ but thumbnail_map uses Processed/ paths.
+        """
+        norm_path = os.path.normpath(os.path.abspath(file_path))
+
+        # Try direct lookup first
+        thumb_path = self.thumbnail_map.get(norm_path)
+        if thumb_path and os.path.exists(thumb_path):
+            return thumb_path
+
+        # Try translating input path to processed path
+        if self.raw_dir and self.processed_dir and norm_path.startswith(self.raw_dir):
+            translated = norm_path.replace(self.raw_dir, self.processed_dir, 1)
+            thumb_path = self.thumbnail_map.get(translated)
+            if thumb_path and os.path.exists(thumb_path):
+                return thumb_path
+
+        # Try translating processed path to input path
+        if self.raw_dir and self.processed_dir and norm_path.startswith(self.processed_dir):
+            translated = norm_path.replace(self.processed_dir, self.raw_dir, 1)
+            thumb_path = self.thumbnail_map.get(translated)
+            if thumb_path and os.path.exists(thumb_path):
+                return thumb_path
+
+        # Try finding by filename only (last resort)
+        filename = os.path.basename(norm_path)
+        for map_path, thumb in self.thumbnail_map.items():
+            if os.path.basename(map_path) == filename:
+                if os.path.exists(thumb):
+                    return thumb
+
+        return None
 
     def _build_ui(self):
         """Build modern Windows 11-style UI."""
@@ -1005,11 +1051,10 @@ class SelectableThumbnailGrid(ThumbnailGridGUI):
             canvas.image = self.image_cache[cache_key]
             return
 
-        # Load and scale image
-        norm_path = os.path.normpath(os.path.abspath(file_path))
-        thumb_path = self.thumbnail_map.get(norm_path)
+        # Load and scale image using path translation
+        thumb_path = self._get_thumbnail_path(file_path)
 
-        if thumb_path and os.path.exists(thumb_path):
+        if thumb_path:
             try:
                 img = Image.open(thumb_path)
                 # Scale to fit inside box (maintain aspect ratio)
