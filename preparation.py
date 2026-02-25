@@ -258,11 +258,11 @@ USAGE EXAMPLES
 ================================================================================
 
 Command Line:
-    python preparation.py --config-json '{"paths": {...}}'
+    python preparation.py --config-file config.json
 
 From Main Orchestrator:
-    from preparation import run_all_steps
-    success = run_all_steps(config_data, logger)
+    from preparation import run_preparation
+    success = run_preparation(settings=settings, progress_info=progress_info, logger=logger, config_data=config_data)
 
 Rollback Deletions:
     from preparation import DeletionManifest
@@ -2636,12 +2636,12 @@ def step27_create_thumbnails(config_data: dict, logger, drive_manager: DriveMana
 # PIPELINE RUNNER
 # =============================================================================
 
-def run_all_steps(config_data: dict, logger) -> bool:
-    """Run all steps 1-27 in sequence with multi-drive support and no deletion."""
+def run_preparation(settings: dict, progress_info: dict, logger, config_data: dict) -> bool:
+    """Run all preparation steps 1-27 in sequence with multi-drive support and no deletion."""
 
     # Get all settings from config (uses GUIStyle/defaults if not in config)
-    settings = get_settings_from_config(config_data)
-    min_free_space_bytes = settings['min_free_space_bytes']
+    config_settings = get_settings_from_config(config_data)
+    min_free_space_bytes = config_settings['min_free_space_bytes']
 
     logger.info(f"Min free space threshold: {min_free_space_bytes / (1024**3):.2f} GB")
 
@@ -2838,16 +2838,17 @@ def run_all_steps(config_data: dict, logger) -> bool:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Combined Media Organizer Pipeline - Steps 1 to 27")
-    parser.add_argument('--config-json', required=True, help='Configuration as JSON string')
+    parser.add_argument('--config-file', required=True, help='Path to configuration JSON file')
     parser.add_argument('--step', type=int, help='Run specific step only (1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23, 25, 27)')
     parser.add_argument('--execute-deletions', action='store_true', help='Actually delete files marked in manifest')
 
     args = parser.parse_args()
 
     try:
-        config_data = json.loads(args.config_json)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing config JSON: {e}")
+        with open(args.config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config file: {e}")
         return 1
 
     logger = get_script_logger_with_config(config_data, 'combined_steps')
@@ -2863,7 +2864,9 @@ def main():
         logger.info(f"Deleted: {result['deleted']}, Failed: {result['failed']}")
         return 0 if result['failed'] == 0 else 1
 
-    success = run_all_steps(config_data, logger)
+    settings = config_data.get('settings', {})
+    progress_info = {'current_step': 1, 'total_steps': 1}  # Standalone execution
+    success = run_preparation(settings=settings, progress_info=progress_info, logger=logger, config_data=config_data)
     return 0 if success else 1
 
 

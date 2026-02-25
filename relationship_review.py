@@ -1444,7 +1444,7 @@ class RelationshipReviewGUI:
         }
 
 
-def run_relationship_review(config_data: dict, logger) -> bool:
+def run_relationship_review(settings: dict, progress_info: dict, logger, config_data: dict) -> bool:
     try:
         if CTK_AVAILABLE:
             root = ctk.CTk()
@@ -1455,6 +1455,8 @@ def run_relationship_review(config_data: dict, logger) -> bool:
         root.mainloop()
 
         results = gui.get_results()
+        root.destroy()
+
         logger.info(f"Relationship review complete: {len(results['confirmed_events'])} events confirmed, "
                    f"{len(results['metadata_updates'])} files updated")
 
@@ -1467,19 +1469,22 @@ def run_relationship_review(config_data: dict, logger) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description='Relationship Review - T\' and L\' Verification')
-    parser.add_argument('--config-json', type=str, required=True,
-                        help='JSON string containing configuration')
+    parser.add_argument('--config-file', type=str, required=True,
+                        help='Path to configuration JSON file')
 
     args = parser.parse_args()
 
     try:
-        config_data = json.loads(args.config_json)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing config JSON: {e}", file=sys.stderr)
+        with open(args.config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config file: {e}", file=sys.stderr)
         sys.exit(1)
 
     logger = get_script_logger_with_config(config_data, 'relationship_review')
-    success = run_relationship_review(config_data, logger)
+    settings = config_data.get('settings', {})
+    progress_info = {'current_step': 1, 'total_steps': 1}  # Standalone execution
+    success = run_relationship_review(settings=settings, progress_info=progress_info, logger=logger, config_data=config_data)
     sys.exit(0 if success else 1)
 
 

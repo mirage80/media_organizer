@@ -1832,13 +1832,15 @@ class EventReviewGUI:
         }
 
 
-def run_event_review(config_data: dict, logger) -> bool:
+def run_event_review(settings: dict, progress_info: dict, logger, config_data: dict) -> bool:
     """
     Run the event review GUI.
 
     Args:
-        config_data: Configuration dictionary
+        settings: Extracted configuration settings
+        progress_info: Pipeline progress information
         logger: Logger instance
+        config_data: Full configuration dictionary
 
     Returns:
         True if successful, False otherwise
@@ -1853,6 +1855,8 @@ def run_event_review(config_data: dict, logger) -> bool:
         root.mainloop()
 
         results = gui.get_results()
+        root.destroy()
+
         logger.info(f"Event review complete: {len(results['confirmed_events'])} events confirmed, "
                    f"{len(results['junk_files'])} files marked as junk")
 
@@ -1867,20 +1871,22 @@ def run_event_review(config_data: dict, logger) -> bool:
 def main():
     """Main entry point for command line execution."""
     parser = argparse.ArgumentParser(description='Event Review - Human Verification')
-    parser.add_argument('--config-json', type=str, required=True,
-                        help='JSON string containing configuration')
+    parser.add_argument('--config-file', type=str, required=True,
+                        help='Path to configuration JSON file')
 
     args = parser.parse_args()
 
     try:
-        config_data = json.loads(args.config_json)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing config JSON: {e}", file=sys.stderr)
+        with open(args.config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config file: {e}", file=sys.stderr)
         sys.exit(1)
 
     logger = get_script_logger_with_config(config_data, 'event_review')
-
-    success = run_event_review(config_data, logger)
+    settings = config_data.get('settings', {})
+    progress_info = {'current_step': 1, 'total_steps': 1}  # Standalone execution
+    success = run_event_review(settings=settings, progress_info=progress_info, logger=logger, config_data=config_data)
 
     sys.exit(0 if success else 1)
 

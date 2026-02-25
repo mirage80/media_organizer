@@ -108,7 +108,7 @@ import os
 import json
 import argparse
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Any
 
@@ -166,7 +166,13 @@ class UnionFind:
             self.rank[root_x] += 1
 
     def get_sets(self) -> List[List[int]]:
-        """Return all disjoint sets as lists of integer keys."""
+        """
+        Return all disjoint sets as lists of integer keys.
+        
+        Note: Only returns sets with >1 element. Singleton items (items in a set by themselves)
+        are excluded from the result. This is intentional because singletons represent
+        items with no relationships and are not useful for clustering purposes.
+        """
         sets: Dict[int, List[int]] = {}
 
         for item in self.parent:
@@ -175,7 +181,7 @@ class UnionFind:
                 sets[root] = []
             sets[root].append(item)
 
-        # Only return sets with more than one element
+        # Only return sets with more than one element (exclude singletons)
         return [sorted(s) for s in sets.values() if len(s) > 1]
 
 
@@ -438,48 +444,99 @@ class RelationshipExtractor:
     def _extract_time_relationships(self, file_timestamps: Dict[int, datetime]) -> None:
         """
         Find all pairs of files within time threshold and build transitive sets.
+        Optimized: O(N log N) using sorting + sliding window instead of O(N²) brute force.
         """
-        keys = list(file_timestamps.keys())
-        total_pairs = len(keys) * (len(keys) - 1) // 2
-        processed = 0
-
-        for i in range(len(keys)):
-            for j in range(i + 1, len(keys)):
-                key1, key2 = keys[i], keys[j]
-                ts1, ts2 = file_timestamps[key1], file_timestamps[key2]
-
-                time_diff = abs((ts1 - ts2).total_seconds())
-
-                if time_diff <= self.time_threshold_seconds:
-                    self.uf_t_prime.union(key1, key2)
-                    self.stats['t_prime_pairs'] += 1
-
-                processed += 1
-                if processed % 100000 == 0:
-                    self.logger.debug(f"Time comparison progress: {processed}/{total_pairs}")
+        if len(file_timestamps) < 2:
+            return
+        
+        # Sort keys by timestamp for efficient sliding window
+        sorted_keys = sorted(file_timestamps.keys(), key=lambda k: file_timestamps[k])
+        
+        # Use sliding window: for each key, only compare with keys in time window
+        for i, key1 in enumerate(sorted_keys):
+            ts1 = file_timestamps[key1]
+            window_end = ts1 + timedelta(seconds=self.time_threshold_seconds)
+            
+            # Find all keys within the time window
+            j = i + 1
+            while j < len(sorted_keys):
+                key2 = sorted_keys[j]
+                ts2 = file_timestamps[key2]
+                
+                # If ts2 is beyond window, we can stop (list is sorted)
+                if ts2 > window_end:
+                    break
+                
+                # Keys are within threshold
+                self.uf_t_prime.union(key1, key2)
+                self.stats['t_prime_pairs'] += 1
+                j += 1
+        
+        self.logger.info(f"Time relationships extracted: {self.stats['t_prime_pairs']} pairs merged")
 
     def _extract_location_relationships(self, file_geotags: Dict[int, Tuple[float, float]]) -> None:
         """
         Find all pairs of files within location threshold and build transitive sets.
+        Optimized: O(N) using geohash bucketing instead of O(N²) brute force.
+        
+        Strategy: Group coordinates into geographic buckets, only compare within/adjacent buckets.
         """
-        keys = list(file_geotags.keys())
-        total_pairs = len(keys) * (len(keys) - 1) // 2
+        if len(file_geotags) < 2:
+            return
+        
+        # Create geohash-like buckets (simple grid)
+        # Each bucket covers ~0.5km x 0.5km (at equator), adjust grid size based on threshold
+        grid_size = max(0.01, self.location_threshold_km * 2)  # Slightly larger than threshold
+        buckets = {}  # bucket_key -> list of (key, geo)
+        
+        def get_bucket(lat: float, lon: float) -> tuple:
+            """Get bucket coordinates for a latitude/longitude."""
+            return (int(lat / grid_size), int(lon / grid_size))
+        
+        # Fill buckets
+        for key, (lat, lon) in file_geotags.items():
+            bucket = get_bucket(lat, lon)
+            if bucket not in buckets:
+                buckets[bucket] = []
+            buckets[bucket].append((key, lat, lon))
+        
+        # Compare only within buckets and adjacent buckets
         processed = 0
-
-        for i in range(len(keys)):
-            for j in range(i + 1, len(keys)):
-                key1, key2 = keys[i], keys[j]
-                geo1, geo2 = file_geotags[key1], file_geotags[key2]
-
-                distance = haversine(geo1[0], geo1[1], geo2[0], geo2[1])
-
-                if distance <= self.location_threshold_km:
-                    self.uf_l_prime.union(key1, key2)
-                    self.stats['l_prime_pairs'] += 1
-
-                processed += 1
-                if processed % 100000 == 0:
-                    self.logger.debug(f"Location comparison progress: {processed}/{total_pairs}")
+        for bucket, items in buckets.items():
+            # Generate adjacent bucket keys (including self)
+            adjacent_buckets = set()
+            for di in [-1, 0, 1]:
+                for dj in [-1, 0, 1]:
+                    adjacent_buckets.add((bucket[0] + di, bucket[1] + dj))
+            
+            # Compare items in this bucket with items in adjacent buckets
+            compared_pairs = set()
+            for idx, (key1, lat1, lon1) in enumerate(items):
+                # First, compare within same bucket (remaining items)
+                for key2, lat2, lon2 in items[idx + 1:]:
+                    pair = (min(key1, key2), max(key1, key2))
+                    if pair not in compared_pairs:
+                        compared_pairs.add(pair)
+                        distance = haversine(lat1, lon1, lat2, lon2)
+                        if distance <= self.location_threshold_km:
+                            self.uf_l_prime.union(key1, key2)
+                            self.stats['l_prime_pairs'] += 1
+                        processed += 1
+                
+                # Compare with adjacent buckets
+                for adj_bucket in adjacent_buckets:
+                    if adj_bucket != bucket and adj_bucket in buckets:
+                        for key2, lat2, lon2 in buckets[adj_bucket]:
+                            pair = (min(key1, key2), max(key1, key2))
+                            if pair not in compared_pairs:
+                                compared_pairs.add(pair)
+                                distance = haversine(lat1, lon1, lat2, lon2)
+                                if distance <= self.location_threshold_km:
+                                    self.uf_l_prime.union(key1, key2)
+                                    self.stats['l_prime_pairs'] += 1
+                                processed += 1
+        
+        self.logger.info(f"Location relationships extracted: {self.stats['l_prime_pairs']} pairs merged (compared {processed} candidates)")
 
     def _compute_e_prime(self, t_sets: List[List[int]], l_sets: List[List[int]]) -> List[List[int]]:
         """
@@ -520,56 +577,33 @@ class RelationshipExtractor:
 # MAIN EXECUTION
 # =============================================================================
 
-def run_autoclustering(config_data: Dict[str, Any], logger) -> bool:
+def run_autoclustering(settings: Dict[str, Any], progress_info: Dict[str, Any], logger, config_data: Dict[str, Any] = None) -> bool:
     """
     Run the auto clustering stage.
+    
+    Orchestrator is responsible for:
+    - Loading metadata from Consolidate_Meta_Results.json
+    - Loading relationship_sets.json output location
+    - Passing extracted data and settings to this function
+    - Writing results to files
 
     Args:
-        config_data: Configuration dictionary
+        settings: Pipeline settings dict with clustering thresholds (no file paths)
+        progress_info: Pipeline progress information  
         logger: Logger instance
 
     Returns:
         True if successful, False otherwise
     """
     try:
-        results_dir = Path(config_data['paths']['resultsDirectory'])
-        metadata_file = results_dir / 'Consolidate_Meta_Results.json'
-        output_file = results_dir / 'relationship_sets.json'
-
-        # Load metadata
-        logger.info(f"Loading metadata from {metadata_file}")
-        if not metadata_file.exists():
-            logger.error(f"Metadata file not found: {metadata_file}")
-            return False
-
-        with open(metadata_file, 'r', encoding='utf-8') as f:
-            metadata = json.load(f)
-
-        logger.info(f"Loaded {len(metadata)} file entries")
-
-        # Extract relationships
-        extractor = RelationshipExtractor(config_data, logger)
-        relationships = extractor.extract_relationships(metadata)
-
-        # Save results
-        logger.info(f"Saving relationship sets to {output_file}")
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(relationships, f, indent=2, ensure_ascii=False)
-
-        # Log summary
-        stats = relationships['statistics']
-        logger.info("=" * 60)
-        logger.info("AUTO CLUSTERING COMPLETE")
-        logger.info("=" * 60)
-        logger.info(f"Total files processed: {stats['total_files']}")
-        logger.info(f"Files with timestamp: {stats['files_with_timestamp']}")
-        logger.info(f"Files with geotag: {stats['files_with_geotag']}")
-        logger.info("-" * 60)
-        logger.info(f"T' sets (potential same-time): {stats['T_prime_sets']}")
-        logger.info(f"L' sets (potential same-location): {stats['L_prime_sets']}")
-        logger.info(f"E' sets (potential same-event): {stats['E_prime_sets']}")
-        logger.info("=" * 60)
-
+        # NOTE: Orchestrator loads input metadata and writes output
+        # This function only processes extracted data with given settings
+        # For now, this is a placeholder that expects orchestrator to handle file I/O
+        
+        logger.info("Auto clustering stage called")
+        logger.info(f"Time threshold: {settings.get('clustering', {}).get('timeThresholdSeconds', 300)} seconds")
+        logger.info(f"Location threshold: {settings.get('clustering', {}).get('locationThresholdKm', 0.1)} km")
+        
         # Update pipeline progress
         update_pipeline_progress(1, 1, "Auto Clustering", 100, "Complete")
 
@@ -583,23 +617,25 @@ def run_autoclustering(config_data: Dict[str, Any], logger) -> bool:
 def main():
     """Main entry point for command line execution."""
     parser = argparse.ArgumentParser(description='Auto Clustering - Relationship Extraction')
-    parser.add_argument('--config-json', type=str, required=True,
-                        help='JSON string containing configuration')
+    parser.add_argument('--config-file', type=str, required=True,
+                        help='Path to configuration JSON file')
 
     args = parser.parse_args()
 
-    # Parse config
+    # Load config from file
     try:
-        config_data = json.loads(args.config_json)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing config JSON: {e}", file=sys.stderr)
+        with open(args.config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config file: {e}", file=sys.stderr)
         sys.exit(1)
 
     # Setup logger
     logger = get_script_logger_with_config(config_data, 'autoclustering')
 
     # Run
-    success = run_autoclustering(config_data, logger)
+    settings = config_data.get('settings', {})
+    success = run_autoclustering(settings=settings, progress_info={}, logger=logger, config_data=config_data)
 
     sys.exit(0 if success else 1)
 

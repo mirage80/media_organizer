@@ -310,19 +310,17 @@ class ThumbnailGridGUI:
                 if frame is not None:
                     try:
                         img = frame[0] if isinstance(frame, tuple) else frame
-                        if img is None:
-                            return
+                        if img is not None:
+                            w, h = img.get_size()
+                            buf = img.to_bytearray()[0]
+                            pil_img = Image.frombytes('RGB', (w, h), bytes(buf))
 
-                        w, h = img.get_size()
-                        buf = img.to_bytearray()[0]
-                        pil_img = Image.frombytes('RGB', (w, h), bytes(buf))
-
-                        label_w, label_h = video_label.winfo_width(), video_label.winfo_height()
-                        if label_w > 10 and label_h > 10:
-                            pil_img = pil_img.resize((label_w, label_h), Image.Resampling.LANCZOS)
-                            photo = ImageTk.PhotoImage(pil_img)
-                            video_label.config(image=photo)
-                            video_label.image = photo
+                            label_w, label_h = video_label.winfo_width(), video_label.winfo_height()
+                            if label_w > 10 and label_h > 10:
+                                pil_img = pil_img.resize((label_w, label_h), Image.Resampling.LANCZOS)
+                                photo = ImageTk.PhotoImage(pil_img)
+                                video_label.config(image=photo)
+                                video_label.image = photo
 
                     except Exception as e:
                         self.logger.debug(f"Frame processing error: {e}")
@@ -1427,7 +1425,9 @@ def show_thumbnail_grid(config_data: dict, file_keys: list, logger,
 
     grid = SelectableThumbnailGrid(root, config_data, file_keys, logger, title=title)
     root.mainloop()
-    return {
+    result = {
         'selected': grid.get_selected_keys(),
         'junk': grid.get_junk_keys()
     }
+    root.destroy()
+    return result

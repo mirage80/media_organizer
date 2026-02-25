@@ -8,11 +8,11 @@ import os
 import sys
 import subprocess
 import signal
+import importlib.util
 from pathlib import Path
 import re
 from typing import Dict, List, Any, Optional, NamedTuple
 import argparse
-import re
 
 
 class PipelineState(NamedTuple):
@@ -106,10 +106,12 @@ class PipelineOrchestrator:
     
     def _execute_python_script(self, script_path: str, step_name: str, current_state: PipelineState) -> bool:
         """
-        Execute a Python script with progress tracking.
+        Execute a pipeline step by importing and calling its function directly.
+        Orchestrator loads input data from files, passes only extracted data (no paths) to functions,
+        and writes results back to files.
 
         Args:
-            script_path: Path to the Python script
+            script_path: Path to the Python script module
             step_name: Name of the step for logging
             current_state: Current pipeline state with all counters
 
@@ -117,106 +119,48 @@ class PipelineOrchestrator:
             True if successful, False otherwise
         """
         try:
-            # Prepare command - pass config object as JSON with progress info
-            python_exe = sys.executable
-            import json
-            config_with_progress = self.config.config_data.copy()
-            config_with_progress['_progress'] = current_state._asdict()
-            config_json = json.dumps(config_with_progress, indent=None)
-            cmd = [python_exe, script_path, "--config-json", config_json]
+            # Extract module name from script path
+            module_name = Path(script_path).stem
             
-            self.log("DEBUG", f"Executing: {' '.join(cmd)}")
+            # Import the module dynamically
+            spec = importlib.util.spec_from_file_location(module_name, script_path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
             
-            # Start process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                bufsize=1,
-                universal_newlines=True
-            )
+            # Extract only required settings (no file paths)
+            settings = self.config.config_data.get('settings', {})
+            progress_info = current_state._asdict()
             
-            # Monitor output for progress updates
-            while True:
-                # Update GUI to keep it responsive
-                if self.progress_manager and self.progress_manager.enable_gui and self.progress_manager.form:
-                    self.progress_manager.form.update()
-
-                output = process.stdout.readline()
-                if output == '' and process.poll() is not None:
-                    break
-
-                if output:
-                    output = output.strip()
-                    
-                    # Check for progress updates
-                    if output.startswith('PROGRESS:'):
-                        try:
-                            # Format: PROGRESS:overall_percent|Step X/Y: StepName - SubtaskMessage
-                            parts = output[9:].split('|', 1)
-                            if len(parts) == 2:
-                                overall_percent = int(parts[0])
-                                status_message = parts[1]
-
-                                # Parse step info: "Step X/Y: StepName - SubtaskMessage"
-                                if status_message.startswith('Step '):
-                                    # Extract step numbers and details
-                                    step_part, rest = status_message.split(':', 1)
-                                    step_numbers = step_part.replace('Step ', '').strip()
-                                    current_step, total_steps = map(int, step_numbers.split('/'))
-
-                                    # Split step name and subtask message
-                                    if ' - ' in rest:
-                                        step_name, subtask_message = rest.split(' - ', 1)
-                                        step_name = step_name.strip()
-                                        subtask_message = subtask_message.strip()
-                                    else:
-                                        step_name = rest.strip()
-                                        subtask_message = ""
-
-                                    # Calculate subtask percent from overall percent
-                                    step_weight = 100.0 / total_steps
-                                    step_base = (current_step - 1) * step_weight
-                                    subtask_percent = int(((overall_percent - step_base) / step_weight) * 100) if step_weight > 0 else 0
-                                    subtask_percent = max(0, min(100, subtask_percent))
-
-                                    # Update using the full progress method
-                                    self.progress_manager.update_progress(
-                                        total_steps, current_step, step_name, subtask_percent, subtask_message
-                                    )
-                                else:
-                                    # Fallback: just update overall
-                                    self.progress_manager.update_overall(overall_percent, status_message)
-                        except (ValueError, IndexError) as e:
-                            pass
-                    elif output.startswith(('DEBUG:', 'INFO:', 'WARNING:', 'ERROR:', 'CRITICAL:')):
-                        # Forward log messages
-                        level, message = output.split(':', 1)
-                        self.log(level.strip(), f"PY: {message.strip()}")
-                    else:
-                        # Regular output
-                        self.log("DEBUG", f"PY_STDOUT: {output}")
+            # Create logger for this step
+            log_dir = self.config.config_data['paths']['logDirectory']
+            step_num = str(current_state.current_step)
+            logger = get_script_logger(log_dir, module_name, step_num)
             
-            # Wait for completion and get return code
-            return_code = process.wait()
-            
-            # Log any errors
-            stderr_output = process.stderr.read()
-            if stderr_output:
-                for line in stderr_output.strip().split('\n'):
-                    if line:
-                        self.log("ERROR", f"PY_STDERR: {line}")
-            
-            if return_code != 0:
-                self.log("ERROR", f"Python script '{script_path}' failed with exit code {return_code}")
+            # Call the module's run function with extracted data only
+            # Expected signature: run_<module_name>(settings, progress_info, logger, config_data) -> bool
+            # Orchestrator is responsible for loading input files and writing output files
+            run_function_name = f'run_{module_name}'
+            if hasattr(module, run_function_name):
+                run_func = getattr(module, run_function_name)
+                self.log("DEBUG", f"Calling {run_function_name}() with extracted settings")
+                
+                # Pass settings, progress info, logger, and config_data (full config for GUI modules)
+                # Interactive modules need full config for file access; non-interactive can ignore config_data
+                result = run_func(settings=settings, progress_info=progress_info, logger=logger, config_data=self.config.config_data)
+                
+                # Result should be True/False or a dict with 'success' key
+                success = result if isinstance(result, bool) else result.get('success', False) if isinstance(result, dict) else False
+            else:
+                self.log("ERROR", f"Module {module_name} has no {run_function_name}() function")
                 return False
             
-            return True
+            return success
             
         except Exception as e:
-            self.log("ERROR", f"Error running Python script '{script_path}': {e}")
+            self.log("ERROR", f"Error executing {script_path}: {e}")
+            import traceback
+            self.log("DEBUG", traceback.format_exc())
             return False
     
     def _execute_powershell_script(self, script_path: str, args: Dict[str, Any], step_name: str, current_state: PipelineState) -> bool:
@@ -450,7 +394,6 @@ class PipelineOrchestrator:
                 )
 
                 # Execute step with progress info
-                # Note: Scripts receive all state info through config._progress
                 success = self._execute_step(step, current_state)
 
                 if not success:

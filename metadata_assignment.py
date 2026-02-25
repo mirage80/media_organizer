@@ -2509,7 +2509,7 @@ class MetadataAssignmentGUI:
         if not self.work_items or self.current_item_index >= len(self.work_items):
             return
         item = self.work_items[self.current_item_index]
-        self.selected_keys = set(item['keys'])
+        self.selected_keys = set(k for k in item['keys'] if k not in self.completed_keys)
         for key, var in self.checkbox_vars.items():
             var.set(True)
         self._update_status()
@@ -2809,7 +2809,7 @@ class MetadataAssignmentGUI:
         return {'assignments': self.assignments}
 
 
-def run_metadata_assignment(config_data: dict, logger) -> bool:
+def run_metadata_assignment(settings: dict, progress_info: dict, logger, config_data: dict) -> bool:
     try:
         if CTK_AVAILABLE:
             root = ctk.CTk()
@@ -2820,6 +2820,8 @@ def run_metadata_assignment(config_data: dict, logger) -> bool:
         root.mainloop()
 
         results = gui.get_results()
+        root.destroy()
+
         logger.info(f"Metadata assignment complete: {len(results['assignments'])} assignments")
 
         update_pipeline_progress(1, 1, "Metadata Assignment", 100, "Complete")
@@ -2831,19 +2833,22 @@ def run_metadata_assignment(config_data: dict, logger) -> bool:
 
 def main():
     parser = argparse.ArgumentParser(description='Metadata Assignment')
-    parser.add_argument('--config-json', type=str, required=True,
-                        help='JSON string containing configuration')
+    parser.add_argument('--config-file', type=str, required=True,
+                        help='Path to configuration JSON file')
 
     args = parser.parse_args()
 
     try:
-        config_data = json.loads(args.config_json)
-    except json.JSONDecodeError as e:
-        print(f"Error parsing config JSON: {e}", file=sys.stderr)
+        with open(args.config_file, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        print(f"Error loading config file: {e}", file=sys.stderr)
         sys.exit(1)
 
     logger = get_script_logger_with_config(config_data, 'metadata_assignment')
-    success = run_metadata_assignment(config_data, logger)
+    settings = config_data.get('settings', {})
+    progress_info = {'current_step': 1, 'total_steps': 1}  # Standalone execution
+    success = run_metadata_assignment(settings=settings, progress_info=progress_info, logger=logger, config_data=config_data)
     sys.exit(0 if success else 1)
 
 

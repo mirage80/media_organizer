@@ -125,8 +125,21 @@ class MediaOrganizerConfig:
         if config_file is None:
             config_file = Path(__file__).parent / "config.json"
         self.config_file = Path(config_file)
-        with open(self.config_file, 'r', encoding='utf-8') as f:
-            self.config_data = json.load(f)
+        
+        # Load config with proper error handling
+        try:
+            if not self.config_file.exists():
+                raise FileNotFoundError(f"Config file not found: {self.config_file}")
+            
+            with open(self.config_file, 'r', encoding='utf-8') as f:
+                self.config_data = json.load(f)
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Configuration error: {e}") from e
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in config file {self.config_file}: {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Failed to load config file {self.config_file}: {e}") from e
+        
         self.resolved_paths = {}
         for key in ['rawDirectory', 'processedDirectory', 'logDirectory', 'resultsDirectory']:
             if key in self.config_data.get('paths', {}):
@@ -232,6 +245,12 @@ class PathUtils:
 
     @staticmethod
     def normalize_path(path: Union[str, Path]) -> str:
+        """
+        Normalize path to POSIX format (forward slashes).
+        
+        Note: Always returns forward slashes, not Windows backslashes.
+        Use Path.resolve() for OS-specific normalization instead.
+        """
         return str(Path(path).as_posix()) if path else str(path)
 
     @staticmethod
@@ -513,6 +532,9 @@ class ProgressBarManager:
                                          text_color=GUIStyle.TEXT_COLOR_SECONDARY, anchor="w")
             self.subtask_label.pack(fill="x", padx=15, pady=(5, 10))
         else:
+            if self.root is None:
+                self.root = tk.Tk()
+                self.root.withdraw()
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
             self.form = tk.Toplevel(self.root)
